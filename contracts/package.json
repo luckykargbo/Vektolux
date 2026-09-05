@@ -1,0 +1,32 @@
+{
+  "name": "vektolux-contracts",
+  "version": "1.0.0",
+  "description": "Vektolux Marketplace Smart Contracts — Audit Ledger & Escrow Manager",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:gas": "REPORT_GAS=true hardhat test",
+    "coverage": "hardhat coverage",
+    "deploy:localhost": "hardhat run scripts/deploy.ts --network localhost",
+    "deploy:polygon": "hardhat run scripts/deploy.ts --network polygon",
+    "deploy:base": "hardhat run scripts/deploy.ts --network base",
+    "verify:polygon": "hardhat verify --network polygon",
+    "verify:base": "hardhat verify --network base",
+    "lint": "solhint 'src/**/*.sol'",
+    "clean": "hardhat clean"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@nomicfoundation/hardhat-verify": "^2.0.0",
+    "@openzeppelin/contracts": "^5.1.0",
+    "dotenv": "^16.4.5",
+    "hardhat": "^2.22.0",
+    "hardhat-gas-reporter": "^1.0.10",
+    "solhint": "^5.0.0",
+    "solidity-coverage": "^0.8.12",
+    "typescript": "^5.5.0",
+    "ts-node": "^10.9.0",
+    "@types/node": "^22.0.0",
+    "@types/mocha": "^10.0.0"
+  }
+}

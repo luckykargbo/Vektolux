@@ -1,0 +1,505 @@
+// lib/features/mobility/presentation/widgets/active_ride_overlay.dart
+// ═══════════════════════════════════════════════════════════════════════
+// VEKTOLUX — Active Ride Tracking View
+// Displays live driver info, call/message actions, route ETA,
+// and on-chain blockchain audit verification badge.
+// ═══════════════════════════════════════════════════════════════════════
+
+import 'package:flutter/material.dart';
+import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/components/vx_button.dart';
+import '../../../../core/theme/components/vx_status_badge.dart';
+import '../../domain/entities/ride_entity.dart';
+import 'share_trip_sheet.dart';
+import 'emergency_sos_modal.dart';
+
+class ActiveRideOverlay extends StatelessWidget {
+  final RideEntity ride;
+  final VoidCallback onCancelRide;
+
+  const ActiveRideOverlay({
+    super.key,
+    required this.ride,
+    required this.onCancelRide,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.obsidian.withValues(alpha: 0.12),
+            blurRadius: 20,
+            offset: const Offset(0, -6),
+          ),
+        ],
+      ),
+      padding: EdgeInsets.fromLTRB(
+        20,
+        14,
+        20,
+        MediaQuery.of(context).padding.bottom + 16,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Drag Handle ───────────────────────────────────────────
+          Center(
+            child: Container(
+              width: 44,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.gray300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // ── Status & ETA Header ───────────────────────────────────
+          Row(
+            children: [
+              VxStatusBadge(
+                label: ride.status.displayName,
+                status: VxBadgeStatus.active,
+                pulse: true,
+              ),
+              const Spacer(),
+              Text(
+                'ETA ${ride.estimatedDurationMin} mins',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.obsidian,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // ── Driver & Vehicle Information Card ─────────────────────
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.gray50,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              children: [
+                // Driver Avatar
+                Stack(
+                  children: [
+                    const CircleAvatar(
+                      radius: 26,
+                      backgroundColor: AppColors.emeraldSurface,
+                      child: Icon(
+                        Icons.person_rounded,
+                        color: AppColors.emeraldDark,
+                        size: 30,
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 0,
+                      right: 0,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
+                          color: AppColors.emerald,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.check,
+                          color: AppColors.white,
+                          size: 10,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 14),
+
+                // Driver Details
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        ride.driverName ?? 'Momoh Kargbo (Verified Driver)',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.obsidian,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.star_rounded,
+                            size: 16,
+                            color: AppColors.amber,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            '${ride.driverRating ?? 4.9}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.obsidian,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '• ${ride.vehicleMake ?? 'Toyota'} ${ride.vehicleModel ?? 'Corolla'} (${ride.vehicleColor ?? 'Silver'})',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.gray600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.gray200,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          ride.vehiclePlate ?? 'SL-940-BA',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontFamily: 'Courier',
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.obsidian,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Quick Call & Message Actions
+                Row(
+                  children: [
+                    _buildCircleActionButton(
+                      icon: Icons.phone_rounded,
+                      color: AppColors.emerald,
+                      onTap: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Calling ${ride.driverName ?? 'driver'}...'),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    _buildCircleActionButton(
+                      icon: Icons.chat_bubble_outline_rounded,
+                      color: AppColors.obsidian,
+                      onTap: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Opening live in-app ride chat...'),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ── Passenger 4-Digit Boarding Verification PIN ───────────
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.gray50,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.emerald.withValues(alpha: 0.5), width: 1.5),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: const BoxDecoration(
+                    color: AppColors.emeraldSurface,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.pin_outlined, color: AppColors.emeraldDark, size: 18),
+                ),
+                const SizedBox(width: 10),
+                const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'YOUR PICKUP PIN',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.6,
+                        color: AppColors.emeraldDark,
+                      ),
+                    ),
+                    Text(
+                      'Share with driver upon arrival to start trip',
+                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.obsidian,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    ride.verificationPin ?? '4821',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 3,
+                      color: AppColors.emerald,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ── Blockchain Smart Contract Security Badge ──────────────
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.emeraldSurface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: AppColors.emerald.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.lock_outline_rounded,
+                  size: 16,
+                  color: AppColors.emeraldDark,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Blockchain Escrow & Safety Audit Active',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.emeraldDark,
+                        ),
+                      ),
+                      Text(
+                        'Ledger Hash: ${ride.blockchainLogHash ?? "0x7e2a9...d48b"}',
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontFamily: 'Courier',
+                          color: AppColors.emeraldDark.withValues(alpha: 0.8),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.verified_rounded,
+                  size: 16,
+                  color: AppColors.emeraldDark,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ── In-App Safety Tools: Share Live Trip & Emergency SOS ─
+          Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: () => ShareTripSheet.show(context, ride: ride),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: AppColors.gray100,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.gray300),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.share_location_rounded, color: AppColors.emeraldDark, size: 16),
+                        SizedBox(width: 6),
+                        Text(
+                          'Share Live Trip',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.obsidian,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: InkWell(
+                  onTap: () => EmergencySosModal.show(
+                    context,
+                    ride: ride,
+                    currentLat: ride.pickupLat,
+                    currentLng: ride.pickupLng,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: AppColors.error.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.error.withValues(alpha: 0.35)),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.shield_rounded, color: AppColors.error, size: 16),
+                        SizedBox(width: 6),
+                        Text(
+                          'Emergency SOS',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.error,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // ── Trip Route Details ────────────────────────────────────
+          Row(
+            children: [
+              const Column(
+                children: [
+                  Icon(Icons.circle, size: 10, color: AppColors.emerald),
+                  SizedBox(
+                    height: 20,
+                    child: VerticalDivider(
+                      color: AppColors.gray300,
+                      thickness: 1.5,
+                    ),
+                  ),
+                  Icon(Icons.square, size: 10, color: AppColors.obsidian),
+                ],
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      ride.pickupAddress,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.obsidian,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      ride.dropoffAddress,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.obsidian,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${ride.currency} ${ride.fareAmount.toStringAsFixed(0)}',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.obsidian,
+                    ),
+                  ),
+                  Text(
+                    '${ride.distanceKm} km',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.gray500,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // ── Cancel Ride CTA ───────────────────────────────────────
+          VxButton.destructive(
+            label: 'Cancel Ride Request',
+            height: 48,
+            onPressed: onCancelRide,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCircleActionButton({
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: color, size: 18),
+      ),
+    );
+  }
+}

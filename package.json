@@ -1,0 +1,19 @@
+{
+  "name": "vektolux-convex",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx convex dev",
+    "deploy": "npx convex deploy",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint convex/"
+  },
+  "dependencies": {
+    "convex": "^1.17.0",
+    "ethers": "^6.13.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^22.0.0"
+  }
+}
