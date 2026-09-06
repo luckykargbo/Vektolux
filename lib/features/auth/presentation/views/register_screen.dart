@@ -256,8 +256,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               controller: _nameController,
               textCapitalization: TextCapitalization.words,
               style: const TextStyle(
-                color: AppColors.obsidian,
-                fontSize: 16,
+                color: Color(0xFF0F172A),
+                fontSize: 15,
                 fontWeight: FontWeight.w500,
               ),
               decoration: const InputDecoration(
@@ -278,8 +278,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               controller: _emailController,
               keyboardType: TextInputType.emailAddress,
               style: const TextStyle(
-                color: AppColors.obsidian,
-                fontSize: 16,
+                color: Color(0xFF0F172A),
+                fontSize: 15,
                 fontWeight: FontWeight.w500,
               ),
               decoration: const InputDecoration(
@@ -305,40 +305,40 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   height: 58,
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    color: AppColors.gray100, // #F1F5F9
+                    color: const Color(0xFFF8FAFC),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.gray300, width: 1.5), // #CBD5E1
+                    border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
                   ),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
                       value: _countryCode,
-                      dropdownColor: AppColors.white,
-                      iconEnabledColor: AppColors.obsidian,
+                      dropdownColor: const Color(0xFFF8FAFC),
+                      iconEnabledColor: const Color(0xFF0F172A),
                       style: const TextStyle(
-                        color: AppColors.obsidian,
+                        color: Color(0xFF0F172A),
                         fontSize: 14,
-                        fontWeight: FontWeight.w700,
+                        fontWeight: FontWeight.w600,
                       ),
                       items: const [
                         DropdownMenuItem(
                           value: '+232',
-                          child: Text('SL +232', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w700)),
+                          child: Text('SL +232', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
                         ),
                         DropdownMenuItem(
                           value: '+234',
-                          child: Text('NG +234', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w700)),
+                          child: Text('NG +234', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
                         ),
                         DropdownMenuItem(
                           value: '+233',
-                          child: Text('GH +233', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w700)),
+                          child: Text('GH +233', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
                         ),
                         DropdownMenuItem(
                           value: '+1',
-                          child: Text('US +1', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w700)),
+                          child: Text('US +1', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
                         ),
                         DropdownMenuItem(
                           value: '+44',
-                          child: Text('UK +44', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w700)),
+                          child: Text('UK +44', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
                         ),
                       ],
                       onChanged: (val) {
@@ -353,8 +353,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     controller: _phoneController,
                     keyboardType: TextInputType.phone,
                     style: const TextStyle(
-                      color: AppColors.obsidian,
-                      fontSize: 16,
+                      color: Color(0xFF0F172A),
+                      fontSize: 15,
                       fontWeight: FontWeight.w500,
                     ),
                     decoration: const InputDecoration(
@@ -379,8 +379,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               controller: _passwordController,
               obscureText: _obscurePassword,
               style: const TextStyle(
-                color: AppColors.obsidian,
-                fontSize: 16,
+                color: Color(0xFF0F172A),
+                fontSize: 15,
                 fontWeight: FontWeight.w500,
               ),
               decoration: InputDecoration(
@@ -405,8 +405,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               controller: _confirmPasswordController,
               obscureText: _obscureConfirmPassword,
               style: const TextStyle(
-                color: AppColors.obsidian,
-                fontSize: 16,
+                color: Color(0xFF0F172A),
+                fontSize: 15,
                 fontWeight: FontWeight.w500,
               ),
               decoration: InputDecoration(
@@ -447,8 +447,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 controller: _businessNameController,
                 textCapitalization: TextCapitalization.words,
                 style: const TextStyle(
-                  color: AppColors.obsidian,
-                  fontSize: 16,
+                  color: Color(0xFF0F172A),
+                  fontSize: 15,
                   fontWeight: FontWeight.w500,
                 ),
                 decoration: const InputDecoration(
@@ -461,8 +461,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               TextFormField(
                 controller: _tinController,
                 style: const TextStyle(
-                  color: AppColors.obsidian,
-                  fontSize: 16,
+                  color: Color(0xFF0F172A),
+                  fontSize: 15,
                   fontWeight: FontWeight.w500,
                 ),
                 decoration: const InputDecoration(

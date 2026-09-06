@@ -183,47 +183,7 @@ abstract final class AppTheme {
       ),
 
       // ── Input Fields ────────────────────────────────────────────
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: AppColors.gray100, // #F1F5F9
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.gray300, width: 1.5), // #CBD5E1
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.gray300, width: 1.5), // #CBD5E1
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.emerald, width: 2), // #10B981
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.error, width: 1.5),
-        ),
-        focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.error, width: 2),
-        ),
-        hintStyle: const TextStyle(
-          color: AppColors.gray500, // #64748B Muted Slate
-          fontSize: 15,
-          fontWeight: FontWeight.normal,
-        ),
-        labelStyle: const TextStyle(
-          color: AppColors.gray500, // #64748B
-          fontSize: 15,
-          fontWeight: FontWeight.w500,
-        ),
-        errorStyle: AppTypography.textTheme.bodySmall?.copyWith(
-          color: AppColors.error,
-        ),
-        prefixIconColor: AppColors.gray500, // #64748B Slate Grey
-        suffixIconColor: AppColors.gray500, // #64748B Slate Grey
-      ),
+      inputDecorationTheme: _inputDecorationTheme,
 
       // ── Chips ───────────────────────────────────────────────────
       chipTheme: ChipThemeData(
@@ -404,7 +364,7 @@ abstract final class AppTheme {
         backgroundColor: AppColors.obsidianLight,
       ),
 
-      inputDecorationTheme: light.inputDecorationTheme,
+      inputDecorationTheme: _inputDecorationTheme,
 
       snackBarTheme: light.snackBarTheme.copyWith(
         backgroundColor: AppColors.gray800,
@@ -416,4 +376,46 @@ abstract final class AppTheme {
       ),
     );
   }
+
+  // ── Central Shared Input Theme ─────────────────────────────────────
+  static InputDecorationTheme get _inputDecorationTheme => InputDecorationTheme(
+    filled: true,
+    fillColor: const Color(0xFFF8FAFC),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: Color(0xFFE2E8F0), width: 1.2),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: Color(0xFFE2E8F0), width: 1.2),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: Color(0xFF10B981), width: 1.8),
+    ),
+    errorBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: AppColors.error, width: 1.2),
+    ),
+    focusedErrorBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: AppColors.error, width: 1.8),
+    ),
+    hintStyle: const TextStyle(
+      color: Color(0xFF94A3B8),
+      fontSize: 14,
+      fontWeight: FontWeight.normal,
+    ),
+    labelStyle: const TextStyle(
+      color: Color(0xFF64748B),
+      fontSize: 14,
+      fontWeight: FontWeight.w500,
+    ),
+    errorStyle: AppTypography.textTheme.bodySmall?.copyWith(
+      color: AppColors.error,
+    ),
+    prefixIconColor: const Color(0xFF64748B),
+    suffixIconColor: const Color(0xFF64748B),
+  );
 }

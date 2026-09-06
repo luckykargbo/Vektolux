@@ -135,8 +135,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     controller: _identifierController,
                     keyboardType: TextInputType.emailAddress,
                     style: const TextStyle(
-                      color: AppColors.obsidian,
-                      fontSize: 16,
+                      color: Color(0xFF0F172A),
+                      fontSize: 15,
                       fontWeight: FontWeight.w500,
                     ),
                     decoration: const InputDecoration(
@@ -158,8 +158,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     controller: _passwordController,
                     obscureText: _obscurePassword,
                     style: const TextStyle(
-                      color: AppColors.obsidian,
-                      fontSize: 16,
+                      color: Color(0xFF0F172A),
+                      fontSize: 15,
                       fontWeight: FontWeight.w500,
                     ),
                     decoration: InputDecoration(
