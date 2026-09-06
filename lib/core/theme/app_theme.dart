@@ -189,36 +189,40 @@ abstract final class AppTheme {
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_borderRadiusSm),
-          borderSide: const BorderSide(color: AppColors.gray300, width: 1.5),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.gray300, width: 1.5), // #CBD5E1
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_borderRadiusSm),
-          borderSide: const BorderSide(color: AppColors.gray300, width: 1.5),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.gray300, width: 1.5), // #CBD5E1
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_borderRadiusSm),
-          borderSide: const BorderSide(color: AppColors.emerald, width: 2),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.emerald, width: 2), // #10B981
         ),
         errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_borderRadiusSm),
+          borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: AppColors.error, width: 1.5),
         ),
         focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_borderRadiusSm),
+          borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: AppColors.error, width: 2),
         ),
-        hintStyle: AppTypography.textTheme.bodyMedium?.copyWith(
-          color: AppColors.gray500, // #64748B
+        hintStyle: const TextStyle(
+          color: AppColors.gray500, // #64748B Muted Slate
+          fontSize: 15,
+          fontWeight: FontWeight.normal,
         ),
-        labelStyle: AppTypography.textTheme.bodyMedium?.copyWith(
+        labelStyle: const TextStyle(
           color: AppColors.gray500, // #64748B
+          fontSize: 15,
+          fontWeight: FontWeight.w500,
         ),
         errorStyle: AppTypography.textTheme.bodySmall?.copyWith(
           color: AppColors.error,
         ),
-        prefixIconColor: AppColors.gray500,
-        suffixIconColor: AppColors.gray500,
+        prefixIconColor: AppColors.gray500, // #64748B Slate Grey
+        suffixIconColor: AppColors.gray500, // #64748B Slate Grey
       ),
 
       // ── Chips ───────────────────────────────────────────────────
@@ -400,15 +404,7 @@ abstract final class AppTheme {
         backgroundColor: AppColors.obsidianLight,
       ),
 
-      inputDecorationTheme: light.inputDecorationTheme.copyWith(
-        fillColor: AppColors.obsidianMedium,
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_borderRadiusSm),
-          borderSide: BorderSide(
-            color: AppColors.gray700.withValues(alpha: 0.5),
-          ),
-        ),
-      ),
+      inputDecorationTheme: light.inputDecorationTheme,
 
       snackBarTheme: light.snackBarTheme.copyWith(
         backgroundColor: AppColors.gray800,

@@ -257,7 +257,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               textCapitalization: TextCapitalization.words,
               style: const TextStyle(
                 color: AppColors.obsidian,
-                fontSize: 15,
+                fontSize: 16,
                 fontWeight: FontWeight.w500,
               ),
               decoration: const InputDecoration(
@@ -279,7 +279,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               keyboardType: TextInputType.emailAddress,
               style: const TextStyle(
                 color: AppColors.obsidian,
-                fontSize: 15,
+                fontSize: 16,
                 fontWeight: FontWeight.w500,
               ),
               decoration: const InputDecoration(
@@ -317,28 +317,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       style: const TextStyle(
                         color: AppColors.obsidian,
                         fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w700,
                       ),
                       items: const [
                         DropdownMenuItem(
                           value: '+232',
-                          child: Text('SL +232', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                          child: Text('SL +232', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w700)),
                         ),
                         DropdownMenuItem(
                           value: '+234',
-                          child: Text('NG +234', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                          child: Text('NG +234', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w700)),
                         ),
                         DropdownMenuItem(
                           value: '+233',
-                          child: Text('GH +233', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                          child: Text('GH +233', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w700)),
                         ),
                         DropdownMenuItem(
                           value: '+1',
-                          child: Text('US +1', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                          child: Text('US +1', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w700)),
                         ),
                         DropdownMenuItem(
                           value: '+44',
-                          child: Text('UK +44', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                          child: Text('UK +44', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w700)),
                         ),
                       ],
                       onChanged: (val) {
@@ -354,7 +354,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     keyboardType: TextInputType.phone,
                     style: const TextStyle(
                       color: AppColors.obsidian,
-                      fontSize: 15,
+                      fontSize: 16,
                       fontWeight: FontWeight.w500,
                     ),
                     decoration: const InputDecoration(
@@ -380,7 +380,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               obscureText: _obscurePassword,
               style: const TextStyle(
                 color: AppColors.obsidian,
-                fontSize: 15,
+                fontSize: 16,
                 fontWeight: FontWeight.w500,
               ),
               decoration: InputDecoration(
@@ -406,7 +406,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               obscureText: _obscureConfirmPassword,
               style: const TextStyle(
                 color: AppColors.obsidian,
-                fontSize: 15,
+                fontSize: 16,
                 fontWeight: FontWeight.w500,
               ),
               decoration: InputDecoration(
@@ -448,7 +448,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 textCapitalization: TextCapitalization.words,
                 style: const TextStyle(
                   color: AppColors.obsidian,
-                  fontSize: 15,
+                  fontSize: 16,
                   fontWeight: FontWeight.w500,
                 ),
                 decoration: const InputDecoration(
@@ -462,7 +462,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 controller: _tinController,
                 style: const TextStyle(
                   color: AppColors.obsidian,
-                  fontSize: 15,
+                  fontSize: 16,
                   fontWeight: FontWeight.w500,
                 ),
                 decoration: const InputDecoration(

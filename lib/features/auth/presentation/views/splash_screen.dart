@@ -13,7 +13,7 @@ import '../../../mobility/presentation/views/mobility_home_screen.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
-import 'register_screen.dart';
+import 'login_screen.dart';
 
 /// Custom Vektolux brand vector SVG.
 const String _kVektoluxSvg = '''
@@ -78,6 +78,22 @@ class _SplashScreenState extends State<SplashScreen>
     super.dispose();
   }
 
+  PageRouteBuilder _createFadeRoute(Widget page) {
+    return PageRouteBuilder(
+      pageBuilder: (context, animation, secondaryAnimation) => page,
+      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        return FadeTransition(
+          opacity: CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeInOut,
+          ),
+          child: child,
+        );
+      },
+      transitionDuration: const Duration(milliseconds: 500),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return BlocListener<AuthBloc, AuthState>(
@@ -85,34 +101,32 @@ class _SplashScreenState extends State<SplashScreen>
       listener: (context, state) {
         if (state.status == AuthStatus.authenticated && state.user != null) {
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => MobilityHomeScreen(
+            _createFadeRoute(
+              MobilityHomeScreen(
                 currentUserId: state.user!.id,
               ),
             ),
           );
         } else if (state.status == AuthStatus.unauthenticated) {
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => const RegisterScreen(),
-            ),
+            _createFadeRoute(const LoginScreen()),
           );
         }
       },
       child: Scaffold(
         backgroundColor: AppColors.obsidian,
         body: SafeArea(
-          child: Column(
-            children: [
-              const Spacer(flex: 3),
-
-              // ── Center Brand Logo & Typography ──────────────────────
-              FadeTransition(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+              child: FadeTransition(
                 opacity: _fadeAnimation,
                 child: ScaleTransition(
                   scale: _scaleAnimation,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       // Vector Logo via flutter_svg
                       Container(
@@ -141,6 +155,7 @@ class _SplashScreenState extends State<SplashScreen>
                       // Brand Name
                       const Text(
                         'VEKTOLUX',
+                        textAlign: TextAlign.center,
                         style: TextStyle(
                           fontFamily: 'Poppins',
                           fontSize: 34,
@@ -154,6 +169,7 @@ class _SplashScreenState extends State<SplashScreen>
                       // Tagline
                       const Text(
                         'Sierra Leone\'s Premier Super App',
+                        textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 13,
                           color: AppColors.gray400,
@@ -165,25 +181,7 @@ class _SplashScreenState extends State<SplashScreen>
                   ),
                 ),
               ),
-
-              const Spacer(flex: 3),
-
-              // ── Activity Spinner ─────────────────────────────────────
-              BlocBuilder<AuthBloc, AuthState>(
-                builder: (context, state) {
-                  return const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
-                      color: AppColors.emerald,
-                    ),
-                  );
-                },
-              ),
-
-              const SizedBox(height: 48),
-            ],
+            ),
           ),
         ),
       ),
