@@ -64,10 +64,13 @@ class FareCalculationService {
 
     for (final category in availableCategories) {
       // 1. Calculate trip duration in minutes if not provided
-      final avgSpeedKmh = (category == BookingVehicleCategory.courierBike ||
-              category == BookingVehicleCategory.kekehTricycle)
-          ? 28.0
-          : 22.0;
+      final avgSpeedKmh = switch (category) {
+        BookingVehicleCategory.courierBike => 30.0,
+        BookingVehicleCategory.kekehTricycle => 25.0,
+        BookingVehicleCategory.standardRide => 22.0,
+        BookingVehicleCategory.comfortRide => 24.0,
+        BookingVehicleCategory.truckHaulage => 18.0,
+      };
 
       final calculatedDuration = durationMins ??
           max(3, ((distanceKm / avgSpeedKmh) * 60).round());
@@ -101,7 +104,7 @@ class FareCalculationService {
       } else {
         arrivalEta = (category == BookingVehicleCategory.courierBike ||
                 category == BookingVehicleCategory.kekehTricycle)
-            ? 4
+            ? 3
             : 6;
       }
 
@@ -137,6 +140,8 @@ class FareCalculationService {
         vehicleCategory == DriverVehicleCategory.kekehTricycle,
       BookingVehicleCategory.courierBike =>
         vehicleCategory == DriverVehicleCategory.deliveryBike,
+      BookingVehicleCategory.truckHaulage =>
+        vehicleCategory == DriverVehicleCategory.standard,
     };
   }
 }

@@ -10,6 +10,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
 import '../../../../core/theme/components/vx_status_badge.dart';
 import '../../../real_estate/domain/entities/property_listing_entity.dart';
+import '../../../listings/presentation/views/property_detail_screen.dart';
 
 class RealEstateShowcasePanel extends StatefulWidget {
   final List<PropertyListingEntity> properties;
@@ -159,8 +160,17 @@ class _RealEstateShowcasePanelState extends State<RealEstateShowcasePanel> {
       priceLabel = 'SLE ${prop.price.toStringAsFixed(0)}';
     }
 
-    return Container(
-      decoration: BoxDecoration(
+    return InkWell(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => PropertyDetailScreen.fromEntity(prop),
+          ),
+        );
+      },
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        decoration: BoxDecoration(
         color: AppColors.white,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppColors.border),
@@ -364,7 +374,7 @@ class _RealEstateShowcasePanelState extends State<RealEstateShowcasePanel> {
           ),
         ],
       ),
-    );
+    ));
   }
 
   Widget _buildSpecChip(IconData icon, String text) {

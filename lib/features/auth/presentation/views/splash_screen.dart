@@ -119,9 +119,14 @@ class _SplashScreenState extends State<SplashScreen>
                         decoration: BoxDecoration(
                           boxShadow: [
                             BoxShadow(
-                              color: AppColors.emerald.withValues(alpha: 0.25),
-                              blurRadius: 24,
-                              spreadRadius: 2,
+                              color: AppColors.emerald.withValues(alpha: 0.35),
+                              blurRadius: 36,
+                              spreadRadius: 6,
+                            ),
+                            BoxShadow(
+                              color: AppColors.emerald.withValues(alpha: 0.15),
+                              blurRadius: 72,
+                              spreadRadius: 12,
                             ),
                           ],
                         ),
@@ -161,117 +166,27 @@ class _SplashScreenState extends State<SplashScreen>
                 ),
               ),
 
-              const Spacer(flex: 2),
+              const Spacer(flex: 3),
 
-              // ── Diagnostic Health Check Indicators ───────────────────
+              // ── Activity Spinner ─────────────────────────────────────
               BlocBuilder<AuthBloc, AuthState>(
                 builder: (context, state) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 56),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.obsidianLight.withValues(alpha: 0.6),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: AppColors.gray700.withValues(alpha: 0.4),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [
-                          _HealthIndicator(
-                            label: 'SQLite',
-                            isActive: state.isSqliteReady,
-                          ),
-                          _HealthIndicator(
-                            label: 'Convex',
-                            isActive: state.isConvexReachable,
-                          ),
-                          _HealthIndicator(
-                            label: 'Session',
-                            isActive: state.hasExistingSession,
-                          ),
-                        ],
-                      ),
+                  return const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: AppColors.emerald,
                     ),
                   );
                 },
               ),
 
-              const SizedBox(height: 20),
-
-              // ── Activity Spinner ─────────────────────────────────────
-              BlocBuilder<AuthBloc, AuthState>(
-                builder: (context, state) {
-                  if (state.isLoading) {
-                    return SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppColors.emerald.withValues(alpha: 0.8),
-                      ),
-                    );
-                  }
-                  return const SizedBox(height: 22);
-                },
-              ),
-
-              const SizedBox(height: 40),
+              const SizedBox(height: 48),
             ],
           ),
         ),
       ),
-    );
-  }
-}
-
-class _HealthIndicator extends StatelessWidget {
-  final String label;
-  final bool isActive;
-
-  const _HealthIndicator({
-    required this.label,
-    required this.isActive,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 350),
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: isActive ? AppColors.emerald : AppColors.gray600,
-            boxShadow: isActive
-                ? [
-                    BoxShadow(
-                      color: AppColors.emerald.withValues(alpha: 0.6),
-                      blurRadius: 6,
-                      spreadRadius: 1,
-                    ),
-                  ]
-                : null,
-          ),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            color: isActive ? AppColors.gray200 : AppColors.gray500,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      ],
     );
   }
 }

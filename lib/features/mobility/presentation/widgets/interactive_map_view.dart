@@ -30,6 +30,7 @@ class InteractiveMapView extends StatefulWidget {
   final String? assignedDriverCategory;
   final String? assignedDriverName;
   final String? assignedDriverPlate;
+  final String? selectedCategory;
   final VoidCallback? onMapTap;
   final ValueChanged<RouteDetails>? onRouteCalculated;
   final ValueChanged<LatLng>? onPickupPositionChanged;
@@ -51,6 +52,7 @@ class InteractiveMapView extends StatefulWidget {
     this.assignedDriverCategory,
     this.assignedDriverName,
     this.assignedDriverPlate,
+    this.selectedCategory,
     this.onMapTap,
     this.onRouteCalculated,
     this.onPickupPositionChanged,
@@ -133,7 +135,8 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
   @override
   void didUpdateWidget(covariant InteractiveMapView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.pickupLat != widget.pickupLat ||
+    if (oldWidget.selectedCategory != widget.selectedCategory ||
+        oldWidget.pickupLat != widget.pickupLat ||
         oldWidget.pickupLng != widget.pickupLng ||
         oldWidget.dropoffLat != widget.dropoffLat ||
         oldWidget.dropoffLng != widget.dropoffLng ||

@@ -12,6 +12,7 @@ import '../../../../core/theme/components/vx_status_badge.dart';
 import '../../domain/entities/mobility_vehicle_entity.dart';
 import 'escrow_milestone_modal.dart';
 import 'in_app_chat_modal.dart';
+import '../../../listings/presentation/views/vehicle_detail_screen.dart';
 
 class VehicleSalesCatalog extends StatelessWidget {
   final List<VehicleListingEntity> salesVehicles;
@@ -97,9 +98,18 @@ class VehicleSalesCatalog extends StatelessWidget {
             final salePrice = vehicle.salePrice ?? 120000.0;
             final images = vehicle.imageUrls;
 
-            return Container(
-              margin: const EdgeInsets.only(bottom: 14),
-              decoration: BoxDecoration(
+            return InkWell(
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => VehicleDetailScreen.fromEntity(vehicle),
+                  ),
+                );
+              },
+              borderRadius: BorderRadius.circular(18),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 14),
+                decoration: BoxDecoration(
                 color: AppColors.white,
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(color: AppColors.border),
@@ -274,7 +284,7 @@ class VehicleSalesCatalog extends StatelessWidget {
                   ),
                 ],
               ),
-            );
+            ));
           }),
         ],
       ),

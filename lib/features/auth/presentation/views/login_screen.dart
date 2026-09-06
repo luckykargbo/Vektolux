@@ -134,6 +134,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextFormField(
                     controller: _identifierController,
                     keyboardType: TextInputType.emailAddress,
+                    style: const TextStyle(
+                      color: AppColors.obsidian,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                    ),
                     decoration: const InputDecoration(
                       labelText: 'Email or Phone Number',
                       hintText: 'e.g. lamin@example.com or +23276123456',
@@ -152,6 +157,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextFormField(
                     controller: _passwordController,
                     obscureText: _obscurePassword,
+                    style: const TextStyle(
+                      color: AppColors.obsidian,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                    ),
                     decoration: InputDecoration(
                       labelText: 'Password',
                       hintText: 'Enter your password',

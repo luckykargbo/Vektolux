@@ -29,6 +29,8 @@ import '../widgets/vpn_fallback_banner.dart';
 import '../widgets/finding_driver_radar_overlay.dart';
 import '../widgets/real_estate_showcase_panel.dart';
 import 'driver_portal_screen.dart';
+import '../../../profile/presentation/views/profile_screen.dart';
+import '../../../listings/presentation/views/property_detail_screen.dart';
 
 class MobilityHomeScreen extends StatefulWidget {
   final String currentUserId;
@@ -296,6 +298,7 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
             assignedDriverCategory: state.selectedBookingCategory.id,
             assignedDriverName: state.activeRide?.driverName,
             assignedDriverPlate: state.activeRide?.vehiclePlate,
+            selectedCategory: state.selectedBookingCategory.id,
             onPickupPositionChanged: (newPoint) {
               context.read<MobilityBloc>().add(
                     UpdateLocationsEvent(
@@ -498,6 +501,16 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
                         )
                       : RealEstateShowcasePanel(
                           properties: state.realEstateListings,
+                          onBookSiteVisit: (prop) => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => PropertyDetailScreen.fromEntity(prop),
+                            ),
+                          ),
+                          onBookHourlyStay: (prop) => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => PropertyDetailScreen.fromEntity(prop),
+                            ),
+                          ),
                         ),
             ),
           ),
@@ -658,6 +671,38 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
                     currentUserId: widget.currentUserId,
                     initialLat: widget.initialLat,
                     initialLng: widget.initialLng,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(width: 8),
+
+        // Circular Profile Avatar Button
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: AppColors.emerald, width: 2),
+            color: AppColors.obsidian,
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.obsidian.withValues(alpha: 0.25),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: IconButton(
+            tooltip: 'My Profile & Settings',
+            icon: const Icon(Icons.person_outline_rounded, color: AppColors.white, size: 20),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ProfileScreen(
+                    currentUserId: widget.currentUserId,
                   ),
                 ),
               );

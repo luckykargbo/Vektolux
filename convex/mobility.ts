@@ -797,7 +797,7 @@ export const verifyPinAndStartTrip = mutation({
 
     const now = Date.now();
     await ctx.db.patch(tripConvexId, {
-      status: "inProgress",
+      status: "in_progress",
       startedAt: now,
       updatedAt: now,
     });
@@ -855,13 +855,13 @@ export const completeTripAndReleasePayment = mutation({
       await ctx.db.insert("transactions", {
         walletId: wallet._id,
         userId: driverProfile.userId,
-        type: "credit",
+        type: "payout",
         amount: driverPayout,
         currency: trip.currency ?? "SLE",
         referenceType: "trip_payout",
         referenceId: trip._id,
         counterpartyId: trip.passengerId,
-        status: "settled",
+        status: "completed",
         description: `Trip earnings for ${trip.pickupAddressText} -> ${trip.dropoffAddressText}`,
         updatedAt: now,
       });

@@ -20,7 +20,7 @@ import { requirePositive } from "./lib/validation";
 
 // ─── FARE CONFIGURATION ─────────────────────────────────────────────
 
-/** Fare rates by vehicle type. All amounts in local currency units. */
+/** Fare rates by vehicle type. All amounts in SLE (Sierra Leone Leones). */
 const FARE_CONFIG: Record<
   string,
   {
@@ -32,31 +32,59 @@ const FARE_CONFIG: Record<
   }
 > = {
   bike: {
-    baseFare: 500,
-    ratePerKm: 100,
-    ratePerMin: 20,
-    minimumFare: 1000,
+    baseFare: 5,
+    ratePerKm: 3.0,
+    ratePerMin: 0.5,
+    minimumFare: 5,
+    surgeCap: 2.0,
+  },
+  okada: {
+    baseFare: 5,
+    ratePerKm: 3.0,
+    ratePerMin: 0.5,
+    minimumFare: 5,
+    surgeCap: 2.0,
+  },
+  kekeh: {
+    baseFare: 8,
+    ratePerKm: 4.5,
+    ratePerMin: 0.8,
+    minimumFare: 8,
     surgeCap: 2.0,
   },
   taxi: {
-    baseFare: 1000,
-    ratePerKm: 200,
-    ratePerMin: 40,
-    minimumFare: 2000,
+    baseFare: 15,
+    ratePerKm: 8.0,
+    ratePerMin: 1.0,
+    minimumFare: 15,
+    surgeCap: 2.5,
+  },
+  sedan: {
+    baseFare: 15,
+    ratePerKm: 8.0,
+    ratePerMin: 1.0,
+    minimumFare: 15,
     surgeCap: 2.5,
   },
   delivery_van: {
-    baseFare: 2000,
-    ratePerKm: 350,
-    ratePerMin: 50,
-    minimumFare: 5000,
+    baseFare: 25,
+    ratePerKm: 12.0,
+    ratePerMin: 1.5,
+    minimumFare: 25,
+    surgeCap: 2.0,
+  },
+  suv: {
+    baseFare: 25,
+    ratePerKm: 12.0,
+    ratePerMin: 1.5,
+    minimumFare: 25,
     surgeCap: 2.0,
   },
   truck: {
-    baseFare: 5000,
-    ratePerKm: 600,
-    ratePerMin: 80,
-    minimumFare: 10000,
+    baseFare: 50,
+    ratePerKm: 20.0,
+    ratePerMin: 2.0,
+    minimumFare: 50,
     surgeCap: 1.5,
   },
 };
@@ -86,8 +114,12 @@ export const findNearbyDrivers = query({
     vehicleType: v.optional(
       v.union(
         v.literal("bike"),
+        v.literal("okada"),
+        v.literal("kekeh"),
         v.literal("taxi"),
+        v.literal("sedan"),
         v.literal("delivery_van"),
+        v.literal("suv"),
         v.literal("truck")
       )
     ),
@@ -321,8 +353,12 @@ export const estimateRideFare = query({
     dropoffLng: v.number(),
     vehicleType: v.union(
       v.literal("bike"),
+      v.literal("okada"),
+      v.literal("kekeh"),
       v.literal("taxi"),
+      v.literal("sedan"),
       v.literal("delivery_van"),
+      v.literal("suv"),
       v.literal("truck")
     ),
     surgeMultiplier: v.optional(v.number()),
@@ -355,13 +391,17 @@ export const estimateRideFare = query({
 
     // ── Duration estimation ───────────────────────────────────────
     const AVG_SPEEDS: Record<string, number> = {
-      bike: 25,
-      taxi: 30,
-      delivery_van: 25,
-      truck: 20,
+      bike: 28,
+      okada: 28,
+      kekeh: 25,
+      taxi: 22,
+      sedan: 22,
+      delivery_van: 24,
+      suv: 24,
+      truck: 18,
     };
 
-    const avgSpeedKmh = AVG_SPEEDS[args.vehicleType] ?? 25;
+    const avgSpeedKmh = AVG_SPEEDS[args.vehicleType] ?? 22;
     const estimatedDurationMin = (distanceKm / avgSpeedKmh) * 60;
 
     // ── Fare calculation ──────────────────────────────────────────
@@ -432,8 +472,12 @@ export const requestRide = mutation({
     dropoffAddress: v.optional(v.string()),
     vehicleType: v.union(
       v.literal("bike"),
+      v.literal("okada"),
+      v.literal("kekeh"),
       v.literal("taxi"),
+      v.literal("sedan"),
       v.literal("delivery_van"),
+      v.literal("suv"),
       v.literal("truck")
     ),
   },
@@ -476,8 +520,16 @@ export const requestRide = mutation({
 
     const config = FARE_CONFIG[args.vehicleType];
     const avgSpeed =
-      { bike: 25, taxi: 30, delivery_van: 25, truck: 20 }[args.vehicleType] ??
-      25;
+      {
+        bike: 28,
+        okada: 28,
+        kekeh: 25,
+        taxi: 22,
+        sedan: 22,
+        delivery_van: 24,
+        suv: 24,
+        truck: 18,
+      }[args.vehicleType] ?? 22;
     const durationMin = (distanceKm / avgSpeed) * 60;
 
     const rawFare =

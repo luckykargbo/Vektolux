@@ -255,6 +255,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
             TextFormField(
               controller: _nameController,
               textCapitalization: TextCapitalization.words,
+              style: const TextStyle(
+                color: AppColors.obsidian,
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+              ),
               decoration: const InputDecoration(
                 labelText: 'Full Name',
                 hintText: 'e.g. Lamin Kamara',
@@ -272,6 +277,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
             TextFormField(
               controller: _emailController,
               keyboardType: TextInputType.emailAddress,
+              style: const TextStyle(
+                color: AppColors.obsidian,
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+              ),
               decoration: const InputDecoration(
                 labelText: 'Email Address',
                 hintText: 'lamin@example.com',
@@ -295,33 +305,40 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   height: 58,
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    color: AppColors.gray50,
+                    color: AppColors.gray100, // #F1F5F9
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.border),
+                    border: Border.all(color: AppColors.gray300, width: 1.5), // #CBD5E1
                   ),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
                       value: _countryCode,
+                      dropdownColor: AppColors.white,
+                      iconEnabledColor: AppColors.obsidian,
+                      style: const TextStyle(
+                        color: AppColors.obsidian,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
                       items: const [
                         DropdownMenuItem(
                           value: '+232',
-                          child: Text('SL +232'),
+                          child: Text('SL +232', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
                         ),
                         DropdownMenuItem(
                           value: '+234',
-                          child: Text('NG +234'),
+                          child: Text('NG +234', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
                         ),
                         DropdownMenuItem(
                           value: '+233',
-                          child: Text('GH +233'),
+                          child: Text('GH +233', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
                         ),
                         DropdownMenuItem(
                           value: '+1',
-                          child: Text('US +1'),
+                          child: Text('US +1', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
                         ),
                         DropdownMenuItem(
                           value: '+44',
-                          child: Text('UK +44'),
+                          child: Text('UK +44', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
                         ),
                       ],
                       onChanged: (val) {
@@ -335,6 +352,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   child: TextFormField(
                     controller: _phoneController,
                     keyboardType: TextInputType.phone,
+                    style: const TextStyle(
+                      color: AppColors.obsidian,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                    ),
                     decoration: const InputDecoration(
                       labelText: 'Phone Number',
                       hintText: '76 123 456',
@@ -356,6 +378,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
             TextFormField(
               controller: _passwordController,
               obscureText: _obscurePassword,
+              style: const TextStyle(
+                color: AppColors.obsidian,
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+              ),
               decoration: InputDecoration(
                 labelText: 'Password',
                 hintText: 'Min. 8 characters',
@@ -377,6 +404,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
             TextFormField(
               controller: _confirmPasswordController,
               obscureText: _obscureConfirmPassword,
+              style: const TextStyle(
+                color: AppColors.obsidian,
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+              ),
               decoration: InputDecoration(
                 labelText: 'Confirm Password',
                 prefixIcon: const Icon(Icons.lock_outline),
@@ -414,6 +446,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
               TextFormField(
                 controller: _businessNameController,
                 textCapitalization: TextCapitalization.words,
+                style: const TextStyle(
+                  color: AppColors.obsidian,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                ),
                 decoration: const InputDecoration(
                   labelText: 'Business / Company Name',
                   hintText: 'e.g. Freetown Realty Ltd',
@@ -423,6 +460,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
               const SizedBox(height: 16),
               TextFormField(
                 controller: _tinController,
+                style: const TextStyle(
+                  color: AppColors.obsidian,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                ),
                 decoration: const InputDecoration(
                   labelText: 'TIN / Business Registration Number',
                   hintText: 'Optional registration code',

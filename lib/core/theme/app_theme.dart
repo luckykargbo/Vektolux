@@ -185,16 +185,16 @@ abstract final class AppTheme {
       // ── Input Fields ────────────────────────────────────────────
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: AppColors.gray50,
+        fillColor: AppColors.gray100, // #F1F5F9
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(_borderRadiusSm),
-          borderSide: const BorderSide(color: AppColors.border),
+          borderSide: const BorderSide(color: AppColors.gray300, width: 1.5),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(_borderRadiusSm),
-          borderSide: const BorderSide(color: AppColors.border),
+          borderSide: const BorderSide(color: AppColors.gray300, width: 1.5),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(_borderRadiusSm),
@@ -202,23 +202,23 @@ abstract final class AppTheme {
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(_borderRadiusSm),
-          borderSide: const BorderSide(color: AppColors.error),
+          borderSide: const BorderSide(color: AppColors.error, width: 1.5),
         ),
         focusedErrorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(_borderRadiusSm),
           borderSide: const BorderSide(color: AppColors.error, width: 2),
         ),
         hintStyle: AppTypography.textTheme.bodyMedium?.copyWith(
-          color: AppColors.textDisabled,
+          color: AppColors.gray500, // #64748B
         ),
         labelStyle: AppTypography.textTheme.bodyMedium?.copyWith(
-          color: AppColors.textSecondary,
+          color: AppColors.gray500, // #64748B
         ),
         errorStyle: AppTypography.textTheme.bodySmall?.copyWith(
           color: AppColors.error,
         ),
-        prefixIconColor: AppColors.gray400,
-        suffixIconColor: AppColors.gray400,
+        prefixIconColor: AppColors.gray500,
+        suffixIconColor: AppColors.gray500,
       ),
 
       // ── Chips ───────────────────────────────────────────────────

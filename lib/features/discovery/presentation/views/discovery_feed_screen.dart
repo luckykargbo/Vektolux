@@ -18,6 +18,9 @@ import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../bookings/presentation/widgets/booking_modals.dart';
 import '../../../bookings/presentation/views/my_bookings_screen.dart';
+import '../../../profile/presentation/views/profile_screen.dart';
+import '../../../listings/presentation/views/property_detail_screen.dart';
+import '../../../listings/presentation/views/vehicle_detail_screen.dart';
 
 class DiscoveryFeedScreen extends StatefulWidget {
   final AppDatabase database;
@@ -217,10 +220,45 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
                       )
                     else
                       IconButton(
-                        icon: const Icon(Icons.sync, color: AppColors.gray300),
-                        tooltip: 'Refresh feed',
-                        onPressed: _syncFromConvex,
+                      icon: const Icon(Icons.sync, color: AppColors.gray300),
+                      tooltip: 'Refresh feed',
+                      onPressed: _syncFromConvex,
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12, left: 4),
+                      child: GestureDetector(
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => ProfileScreen(
+                                currentUserId: authState.user?.id,
+                              ),
+                            ),
+                          );
+                        },
+                        child: Container(
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: AppColors.emerald, width: 1.5),
+                            color: AppColors.obsidianLight,
+                          ),
+                          child: Center(
+                            child: Text(
+                              (authState.user?.name.isNotEmpty == true)
+                                  ? authState.user!.name[0].toUpperCase()
+                                  : 'U',
+                              style: const TextStyle(
+                                color: AppColors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
+                    ),
                   ],
                   bottom: PreferredSize(
                     preferredSize: const Size.fromHeight(48),
@@ -562,9 +600,18 @@ class _PropertyListingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
+    return InkWell(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => PropertyDetailScreen.fromCached(listing),
+          ),
+        );
+      },
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(
         color: AppColors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.border),
@@ -687,10 +734,10 @@ class _PropertyListingCard extends StatelessWidget {
                     Expanded(
                       child: OutlinedButton(
                         onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Details for: ${listing.title}'),
-                              behavior: SnackBarBehavior.floating,
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  PropertyDetailScreen.fromCached(listing),
                             ),
                           );
                         },
@@ -766,7 +813,7 @@ class _PropertyListingCard extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ));
   }
 
   Widget _buildFallbackImage() {
@@ -831,9 +878,18 @@ class _VehicleListingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
+    return InkWell(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => VehicleDetailScreen.fromCached(vehicle),
+          ),
+        );
+      },
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(
         color: AppColors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.border),
@@ -964,11 +1020,10 @@ class _VehicleListingCard extends StatelessWidget {
                     Expanded(
                       child: OutlinedButton(
                         onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                  'Details: ${vehicle.make} ${vehicle.model}'),
-                              behavior: SnackBarBehavior.floating,
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  VehicleDetailScreen.fromCached(vehicle),
                             ),
                           );
                         },
@@ -1054,7 +1109,7 @@ class _VehicleListingCard extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ));
   }
 
   Widget _buildFallbackImage() {
