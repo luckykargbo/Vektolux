@@ -120,6 +120,82 @@ export const initiateVerification = mutation({
   },
 });
 
+// ─── MOCK / SIMULATED VERIFICATION (DEVELOPMENT & TEST MODE) ──────────
+export const mockCompleteVerification = mutation({
+  args: {
+    userId: v.string(),
+    sessionToken: v.string(),
+    documentType: idDocumentTypeEnum,
+    idNumber: v.string(),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    status: v.string(),
+    badge: v.string(),
+    referenceId: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const userId = ctx.db.normalizeId("users", args.userId);
+    if (!userId) throw new Error("Invalid user account.");
+    const user = await ctx.db.get(userId);
+    if (!user || user.sessionToken !== args.sessionToken) {
+      throw new Error("Unauthorized session.");
+    }
+
+    const now = Date.now();
+    const idHash = await computeSaltedHash(args.idNumber);
+    const referenceId = `vkt_mock_${now}_${Math.random().toString(36).substring(2, 8)}`;
+
+    const checkId = await ctx.db.insert("identity_checks", {
+      userId,
+      referenceId,
+      documentType: args.documentType,
+      idNumberHash: idHash,
+      status: "verified",
+      provider: "mock_simulation",
+      attemptNumber: 1,
+      livenessScore: 99.8,
+      faceMatchScore: 99.2,
+      mrzValidated: true,
+      tamperingPassed: true,
+      completedAt: now,
+      createdAt: now,
+    });
+
+    await ctx.db.patch(userId, {
+      isVerified: true,
+      verificationStatus: "verified",
+      verificationBadge: "GREEN_TICK",
+      verifiedAt: now,
+      verificationReferenceId: referenceId,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("verifications_log", {
+      idempotencyKey: `mock_${referenceId}`,
+      checkId,
+      userId,
+      event: "approved",
+      provider: "mock_simulation",
+      signatureVerified: true,
+      rawResultCode: "MOCK_SIM_APPROVED",
+      diagnosticPayload: JSON.stringify({
+        type: "development_simulated_eIDV",
+        docType: args.documentType,
+        timestamp: now,
+      }),
+      createdAt: now,
+    });
+
+    return {
+      success: true,
+      status: "verified",
+      badge: "GREEN_TICK",
+      referenceId,
+    };
+  },
+});
+
 // ─── GET CURRENT USER VERIFICATION STATUS ─────────────────────────────
 export const getVerificationStatus = query({
   args: { userId: v.string() },

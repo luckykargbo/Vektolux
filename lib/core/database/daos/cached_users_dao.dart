@@ -50,6 +50,19 @@ class CachedUsersDao extends DatabaseAccessor<AppDatabase>
         .write(const CachedUsersTableCompanion(isActiveSession: Value(false)));
   }
 
+  /// Update user verification status in local cache.
+  Future<void> updateVerificationStatus({
+    required String userId,
+    required bool isVerified,
+  }) async {
+    await (update(cachedUsersTable)..where((t) => t.id.equals(userId))).write(
+      CachedUsersTableCompanion(
+        isVerified: Value(isVerified),
+        cachedAt: Value(DateTime.now().millisecondsSinceEpoch),
+      ),
+    );
+  }
+
   /// Delete all cached users (complete reset).
   Future<void> deleteAll() async {
     await delete(cachedUsersTable).go();

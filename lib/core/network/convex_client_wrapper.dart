@@ -55,9 +55,20 @@ class ConvexResult {
         );
       }
     } else {
+      String errorMsg = 'HTTP ${response.statusCode}: ${response.body}';
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          if (decoded['code'] == 'InvalidAuthHeader') {
+            errorMsg = 'Authentication session invalid or expired.';
+          } else if (decoded['message'] != null) {
+            errorMsg = decoded['message'].toString();
+          }
+        }
+      } catch (_) {}
       return ConvexResult(
         success: false,
-        errorMessage: 'HTTP ${response.statusCode}: ${response.body}',
+        errorMessage: errorMsg,
       );
     }
   }
@@ -84,6 +95,12 @@ class ConvexClientWrapper {
   // ═══════════════════════════════════════════════════════════════════
   //                        AUTH
   // ═══════════════════════════════════════════════════════════════════
+
+  /// Current auth token (if set).
+  String? get authToken => _authToken;
+
+  /// Whether an auth token is currently configured.
+  bool get hasAuthToken => _authToken != null && _authToken!.trim().isNotEmpty;
 
   /// Set the auth token for authenticated requests.
   void setAuthToken(String token) {
@@ -199,8 +216,12 @@ class ConvexClientWrapper {
     final headers = <String, String>{
       'Content-Type': 'application/json',
     };
-    if (_authToken != null) {
-      headers['Authorization'] = 'Bearer $_authToken';
+    // Convex Cloud HTTP API expects an OIDC / Convex Auth JWT if an Authorization header
+    // is provided. If an arbitrary or session-hex token is attached, Convex Cloud immediately
+    // rejects the call with HTTP 401: {"code": "InvalidAuthHeader"}.
+    // Application-level session tokens are transmitted in the function args.
+    if (_authToken != null && _authToken!.trim().isNotEmpty && _isValidJwt(_authToken!.trim())) {
+      headers['Authorization'] = 'Bearer ${_authToken!.trim()}';
     }
 
     final body = jsonEncode({
@@ -226,6 +247,17 @@ class ConvexClientWrapper {
         errorMessage: 'Network error: $e',
       );
     }
+  }
+
+  /// Checks if a token matches the standard 3-part base64 JWT format.
+  static bool _isValidJwt(String token) {
+    final parts = token.split('.');
+    if (parts.length != 3) return false;
+    final jwtCharRegex = RegExp(r'^[A-Za-z0-9_-]+$');
+    return parts[0].isNotEmpty &&
+        parts[1].isNotEmpty &&
+        jwtCharRegex.hasMatch(parts[0]) &&
+        jwtCharRegex.hasMatch(parts[1]);
   }
 
   /// Dispose HTTP client resources.

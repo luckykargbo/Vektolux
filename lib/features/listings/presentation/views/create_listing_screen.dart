@@ -106,6 +106,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
         builder: (ctx) => IdentityVerificationScreen(
           convexClient: widget.convexClient,
           currentUser: widget.currentUser,
+          usersDao: widget.database.cachedUsersDao,
           onVerificationComplete: () {
             Navigator.of(ctx).pop();
             setState(() {
