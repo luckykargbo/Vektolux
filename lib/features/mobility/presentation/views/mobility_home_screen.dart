@@ -28,6 +28,11 @@ import '../widgets/landmark_autocomplete_sheet.dart';
 import '../widgets/vpn_fallback_banner.dart';
 import '../widgets/finding_driver_radar_overlay.dart';
 import '../widgets/real_estate_showcase_panel.dart';
+import '../widgets/driver_marker_preview_card.dart';
+import '../widgets/group_trip_sheet.dart';
+import '../widgets/share_location_sheet.dart';
+import '../../domain/entities/nearby_driver_entity.dart';
+import '../../domain/entities/vehicle_category_catalog.dart';
 import 'driver_portal_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
@@ -51,6 +56,7 @@ class MobilityHomeScreen extends StatefulWidget {
 class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
   final DraggableScrollableController _sheetController = DraggableScrollableController();
   bool _isPermissionModalShowing = false;
+  NearbyDriverEntity? _selectedDriverPreview;
 
   @override
   void initState() {
@@ -309,6 +315,9 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
                     ),
                   );
             },
+            onDriverTap: (driver) {
+              setState(() => _selectedDriverPreview = driver);
+            },
             onConfirmPinSpot: () {
               context.read<MobilityBloc>().add(const TogglePinDragModeEvent(false));
               ScaffoldMessenger.of(context).showSnackBar(
@@ -344,8 +353,97 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
           ),
         ),
 
-        // ── Bottom Panel (Draggable Sheet OR Active Ride Overlay OR Finding Driver Radar) ───
-        if (state.isSearchingDriver) ...[
+        // ── Floating Quick Action Pill Row (Group Trip & Share Location) ────
+        if (_selectedDriverPreview == null &&
+            !state.isSearchingDriver &&
+            !(state.activeRide != null && state.activeRide!.status.isActive))
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 64 + (state.isVpnMismatch ? 44 : 0),
+            right: 16,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildQuickActionChip(
+                  icon: Icons.groups_rounded,
+                  label: 'Group Trip',
+                  backgroundColor: AppColors.obsidian,
+                  textColor: AppColors.white,
+                  iconColor: AppColors.amber,
+                  onTap: () {
+                    GroupTripSheet.show(
+                      context,
+                      pickupAddress: state.pickupAddress,
+                      dropoffAddress: state.dropoffAddress,
+                      totalFare: state.currentCalculatedEstimate?.fareAmount ?? 35.0,
+                      vehicleType: state.selectedBookingCategory.title,
+                    );
+                  },
+                ),
+                const SizedBox(width: 8),
+                _buildQuickActionChip(
+                  icon: Icons.share_location_rounded,
+                  label: 'Share Pin',
+                  backgroundColor: AppColors.white,
+                  textColor: AppColors.obsidian,
+                  iconColor: AppColors.emerald,
+                  onTap: () {
+                    ShareLocationSheet.show(
+                      context,
+                      latitude: state.pickupLat,
+                      longitude: state.pickupLng,
+                      label: 'Pickup: ${state.pickupAddress}',
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+
+        // ── Bottom Panel (Driver Marker Preview Card OR Finding Driver Radar OR Active Ride Overlay OR Draggable Sheet) ───
+        if (_selectedDriverPreview != null) ...[
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: DriverMarkerPreviewCard(
+              driver: _selectedDriverPreview!,
+              onClose: () => setState(() => _selectedDriverPreview = null),
+              onBook: (driver) {
+                final cat = driver.vehicle?.category ?? DriverVehicleCategory.kekehTricycle;
+                final bookingCat = switch (cat) {
+                  DriverVehicleCategory.kekehTricycle => BookingVehicleCategory.kekehTricycle,
+                  DriverVehicleCategory.deliveryBike => BookingVehicleCategory.courierBike,
+                  DriverVehicleCategory.comfort => BookingVehicleCategory.comfortRide,
+                  DriverVehicleCategory.standard => BookingVehicleCategory.standardRide,
+                };
+                context.read<MobilityBloc>().add(SelectBookingCategoryEvent(bookingCat));
+                setState(() => _selectedDriverPreview = null);
+                context.read<MobilityBloc>().add(
+                      ConfirmBookingRequestEvent(passengerId: widget.currentUserId),
+                    );
+              },
+              onCall: (driver) {
+                final phone = driver.driverPhone.isNotEmpty ? driver.driverPhone : '+232 76 555 432';
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Calling ${driver.driverName} at $phone...'),
+                    backgroundColor: AppColors.obsidian,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              },
+              onShareLocation: (driver) {
+                ShareLocationSheet.show(
+                  context,
+                  latitude: state.pickupLat,
+                  longitude: state.pickupLng,
+                  label: 'Pickup: ${state.pickupAddress}',
+                  recipientName: driver.driverName,
+                );
+              },
+            ),
+          ),
+        ] else if (state.isSearchingDriver) ...[
           Positioned(
             bottom: 0,
             left: 0,
@@ -680,36 +778,101 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
         const SizedBox(width: 8),
 
         // Circular Profile Avatar Button
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: AppColors.emerald, width: 2),
-            color: AppColors.obsidian,
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.obsidian.withValues(alpha: 0.25),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: IconButton(
-            tooltip: 'My Profile & Settings',
-            icon: const Icon(Icons.person_outline_rounded, color: AppColors.white, size: 20),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => ProfileScreen(
-                    currentUserId: widget.currentUserId,
+        Builder(
+          builder: (avatarContext) {
+            final user = avatarContext.watch<AuthBloc>().state.user;
+            return GestureDetector(
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ProfileScreen(
+                      currentUserId: widget.currentUserId,
+                    ),
                   ),
+                );
+              },
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.emerald, width: 2),
+                  color: AppColors.obsidian,
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.obsidian.withValues(alpha: 0.25),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-              );
-            },
-          ),
+                child: ClipOval(
+                  child: user?.avatarUrl != null && user!.avatarUrl!.isNotEmpty
+                      ? Image.network(
+                          user.avatarUrl!,
+                          width: 44,
+                          height: 44,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Icon(
+                            Icons.person_outline_rounded,
+                            color: AppColors.white,
+                            size: 20,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.person_outline_rounded,
+                          color: AppColors.white,
+                          size: 20,
+                        ),
+                ),
+              ),
+            );
+          },
         ),
       ],
+    );
+  }
+
+  Widget _buildQuickActionChip({
+    required IconData icon,
+    required String label,
+    required Color backgroundColor,
+    required Color textColor,
+    required Color iconColor,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.obsidian.withValues(alpha: 0.12),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: iconColor),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: textColor,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

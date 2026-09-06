@@ -209,6 +209,43 @@ class AuthRepositoryImpl implements AuthRepository {
     }
   }
 
+  @override
+  Future<UserEntity> updateUserProfile({
+    required String userId,
+    String? name,
+    String? phone,
+    String? avatarUrl,
+  }) async {
+    final current = await getActiveSession();
+    if (current == null) {
+      throw Exception('No active session found.');
+    }
+
+    try {
+      await _convexClient.mutation(
+        'users:updateUserProfile',
+        args: {
+          'userId': userId,
+          if (name != null) 'name': name,
+          if (phone != null) 'phone': phone,
+          if (avatarUrl != null) 'avatarUrl': avatarUrl,
+        },
+      );
+    } catch (e) {
+      _log.w('Could not sync profile update to Convex (offline mode?): $e');
+    }
+
+    final updated = current.copyWith(
+      name: name ?? current.name,
+      phone: phone ?? current.phone,
+      avatarUrl: avatarUrl ?? current.avatarUrl,
+    );
+
+    await _cacheUser(updated);
+    _log.i('Profile updated and cached: ${updated.name}');
+    return updated;
+  }
+
   // ── Private Helpers ──────────────────────────────────────────────
 
   Future<void> _cacheUser(UserEntity user) async {

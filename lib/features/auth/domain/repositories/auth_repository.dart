@@ -39,4 +39,12 @@ abstract class AuthRepository {
 
   /// Check if Convex backend is reachable.
   Future<bool> checkConvexHealth();
+
+  /// Update user profile (name, phone, avatarUrl) and refresh cache.
+  Future<UserEntity> updateUserProfile({
+    required String userId,
+    String? name,
+    String? phone,
+    String? avatarUrl,
+  });
 }

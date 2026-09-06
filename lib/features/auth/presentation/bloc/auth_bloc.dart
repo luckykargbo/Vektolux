@@ -24,6 +24,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<RegisterSubmittedEvent>(_onRegisterSubmitted);
     on<LoginSubmittedEvent>(_onLoginSubmitted);
     on<LogoutEvent>(_onLogout);
+    on<UpdateUserProfileEvent>(_onUpdateUserProfile);
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -175,6 +176,36 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     await _repository.logout();
     emit(const AuthState(status: AuthStatus.unauthenticated));
     _log.i('User logged out');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //                      UPDATE USER PROFILE
+  // ═══════════════════════════════════════════════════════════════════
+
+  Future<void> _onUpdateUserProfile(
+    UpdateUserProfileEvent event,
+    Emitter<AuthState> emit,
+  ) async {
+    if (state.user == null) return;
+
+    try {
+      final updatedUser = await _repository.updateUserProfile(
+        userId: state.user!.id,
+        name: event.name,
+        phone: event.phone,
+        avatarUrl: event.avatarUrl,
+      );
+
+      emit(state.copyWith(
+        user: updatedUser,
+        successMessage: 'Profile updated successfully!',
+      ));
+    } catch (e) {
+      _log.e('Failed to update profile: $e');
+      emit(state.copyWith(
+        errorMessage: 'Failed to update profile: $e',
+      ));
+    }
   }
 
   // ── Helpers ──────────────────────────────────────────────────────

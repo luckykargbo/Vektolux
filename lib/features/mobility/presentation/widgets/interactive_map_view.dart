@@ -33,6 +33,8 @@ class InteractiveMapView extends StatefulWidget {
   final String? selectedCategory;
   final VoidCallback? onMapTap;
   final ValueChanged<RouteDetails>? onRouteCalculated;
+  final ValueChanged<NearbyDriverEntity>? onDriverTap;
+  final ValueChanged<VehicleListingEntity>? onVehicleTap;
   final ValueChanged<LatLng>? onPickupPositionChanged;
   final VoidCallback? onConfirmPinSpot;
 
@@ -55,6 +57,8 @@ class InteractiveMapView extends StatefulWidget {
     this.selectedCategory,
     this.onMapTap,
     this.onRouteCalculated,
+    this.onDriverTap,
+    this.onVehicleTap,
     this.onPickupPositionChanged,
     this.onConfirmPinSpot,
   });
@@ -367,26 +371,32 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                 ...widget.nearbyVehicles.map((vehicle) {
                   return Marker(
                     point: LatLng(vehicle.latitude, vehicle.longitude),
-                    width: 40,
-                    height: 40,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: AppColors.white,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: AppColors.obsidian, width: 1.5),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.15),
-                            blurRadius: 5,
-                            offset: const Offset(0, 2),
+                    width: 44,
+                    height: 44,
+                    child: GestureDetector(
+                      onTap: () {
+                        _mapController.move(LatLng(vehicle.latitude, vehicle.longitude), 16.0);
+                        widget.onVehicleTap?.call(vehicle);
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: AppColors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: AppColors.obsidian, width: 2),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.2),
+                              blurRadius: 6,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: Icon(
+                            vehicle.vehicleType.iconData,
+                            size: 22,
+                            color: AppColors.obsidian,
                           ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Icon(
-                          vehicle.vehicleType.iconData,
-                          size: 20,
-                          color: AppColors.obsidian,
                         ),
                       ),
                     ),
@@ -395,61 +405,81 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
 
                 // ── D. On-Demand Live Drivers (ETAs & Category Icons) ──
                 ...widget.onDemandDrivers.map((driver) {
-                  final iconData = _getDriverCategoryIcon(driver.vehicle?.categoryIconKey);
+                  final isKekeh = driver.vehicle?.category == DriverVehicleCategory.kekehTricycle ||
+                      driver.vehicle?.categoryIconKey == 'kekeh_tricycle';
+                  final isBike = driver.vehicle?.category == DriverVehicleCategory.deliveryBike ||
+                      driver.vehicle?.categoryIconKey == 'two_wheeler_delivery';
+                  final pinColor = isKekeh
+                      ? AppColors.amber
+                      : (isBike ? const Color(0xFFF97316) : AppColors.emerald);
+                  final pinIcon = isKekeh
+                      ? Icons.moped_rounded
+                      : (isBike ? Icons.two_wheeler_rounded : Icons.local_taxi_rounded);
+                  final labelText = isKekeh
+                      ? 'KEKEH ${driver.etaMinutes}m'
+                      : (isBike ? 'BIKE ${driver.etaMinutes}m' : 'TAXI ${driver.etaMinutes}m');
+
                   return Marker(
                     point: LatLng(driver.currentLat, driver.currentLng),
-                    width: 54,
-                    height: 54,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
-                          decoration: BoxDecoration(
-                            color: AppColors.obsidian,
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.25),
-                                blurRadius: 4,
-                                offset: const Offset(0, 1),
-                              ),
-                            ],
-                          ),
-                          child: Text(
-                            '${driver.etaMinutes}m',
-                            style: const TextStyle(
-                              color: AppColors.emerald,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: AppColors.white,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: AppColors.emerald, width: 2),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.18),
-                                blurRadius: 6,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: Center(
-                            child: Icon(
-                              iconData,
-                              size: 17,
+                    width: 68,
+                    height: 64,
+                    child: GestureDetector(
+                      onTap: () {
+                        _mapController.move(LatLng(driver.currentLat, driver.currentLng), 16.0);
+                        widget.onDriverTap?.call(driver);
+                      },
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
                               color: AppColors.obsidian,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: pinColor, width: 1.2),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.3),
+                                  blurRadius: 5,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Text(
+                              labelText,
+                              style: TextStyle(
+                                color: pinColor,
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 3),
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: AppColors.white,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: pinColor, width: 2.5),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.25),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            child: Center(
+                              child: Icon(
+                                pinIcon,
+                                size: 19,
+                                color: AppColors.obsidian,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 }),
@@ -474,62 +504,6 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
             ),
           ],
         ),
-
-        // ── 2. Floating Live Dynamic Route Pill ─────────────────────
-        if (widget.showRoute && _currentRoute.points.isNotEmpty)
-          Positioned(
-            top: 75,
-            left: 20,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppColors.obsidian.withValues(alpha: 0.92),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.2),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: AppColors.emerald,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Doorstep: ${_currentRoute.formattedDistance}',
-                    style: const TextStyle(
-                      color: AppColors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Text('•', style: TextStyle(color: AppColors.gray400)),
-                  const SizedBox(width: 8),
-                  const Icon(Icons.timer_outlined, size: 14, color: AppColors.emerald),
-                  const SizedBox(width: 4),
-                  Text(
-                    'ETA ${_currentRoute.formattedEta}',
-                    style: const TextStyle(
-                      color: AppColors.emerald,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
 
         // ── 3. Quick Map Controls (Zoom & Recenter) ─────────────────
         Positioned(
@@ -561,8 +535,8 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
         // Loading spinner while route calculates
         if (_isLoadingRoute)
           Positioned(
-            top: 75,
-            right: 20,
+            top: 130,
+            right: 65,
             child: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
@@ -589,9 +563,9 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
         // ── 4. Pin-Drag Mode Banner Overlay ─────────────────────────
         if (widget.isPinDragMode)
           Positioned(
-            top: 65,
+            top: 130,
             left: 16,
-            right: 16,
+            right: 65,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
@@ -672,15 +646,6 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
           ),
       ],
     );
-  }
-
-  IconData _getDriverCategoryIcon(String? iconKey) {
-    return switch (iconKey) {
-      'kekeh_tricycle' => Icons.electric_rickshaw_rounded,
-      'two_wheeler_delivery' => Icons.delivery_dining_rounded,
-      'sedan_premium' => Icons.directions_car_filled_rounded,
-      _ => Icons.local_taxi_rounded,
-    };
   }
 
   Widget _buildMapButton({

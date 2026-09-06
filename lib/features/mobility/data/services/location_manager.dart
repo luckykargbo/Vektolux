@@ -191,6 +191,41 @@ class LocationManager {
       longitude: -13.0720,
       category: 'Suburban Hub',
     ),
+    LocationLandmark(
+      name: 'Bo Clock Tower & Central Market',
+      neighborhood: 'Bo Central',
+      latitude: 7.9644,
+      longitude: -11.7383,
+      category: 'Provincial Commercial Hub (Southern Province)',
+    ),
+    LocationLandmark(
+      name: 'Kenema Government Hospital & Hub',
+      neighborhood: 'Kenema Town',
+      latitude: 7.8767,
+      longitude: -11.1875,
+      category: 'Provincial Commercial Hub (Eastern Province)',
+    ),
+    LocationLandmark(
+      name: 'Makeni Central Clock Tower',
+      neighborhood: 'Makeni',
+      latitude: 8.8833,
+      longitude: -12.0500,
+      category: 'Provincial Commercial Hub (Northern Province)',
+    ),
+    LocationLandmark(
+      name: 'Koidu City Mining Hub',
+      neighborhood: 'Koidu Kono',
+      latitude: 8.6439,
+      longitude: -10.9717,
+      category: 'Mining & Commercial Hub',
+    ),
+    LocationLandmark(
+      name: 'Port Loko Central Market',
+      neighborhood: 'Port Loko',
+      latitude: 8.7667,
+      longitude: -12.7833,
+      category: 'North West Province Hub',
+    ),
   ];
 
   /// Check whether coordinates are inside Sierra Leone territory.

@@ -69,3 +69,19 @@ class LoginSubmittedEvent extends AuthEvent {
 class LogoutEvent extends AuthEvent {
   const LogoutEvent();
 }
+
+/// User requests profile update (name, phone, avatarUrl).
+class UpdateUserProfileEvent extends AuthEvent {
+  final String? name;
+  final String? phone;
+  final String? avatarUrl;
+
+  const UpdateUserProfileEvent({
+    this.name,
+    this.phone,
+    this.avatarUrl,
+  });
+
+  @override
+  List<Object?> get props => [name, phone, avatarUrl];
+}

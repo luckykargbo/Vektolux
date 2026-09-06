@@ -115,6 +115,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 height: 52,
                 child: ElevatedButton(
                   onPressed: () {
+                    final updatedName = nameCtrl.text.trim();
+                    final updatedPhone = phoneCtrl.text.trim();
+                    context.read<AuthBloc>().add(
+                          UpdateUserProfileEvent(
+                            name: updatedName.isNotEmpty ? updatedName : null,
+                            phone: updatedPhone.isNotEmpty ? updatedPhone : null,
+                          ),
+                        );
                     Navigator.of(modalCtx).pop();
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
@@ -129,6 +137,257 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ],
           ),
+        );
+      },
+    );
+  }
+
+  void _showAvatarPickerModal(BuildContext context, UserEntity? user) {
+    String selectedUrl = user?.avatarUrl ?? '';
+    final urlController = TextEditingController(text: user?.avatarUrl ?? '');
+
+    final avatarPresets = [
+      {'name': 'Client', 'url': 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'},
+      {'name': 'Vendor', 'url': 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150'},
+      {'name': 'Driver', 'url': 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150'},
+      {'name': 'Agent', 'url': 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150'},
+      {'name': 'Traveler', 'url': 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150'},
+      {'name': 'Partner', 'url': 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=150'},
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (modalCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 16,
+                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.gray300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  const Text(
+                    'Update Profile Photo',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.obsidian,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Choose a role avatar or enter a cloud image URL.',
+                    style: TextStyle(fontSize: 13, color: AppColors.gray500),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Circular Crop Preview with Emerald Ring
+                  Center(
+                    child: Stack(
+                      children: [
+                        Container(
+                          width: 88,
+                          height: 88,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: AppColors.emerald, width: 3),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.emerald.withValues(alpha: 0.25),
+                                blurRadius: 16,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: ClipOval(
+                            child: selectedUrl.isNotEmpty
+                                ? Image.network(
+                                    selectedUrl,
+                                    width: 88,
+                                    height: 88,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => const Icon(
+                                      Icons.broken_image_rounded,
+                                      size: 36,
+                                      color: AppColors.gray400,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.person_rounded,
+                                    size: 44,
+                                    color: AppColors.gray400,
+                                  ),
+                          ),
+                        ),
+                        Positioned(
+                          bottom: 0,
+                          right: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: const BoxDecoration(
+                              color: AppColors.emerald,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.camera_alt_rounded,
+                              size: 14,
+                              color: AppColors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+
+                  // Avatar Presets
+                  const Text(
+                    'Select Preset Role Avatar',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.obsidian,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 72,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: avatarPresets.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 10),
+                      itemBuilder: (context, idx) {
+                        final preset = avatarPresets[idx];
+                        final isSelected = selectedUrl == preset['url'];
+                        return GestureDetector(
+                          onTap: () {
+                            setModalState(() {
+                              selectedUrl = preset['url']!;
+                              urlController.text = preset['url']!;
+                            });
+                          },
+                          child: Column(
+                            children: [
+                              Container(
+                                width: 48,
+                                height: 48,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: isSelected ? AppColors.emerald : AppColors.gray200,
+                                    width: isSelected ? 2.5 : 1,
+                                  ),
+                                ),
+                                child: ClipOval(
+                                  child: Image.network(
+                                    preset['url']!,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => const Icon(Icons.person),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                preset['name']!,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                  color: isSelected ? AppColors.emeraldDark : AppColors.gray600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Custom URL Input
+                  TextFormField(
+                    controller: urlController,
+                    style: const TextStyle(fontSize: 13, color: AppColors.obsidian),
+                    decoration: InputDecoration(
+                      labelText: 'Cloud Image URL',
+                      hintText: 'https://...',
+                      prefixIcon: const Icon(Icons.link_rounded, size: 18),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.check_circle_outline, color: AppColors.emerald),
+                        onPressed: () {
+                          setModalState(() {
+                            selectedUrl = urlController.text.trim();
+                          });
+                        },
+                      ),
+                    ),
+                    onChanged: (val) {
+                      setModalState(() {
+                        selectedUrl = val.trim();
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Action Buttons
+                  Row(
+                    children: [
+                      if (selectedUrl.isNotEmpty) ...[
+                        OutlinedButton(
+                          onPressed: () {
+                            setModalState(() {
+                              selectedUrl = '';
+                              urlController.clear();
+                            });
+                          },
+                          child: const Text('Remove Photo'),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            context.read<AuthBloc>().add(
+                                  UpdateUserProfileEvent(avatarUrl: selectedUrl),
+                                );
+                            Navigator.of(modalCtx).pop();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Profile photo updated successfully.'),
+                                backgroundColor: AppColors.emerald,
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          },
+                          child: const Text('Save Profile Photo'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
         );
       },
     );
@@ -323,35 +582,81 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   child: Row(
                     children: [
-                      // Avatar with emerald ring
-                      Container(
-                        width: 68,
-                        height: 68,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: const LinearGradient(
-                            colors: [AppColors.emerald, AppColors.emeraldDark],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.emerald.withValues(alpha: 0.25),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4),
+                      // Avatar with emerald ring & edit badge
+                      GestureDetector(
+                        onTap: () => _showAvatarPickerModal(context, user),
+                        child: Stack(
+                          children: [
+                            Container(
+                              width: 68,
+                              height: 68,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(color: AppColors.emerald, width: 2.5),
+                                gradient: user?.avatarUrl == null || user!.avatarUrl!.isEmpty
+                                    ? const LinearGradient(
+                                        colors: [AppColors.emerald, AppColors.emeraldDark],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                      )
+                                    : null,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppColors.emerald.withValues(alpha: 0.25),
+                                    blurRadius: 12,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: ClipOval(
+                                child: user?.avatarUrl != null && user!.avatarUrl!.isNotEmpty
+                                    ? Image.network(
+                                        user.avatarUrl!,
+                                        width: 68,
+                                        height: 68,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => Center(
+                                          child: Text(
+                                            initials.isNotEmpty ? initials : 'VK',
+                                            style: const TextStyle(
+                                              color: AppColors.white,
+                                              fontSize: 24,
+                                              fontWeight: FontWeight.w800,
+                                              letterSpacing: 1,
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                    : Center(
+                                        child: Text(
+                                          initials.isNotEmpty ? initials : 'VK',
+                                          style: const TextStyle(
+                                            color: AppColors.white,
+                                            fontSize: 24,
+                                            fontWeight: FontWeight.w800,
+                                            letterSpacing: 1,
+                                          ),
+                                        ),
+                                      ),
+                              ),
+                            ),
+                            Positioned(
+                              bottom: 0,
+                              right: 0,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: const BoxDecoration(
+                                  color: AppColors.emerald,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.camera_alt_rounded,
+                                  size: 13,
+                                  color: AppColors.white,
+                                ),
+                              ),
                             ),
                           ],
-                        ),
-                        child: Center(
-                          child: Text(
-                            initials.isNotEmpty ? initials : 'VK',
-                            style: const TextStyle(
-                              color: AppColors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1,
-                            ),
-                          ),
                         ),
                       ),
                       const SizedBox(width: 16),
