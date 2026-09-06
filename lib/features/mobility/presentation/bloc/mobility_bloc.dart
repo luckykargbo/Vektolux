@@ -112,10 +112,16 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
     final rentalVehicles = _generateRentalVehicles(event.currentLat, event.currentLng);
     final salesVehicles = _generateSalesVehicles(event.currentLat, event.currentLng);
     final properties = _generateRealEstateProperties(event.currentLat, event.currentLng);
+    final sellers = await _repository.getNearbySellers(
+      lat: event.currentLat,
+      lng: event.currentLng,
+      radiusKm: 10.0,
+    );
 
     emit(state.copyWith(
       isLoading: false,
       nearbyVehicles: nearby,
+      nearbySellers: sellers,
       vehicleOptions: options,
       estimatedDistanceKm: distKm,
       estimatedDurationMin: durationMins,

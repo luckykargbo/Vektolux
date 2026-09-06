@@ -29,9 +29,12 @@ import '../widgets/vpn_fallback_banner.dart';
 import '../widgets/finding_driver_radar_overlay.dart';
 import '../widgets/real_estate_showcase_panel.dart';
 import '../widgets/driver_marker_preview_card.dart';
+import '../widgets/seller_marker_preview_card.dart';
 import '../widgets/group_trip_sheet.dart';
 import '../widgets/share_location_sheet.dart';
+import '../../data/services/location_manager.dart';
 import '../../domain/entities/nearby_driver_entity.dart';
+import '../../domain/entities/nearby_seller_entity.dart';
 import '../../domain/entities/vehicle_category_catalog.dart';
 import 'driver_portal_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
@@ -57,6 +60,7 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
   final DraggableScrollableController _sheetController = DraggableScrollableController();
   bool _isPermissionModalShowing = false;
   NearbyDriverEntity? _selectedDriverPreview;
+  NearbySellerEntity? _selectedSellerPreview;
 
   @override
   void initState() {
@@ -295,6 +299,8 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
             dropoffLng: state.dropoffLng,
             nearbyVehicles: state.nearbyVehicles,
             onDemandDrivers: state.onDemandDrivers,
+            nearbySellers: state.nearbySellers,
+            currentUserAvatarUrl: context.read<AuthBloc>().state.user?.avatarUrl,
             isPinDragMode: state.isPinDragMode,
             showRoute: state.hasActiveRide || state.mode == MobilityHomeMode.rideHailing,
             assignedDriverLat: state.activeRide?.driverLat ??
@@ -306,17 +312,26 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
             assignedDriverPlate: state.activeRide?.vehiclePlate,
             selectedCategory: state.selectedBookingCategory.id,
             onPickupPositionChanged: (newPoint) {
+              final readable = LocationManager().reverseGeocode(newPoint.latitude, newPoint.longitude);
               context.read<MobilityBloc>().add(
                     UpdateLocationsEvent(
                       pickupLat: newPoint.latitude,
                       pickupLng: newPoint.longitude,
-                      pickupAddress:
-                          'Custom Map Pin (${newPoint.latitude.toStringAsFixed(4)}, ${newPoint.longitude.toStringAsFixed(4)})',
+                      pickupAddress: readable,
                     ),
                   );
             },
             onDriverTap: (driver) {
-              setState(() => _selectedDriverPreview = driver);
+              setState(() {
+                _selectedDriverPreview = driver;
+                _selectedSellerPreview = null;
+              });
+            },
+            onSellerTap: (seller) {
+              setState(() {
+                _selectedSellerPreview = seller;
+                _selectedDriverPreview = null;
+              });
             },
             onConfirmPinSpot: () {
               context.read<MobilityBloc>().add(const TogglePinDragModeEvent(false));
@@ -355,6 +370,7 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
 
         // ── Floating Quick Action Pill Row (Group Trip & Share Location) ────
         if (_selectedDriverPreview == null &&
+            _selectedSellerPreview == null &&
             !state.isSearchingDriver &&
             !(state.activeRide != null && state.activeRide!.status.isActive))
           Positioned(
@@ -399,8 +415,46 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
             ),
           ),
 
-        // ── Bottom Panel (Driver Marker Preview Card OR Finding Driver Radar OR Active Ride Overlay OR Draggable Sheet) ───
-        if (_selectedDriverPreview != null) ...[
+        // ── Bottom Panel (Seller Card OR Driver Card OR Finding Driver Radar OR Active Ride Overlay OR Draggable Sheet) ───
+        if (_selectedSellerPreview != null) ...[
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: SellerMarkerPreviewCard(
+              seller: _selectedSellerPreview!,
+              onClose: () => setState(() => _selectedSellerPreview = null),
+              onOrder: (seller) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Viewing merchant catalog for ${seller.businessName}...'),
+                    backgroundColor: AppColors.emerald,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              },
+              onCallOrChat: (seller) {
+                final phone = seller.phone.isNotEmpty ? seller.phone : '+232 76 999 888';
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Calling ${seller.businessName} at $phone...'),
+                    backgroundColor: AppColors.obsidian,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              },
+              onShareLocation: (seller) {
+                ShareLocationSheet.show(
+                  context,
+                  latitude: seller.latitude,
+                  longitude: seller.longitude,
+                  label: 'Store: ${seller.businessName} (${seller.address})',
+                  recipientName: seller.businessName,
+                );
+              },
+            ),
+          ),
+        ] else if (_selectedDriverPreview != null) ...[
           Positioned(
             bottom: 0,
             left: 0,

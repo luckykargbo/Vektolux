@@ -17,6 +17,7 @@ import '../../../../core/sync/offline_sync_engine.dart';
 import '../../domain/entities/mobility_vehicle_entity.dart';
 import '../../domain/entities/ride_entity.dart';
 import '../../domain/entities/nearby_driver_entity.dart';
+import '../../domain/entities/nearby_seller_entity.dart';
 import '../../domain/entities/trip_delivery_entity.dart';
 import '../../domain/repositories/mobility_repository.dart';
 import '../models/ride_model.dart';
@@ -566,5 +567,63 @@ class MobilityRepositoryImpl implements MobilityRepository {
       _log.e('Failed to fetch trip delivery: $e');
       return null;
     }
+  }
+
+  @override
+  Future<List<NearbySellerEntity>> getNearbySellers({
+    required double lat,
+    required double lng,
+    double radiusKm = 10.0,
+  }) async {
+    return [
+      NearbySellerEntity(
+        id: 'seller_kissy_01',
+        businessName: 'Kissy Auto & Fleet Spares',
+        ownerName: 'Alhaji Sorie Bah',
+        category: 'Auto Parts & Commercial Fleet',
+        phone: '+232 78 400 123',
+        avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
+        latitude: lat + 0.0062,
+        longitude: lng + 0.0055,
+        address: 'Kissy Bypass Road, East End, Freetown',
+        rating: 4.9,
+        totalSales: 380,
+        isVerified: true,
+        distanceKm: 0.8,
+        etaMinutes: 4,
+      ),
+      NearbySellerEntity(
+        id: 'seller_lumley_02',
+        businessName: 'Lumley Bay Fresh & Goods',
+        ownerName: 'Aminata Mansaray',
+        category: 'Provisions & Hospitality Supply',
+        phone: '+232 76 910 445',
+        avatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150',
+        latitude: lat - 0.0048,
+        longitude: lng - 0.0068,
+        address: 'Lumley Beach Road, Aberdeen Peninsula',
+        rating: 4.8,
+        totalSales: 520,
+        isVerified: true,
+        distanceKm: 1.1,
+        etaMinutes: 6,
+      ),
+      NearbySellerEntity(
+        id: 'seller_waterloo_03',
+        businessName: 'Waterloo Express Traders',
+        ownerName: 'Samuel Conteh',
+        category: 'General Hardware & Construction',
+        phone: '+232 30 882 119',
+        avatarUrl: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=150',
+        latitude: lat + 0.0085,
+        longitude: lng - 0.0034,
+        address: 'Waterloo Main Motor Road',
+        rating: 4.9,
+        totalSales: 210,
+        isVerified: true,
+        distanceKm: 1.7,
+        etaMinutes: 9,
+      ),
+    ];
   }
 }

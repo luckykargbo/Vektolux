@@ -40,6 +40,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   String _countryCode = '+232'; // Sierra Leone default
+  String _avatarUrl = '';
 
   @override
   void dispose() {
@@ -75,6 +76,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       phone: fullPhone,
       password: _passwordController.text,
       role: _selectedRole!,
+      avatarUrl: _avatarUrl.isNotEmpty ? _avatarUrl : null,
       businessName: _selectedRole!.requiresBusinessInfo
           ? _businessNameController.text.trim()
           : null,
@@ -82,6 +84,221 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ? _tinController.text.trim()
           : null,
     ));
+  }
+
+  void _showAvatarPickerModal(BuildContext context) {
+    String tempUrl = _avatarUrl;
+    final urlController = TextEditingController(text: _avatarUrl);
+
+    final avatarPresets = [
+      {'name': 'Client', 'url': 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'},
+      {'name': 'Vendor', 'url': 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150'},
+      {'name': 'Driver', 'url': 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150'},
+      {'name': 'Agent', 'url': 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150'},
+      {'name': 'Traveler', 'url': 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150'},
+      {'name': 'Partner', 'url': 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=150'},
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (modalCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 16,
+                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.gray300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  const Text(
+                    'Choose Profile Photo',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.obsidian,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Select a role avatar preset or enter a cloud image URL.',
+                    style: TextStyle(fontSize: 13, color: AppColors.gray500),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Circular Crop Preview with Emerald Ring
+                  Center(
+                    child: Container(
+                      width: 88,
+                      height: 88,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: AppColors.emerald, width: 3),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.emerald.withValues(alpha: 0.25),
+                            blurRadius: 16,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: ClipOval(
+                        child: tempUrl.isNotEmpty
+                            ? Image.network(
+                                tempUrl,
+                                width: 88,
+                                height: 88,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => const Icon(
+                                  Icons.person_rounded,
+                                  size: 44,
+                                  color: AppColors.gray400,
+                                ),
+                              )
+                            : const Icon(
+                                Icons.person_rounded,
+                                size: 44,
+                                color: AppColors.gray400,
+                              ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Presets Row
+                  const Text(
+                    'Role Presets',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.obsidian,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 72,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: avatarPresets.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 12),
+                      itemBuilder: (_, idx) {
+                        final preset = avatarPresets[idx];
+                        final isSelected = tempUrl == preset['url'];
+                        return GestureDetector(
+                          onTap: () {
+                            setModalState(() {
+                              tempUrl = preset['url']!;
+                              urlController.text = preset['url']!;
+                            });
+                          },
+                          child: Column(
+                            children: [
+                              Container(
+                                width: 48,
+                                height: 48,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: isSelected ? AppColors.emerald : AppColors.gray200,
+                                    width: isSelected ? 2.5 : 1.5,
+                                  ),
+                                ),
+                                child: ClipOval(
+                                  child: Image.network(
+                                    preset['url']!,
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                preset['name']!,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                  color: isSelected ? AppColors.emerald : AppColors.gray600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Custom Cloud Image URL Input
+                  TextFormField(
+                    controller: urlController,
+                    onChanged: (val) {
+                      setModalState(() => tempUrl = val.trim());
+                    },
+                    decoration: InputDecoration(
+                      labelText: 'Cloud Avatar URL',
+                      hintText: 'https://...',
+                      prefixIcon: const Icon(Icons.link_rounded),
+                      suffixIcon: urlController.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 18),
+                              onPressed: () {
+                                urlController.clear();
+                                setModalState(() => tempUrl = '');
+                              },
+                            )
+                          : null,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Apply Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        setState(() => _avatarUrl = tempUrl);
+                        Navigator.of(modalCtx).pop();
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.emerald,
+                        foregroundColor: AppColors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Set Profile Photo',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -247,6 +464,82 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 color: AppColors.emeraldDark,
                 fontWeight: FontWeight.w600,
                 fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Profile Photo Upload Component with Circular Crop Preview
+            Center(
+              child: GestureDetector(
+                onTap: () => _showAvatarPickerModal(context),
+                child: Column(
+                  children: [
+                    Stack(
+                      children: [
+                        Container(
+                          width: 80,
+                          height: 80,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: AppColors.emerald, width: 2.5),
+                            color: const Color(0xFFF8FAFC),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.obsidian.withValues(alpha: 0.1),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          child: ClipOval(
+                            child: _avatarUrl.isNotEmpty
+                                ? Image.network(
+                                    _avatarUrl,
+                                    width: 80,
+                                    height: 80,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => const Icon(
+                                      Icons.person_rounded,
+                                      size: 40,
+                                      color: AppColors.emerald,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.person_rounded,
+                                    size: 40,
+                                    color: AppColors.emerald,
+                                  ),
+                          ),
+                        ),
+                        Positioned(
+                          bottom: 0,
+                          right: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: const BoxDecoration(
+                              color: AppColors.emerald,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.camera_alt_rounded,
+                              size: 14,
+                              color: AppColors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _avatarUrl.isNotEmpty ? 'Change Photo' : 'Add Profile Photo (Optional)',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.emeraldDark,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 20),
@@ -530,6 +823,34 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
             child: Column(
               children: [
+                if (_avatarUrl.isNotEmpty) ...[
+                  Center(
+                    child: Container(
+                      width: 68,
+                      height: 68,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: AppColors.emerald, width: 2.5),
+                      ),
+                      child: ClipOval(
+                        child: Image.network(
+                          _avatarUrl,
+                          width: 68,
+                          height: 68,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Icon(
+                            Icons.person_rounded,
+                            size: 34,
+                            color: AppColors.gray400,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(height: 1),
+                  const SizedBox(height: 12),
+                ],
                 _SummaryRow(label: 'Role', value: _selectedRole?.displayName ?? '—', isHighlight: true),
                 const Divider(height: 20),
                 _SummaryRow(label: 'Name', value: _nameController.text),

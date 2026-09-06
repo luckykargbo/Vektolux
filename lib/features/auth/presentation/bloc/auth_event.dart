@@ -34,6 +34,7 @@ class RegisterSubmittedEvent extends AuthEvent {
   final String phone;
   final String password;
   final UserRole role;
+  final String? avatarUrl;
   final String? businessName;
   final String? tinNumber;
 
@@ -43,12 +44,13 @@ class RegisterSubmittedEvent extends AuthEvent {
     required this.phone,
     required this.password,
     required this.role,
+    this.avatarUrl,
     this.businessName,
     this.tinNumber,
   });
 
   @override
-  List<Object?> get props => [name, email, phone, password, role, businessName, tinNumber];
+  List<Object?> get props => [name, email, phone, password, role, avatarUrl, businessName, tinNumber];
 }
 
 /// Login form submitted.

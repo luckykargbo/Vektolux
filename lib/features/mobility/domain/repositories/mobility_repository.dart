@@ -6,6 +6,7 @@
 import '../entities/ride_entity.dart';
 import '../entities/mobility_vehicle_entity.dart';
 import '../entities/nearby_driver_entity.dart';
+import '../entities/nearby_seller_entity.dart';
 import '../entities/trip_delivery_entity.dart';
 
 abstract class MobilityRepository {
@@ -88,4 +89,11 @@ abstract class MobilityRepository {
 
   /// Get trip or delivery details by ID.
   Future<TripDeliveryEntity?> getTripDelivery(String tripId);
+
+  /// Fetch nearby verified sellers and merchants across Sierra Leone.
+  Future<List<NearbySellerEntity>> getNearbySellers({
+    required double lat,
+    required double lng,
+    double radiusKm = 10.0,
+  });
 }

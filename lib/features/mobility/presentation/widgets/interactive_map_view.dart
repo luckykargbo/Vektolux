@@ -13,6 +13,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../data/services/routing_service.dart';
 import '../../domain/entities/mobility_vehicle_entity.dart';
 import '../../domain/entities/nearby_driver_entity.dart';
+import '../../domain/entities/nearby_seller_entity.dart';
 import 'smooth_driver_marker.dart';
 
 class InteractiveMapView extends StatefulWidget {
@@ -22,6 +23,8 @@ class InteractiveMapView extends StatefulWidget {
   final double dropoffLng;
   final List<VehicleListingEntity> nearbyVehicles;
   final List<NearbyDriverEntity> onDemandDrivers;
+  final List<NearbySellerEntity> nearbySellers;
+  final String? currentUserAvatarUrl;
   final bool showRoute;
   final bool isPinDragMode;
   final double? assignedDriverLat;
@@ -34,6 +37,7 @@ class InteractiveMapView extends StatefulWidget {
   final VoidCallback? onMapTap;
   final ValueChanged<RouteDetails>? onRouteCalculated;
   final ValueChanged<NearbyDriverEntity>? onDriverTap;
+  final ValueChanged<NearbySellerEntity>? onSellerTap;
   final ValueChanged<VehicleListingEntity>? onVehicleTap;
   final ValueChanged<LatLng>? onPickupPositionChanged;
   final VoidCallback? onConfirmPinSpot;
@@ -46,6 +50,8 @@ class InteractiveMapView extends StatefulWidget {
     required this.dropoffLng,
     this.nearbyVehicles = const [],
     this.onDemandDrivers = const [],
+    this.nearbySellers = const [],
+    this.currentUserAvatarUrl,
     this.showRoute = true,
     this.isPinDragMode = false,
     this.assignedDriverLat,
@@ -58,6 +64,7 @@ class InteractiveMapView extends StatefulWidget {
     this.onMapTap,
     this.onRouteCalculated,
     this.onDriverTap,
+    this.onSellerTap,
     this.onVehicleTap,
     this.onPickupPositionChanged,
     this.onConfirmPinSpot,
@@ -249,6 +256,12 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
             initialZoom: 14.2,
             minZoom: 4.0,
             maxZoom: 18.0,
+            cameraConstraint: CameraConstraint.contain(
+              bounds: LatLngBounds(
+                const LatLng(6.85, -13.55),
+                const LatLng(10.15, -10.20),
+              ),
+            ),
             onTap: (_, point) {
               if (widget.isPinDragMode) {
                 widget.onPickupPositionChanged?.call(point);
@@ -314,24 +327,39 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                             ),
                           ),
                           Container(
-                            width: 32,
-                            height: 32,
+                            width: 34,
+                            height: 34,
                             decoration: BoxDecoration(
                               color: AppColors.emerald,
                               shape: BoxShape.circle,
                               border: Border.all(color: AppColors.white, width: 2.5),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.2),
+                                  color: Colors.black.withValues(alpha: 0.25),
                                   blurRadius: 6,
                                   offset: const Offset(0, 2),
                                 ),
                               ],
                             ),
-                            child: const Icon(
-                              Icons.my_location_rounded,
-                              size: 17,
-                              color: AppColors.white,
+                            child: ClipOval(
+                              child: (widget.currentUserAvatarUrl != null &&
+                                      widget.currentUserAvatarUrl!.isNotEmpty)
+                                  ? Image.network(
+                                      widget.currentUserAvatarUrl!,
+                                      width: 34,
+                                      height: 34,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => const Icon(
+                                        Icons.my_location_rounded,
+                                        size: 17,
+                                        color: AppColors.white,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.my_location_rounded,
+                                      size: 17,
+                                      color: AppColors.white,
+                                    ),
                             ),
                           ),
                         ],
@@ -456,8 +484,8 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                           ),
                           const SizedBox(height: 3),
                           Container(
-                            width: 36,
-                            height: 36,
+                            width: 38,
+                            height: 38,
                             decoration: BoxDecoration(
                               color: AppColors.white,
                               shape: BoxShape.circle,
@@ -470,12 +498,28 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                                 ),
                               ],
                             ),
-                            child: Center(
-                              child: Icon(
-                                pinIcon,
-                                size: 19,
-                                color: AppColors.obsidian,
-                              ),
+                            child: ClipOval(
+                              child: (driver.avatarUrl != null && driver.avatarUrl!.isNotEmpty)
+                                  ? Image.network(
+                                      driver.avatarUrl!,
+                                      width: 38,
+                                      height: 38,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Center(
+                                        child: Icon(
+                                          pinIcon,
+                                          size: 19,
+                                          color: AppColors.obsidian,
+                                        ),
+                                      ),
+                                    )
+                                  : Center(
+                                      child: Icon(
+                                        pinIcon,
+                                        size: 19,
+                                        color: AppColors.obsidian,
+                                      ),
+                                    ),
                             ),
                           ),
                         ],
@@ -484,7 +528,90 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                   );
                 }),
 
-                // ── E. Assigned Active Driver Moving Marker ───────────
+                // ── E. Nearby Verified Sellers (Vendors & Merchants) ──
+                ...widget.nearbySellers.map((seller) {
+                  return Marker(
+                    point: LatLng(seller.latitude, seller.longitude),
+                    width: 72,
+                    height: 66,
+                    child: GestureDetector(
+                      onTap: () {
+                        _mapController.move(LatLng(seller.latitude, seller.longitude), 16.0);
+                        widget.onSellerTap?.call(seller);
+                      },
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.obsidian,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: AppColors.emerald, width: 1.2),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.3),
+                                  blurRadius: 5,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Text(
+                              'STORE ${seller.etaMinutes}m',
+                              style: const TextStyle(
+                                color: AppColors.emerald,
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Container(
+                            width: 38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              color: AppColors.white,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: AppColors.emerald, width: 2.5),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.25),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            child: ClipOval(
+                              child: (seller.avatarUrl != null && seller.avatarUrl!.isNotEmpty)
+                                  ? Image.network(
+                                      seller.avatarUrl!,
+                                      width: 38,
+                                      height: 38,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => const Center(
+                                        child: Icon(
+                                          Icons.storefront_rounded,
+                                          size: 20,
+                                          color: AppColors.emerald,
+                                        ),
+                                      ),
+                                    )
+                                  : const Center(
+                                      child: Icon(
+                                        Icons.storefront_rounded,
+                                        size: 20,
+                                        color: AppColors.emerald,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+
+                // ── F. Assigned Active Driver Moving Marker ───────────
                 if (_currentDriverPosition != null ||
                     (widget.assignedDriverLat != null && widget.assignedDriverLng != null))
                   Marker(

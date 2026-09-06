@@ -31,6 +31,7 @@ class AuthRepositoryImpl implements AuthRepository {
     required String phone,
     required String password,
     required UserRole role,
+    String? avatarUrl,
     String? businessName,
     String? tinNumber,
   }) async {
@@ -42,6 +43,7 @@ class AuthRepositoryImpl implements AuthRepository {
         'phone': phone,
         'password': password,
         'role': role.convexValue,
+        if (avatarUrl != null && avatarUrl.isNotEmpty) 'avatarUrl': avatarUrl,
         if (businessName != null && businessName.isNotEmpty) 'businessName': businessName,
         if (tinNumber != null && tinNumber.isNotEmpty) 'tinNumber': tinNumber,
       },
@@ -66,6 +68,7 @@ class AuthRepositoryImpl implements AuthRepository {
       email: data['email']?.toString() ?? email,
       phone: data['phone']?.toString() ?? phone,
       role: UserRoleX.fromConvex(data['role']?.toString() ?? role.convexValue),
+      avatarUrl: data['avatarUrl']?.toString() ?? avatarUrl,
       sessionToken: data['sessionToken']?.toString(),
     );
 

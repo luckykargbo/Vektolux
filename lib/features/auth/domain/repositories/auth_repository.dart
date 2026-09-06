@@ -15,6 +15,7 @@ abstract class AuthRepository {
     required String phone,
     required String password,
     required UserRole role,
+    String? avatarUrl,
     String? businessName,
     String? tinNumber,
   });

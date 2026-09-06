@@ -95,6 +95,7 @@ export const registerUser = mutation({
     phone: v.string(),
     password: v.string(),
     role: userRole,
+    avatarUrl: v.optional(v.string()),
     businessName: v.optional(v.string()),
     tinNumber: v.optional(v.string()),
   },
@@ -105,6 +106,7 @@ export const registerUser = mutation({
     email: v.string(),
     phone: v.string(),
     role: v.string(),
+    avatarUrl: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
     // 1. Check for duplicate email
@@ -136,6 +138,7 @@ export const registerUser = mutation({
       email: args.email,
       phone: args.phone,
       role: args.role,
+      avatarUrl: args.avatarUrl,
       passwordHash,
       sessionToken,
       isVerified: false,
@@ -170,6 +173,7 @@ export const registerUser = mutation({
       email: args.email,
       phone: args.phone,
       role: args.role,
+      avatarUrl: args.avatarUrl,
     };
   },
 });

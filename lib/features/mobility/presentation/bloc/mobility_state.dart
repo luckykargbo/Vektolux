@@ -7,6 +7,7 @@ import 'package:equatable/equatable.dart';
 import '../../domain/entities/mobility_vehicle_entity.dart';
 import '../../domain/entities/ride_entity.dart';
 import '../../domain/entities/nearby_driver_entity.dart';
+import '../../domain/entities/nearby_seller_entity.dart';
 import '../../domain/entities/trip_delivery_entity.dart';
 import '../../domain/entities/vehicle_category_catalog.dart';
 import '../../domain/services/fare_calculation_service.dart';
@@ -72,6 +73,7 @@ class MobilityState extends Equatable {
   final bool isVpnMismatch;
   final bool showLocationPermissionModal;
   final List<NearbyDriverEntity> onDemandDrivers;
+  final List<NearbySellerEntity> nearbySellers;
 
   const MobilityState({
     this.mode = MobilityHomeMode.rideHailing,
@@ -108,6 +110,7 @@ class MobilityState extends Equatable {
     this.isVpnMismatch = false,
     this.showLocationPermissionModal = false,
     this.onDemandDrivers = const [],
+    this.nearbySellers = const [],
   });
 
   MobilityState copyWith({
@@ -145,6 +148,7 @@ class MobilityState extends Equatable {
     bool? isVpnMismatch,
     bool? showLocationPermissionModal,
     List<NearbyDriverEntity>? onDemandDrivers,
+    List<NearbySellerEntity>? nearbySellers,
     TripDeliveryEntity? activeTripDelivery,
     bool clearActiveTripDelivery = false,
     bool? isSearchingDriver,
@@ -192,6 +196,7 @@ class MobilityState extends Equatable {
       showLocationPermissionModal:
           showLocationPermissionModal ?? this.showLocationPermissionModal,
       onDemandDrivers: onDemandDrivers ?? this.onDemandDrivers,
+      nearbySellers: nearbySellers ?? this.nearbySellers,
     );
   }
 
@@ -244,5 +249,6 @@ class MobilityState extends Equatable {
         isVpnMismatch,
         showLocationPermissionModal,
         onDemandDrivers,
+        nearbySellers,
       ];
 }

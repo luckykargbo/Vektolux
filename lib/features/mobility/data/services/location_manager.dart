@@ -348,6 +348,22 @@ class LocationManager {
     return closest;
   }
 
+  /// Reverse geocode coordinates to human-readable Sierra Leone street/area names.
+  String reverseGeocode(double lat, double lng) {
+    final nearest = findNearestLandmark(lat, lng);
+    if (nearest != null) {
+      final approxDistKm = _computeDistance(lat, lng, nearest.latitude, nearest.longitude) * 111.0;
+      if (approxDistKm < 0.35) {
+        return '${nearest.name}, ${nearest.neighborhood}';
+      } else if (approxDistKm < 2.5) {
+        return 'Near ${nearest.name}, ${nearest.neighborhood}';
+      } else {
+        return '${nearest.neighborhood} Area';
+      }
+    }
+    return 'Pinned Location (${lat.toStringAsFixed(4)}, ${lng.toStringAsFixed(4)})';
+  }
+
   /// Euclidean distance approximation for small regional distances.
   double _computeDistance(double lat1, double lng1, double lat2, double lng2) {
     final dLat = lat2 - lat1;
