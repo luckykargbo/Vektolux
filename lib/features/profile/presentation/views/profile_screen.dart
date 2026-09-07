@@ -19,6 +19,7 @@ import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../auth/presentation/bloc/auth_event.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../auth/presentation/views/login_screen.dart';
+import '../../../../core/widgets/vektolux_avatar.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? currentUserId;
@@ -569,13 +570,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             role == UserRole.driver ||
             role == UserRole.admin;
 
-        final initials = displayName
-            .trim()
-            .split(' ')
-            .take(2)
-            .map((e) => e.isNotEmpty ? e[0].toUpperCase() : '')
-            .join();
-
         return Scaffold(
           backgroundColor: AppColors.gray50,
           appBar: AppBar(
@@ -618,81 +612,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: Row(
                     children: [
                       // Avatar with emerald ring & edit badge
-                      GestureDetector(
+                      VektoluxAvatar(
+                        avatarUrl: user?.avatarUrl,
+                        name: displayName,
+                        radius: 34,
+                        borderWidth: 2.5,
+                        borderColor: AppColors.emerald,
+                        showEditBadge: true,
                         onTap: () => _showAvatarPickerModal(context, user),
-                        child: Stack(
-                          children: [
-                            Container(
-                              width: 68,
-                              height: 68,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(color: AppColors.emerald, width: 2.5),
-                                gradient: user?.avatarUrl == null || user!.avatarUrl!.isEmpty
-                                    ? const LinearGradient(
-                                        colors: [AppColors.emerald, AppColors.emeraldDark],
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                      )
-                                    : null,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: AppColors.emerald.withValues(alpha: 0.25),
-                                    blurRadius: 12,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: ClipOval(
-                                child: user?.avatarUrl != null && user!.avatarUrl!.isNotEmpty
-                                    ? Image.network(
-                                        user.avatarUrl!,
-                                        width: 68,
-                                        height: 68,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) => Center(
-                                          child: Text(
-                                            initials.isNotEmpty ? initials : 'VK',
-                                            style: const TextStyle(
-                                              color: AppColors.white,
-                                              fontSize: 24,
-                                              fontWeight: FontWeight.w800,
-                                              letterSpacing: 1,
-                                            ),
-                                          ),
-                                        ),
-                                      )
-                                    : Center(
-                                        child: Text(
-                                          initials.isNotEmpty ? initials : 'VK',
-                                          style: const TextStyle(
-                                            color: AppColors.white,
-                                            fontSize: 24,
-                                            fontWeight: FontWeight.w800,
-                                            letterSpacing: 1,
-                                          ),
-                                        ),
-                                      ),
-                              ),
-                            ),
-                            Positioned(
-                              bottom: 0,
-                              right: 0,
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: const BoxDecoration(
-                                  color: AppColors.emerald,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.camera_alt_rounded,
-                                  size: 13,
-                                  color: AppColors.white,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
                       ),
                       const SizedBox(width: 16),
                       // Info

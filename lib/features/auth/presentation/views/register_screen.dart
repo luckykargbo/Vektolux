@@ -4,12 +4,9 @@
 // Stepped registration with animated role cards and business profile fields.
 // ═══════════════════════════════════════════════════════════════════════
 
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../../core/network/convex_client_wrapper.dart';
-import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../mobility/presentation/views/mobility_home_screen.dart';
 import '../../domain/entities/user_entity.dart';
@@ -43,7 +40,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   String _countryCode = '+232'; // Sierra Leone default
-  String _avatarUrl = '';
 
   @override
   void dispose() {
@@ -79,7 +75,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       phone: fullPhone,
       password: _passwordController.text,
       role: _selectedRole!,
-      avatarUrl: _avatarUrl.isNotEmpty ? _avatarUrl : null,
       businessName: _selectedRole!.requiresBusinessInfo
           ? _businessNameController.text.trim()
           : null,
@@ -87,280 +82,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ? _tinController.text.trim()
           : null,
     ));
-  }
-
-  void _showAvatarPickerModal(BuildContext context) {
-    Uint8List? pickedBytes;
-    String tempUrl = _avatarUrl;
-    bool isUploading = false;
-    String? uploadError;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (modalCtx) {
-        return StatefulBuilder(
-          builder: (ctx, setModalState) {
-            Future<void> pickAndStage(bool isCamera) async {
-              setModalState(() {
-                uploadError = null;
-              });
-              final file = isCamera
-                  ? await ImageUploadService.pickImageFromCamera()
-                  : await ImageUploadService.pickImageFromGallery();
-              if (file != null) {
-                final bytes = await file.readAsBytes();
-                setModalState(() {
-                  pickedBytes = bytes;
-                });
-              }
-            }
-
-            Future<void> executeUpload() async {
-              if (pickedBytes == null) return;
-              setModalState(() {
-                isUploading = true;
-                uploadError = null;
-              });
-              try {
-                final convexClient = context.read<ConvexClientWrapper>();
-                final publicUrl = await ImageUploadService.uploadImageToConvex(
-                  convexClient: convexClient,
-                  imageBytes: pickedBytes!,
-                );
-                if (modalCtx.mounted) {
-                  setState(() => _avatarUrl = publicUrl);
-                  Navigator.of(modalCtx).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Profile photo staged successfully!'),
-                      backgroundColor: AppColors.emerald,
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                }
-              } catch (e) {
-                setModalState(() {
-                  isUploading = false;
-                  uploadError = 'Upload failed: $e';
-                });
-              }
-            }
-
-            return Padding(
-              padding: EdgeInsets.only(
-                left: 20,
-                right: 20,
-                top: 16,
-                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 44,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.gray300,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  const Text(
-                    'Profile Photo',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.obsidian,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Take a photo or choose an image from your device gallery.',
-                    style: TextStyle(fontSize: 13, color: AppColors.gray500),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // 1:1 Circular Crop Preview with Emerald Ring
-                  Center(
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        Container(
-                          width: 100,
-                          height: 100,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(color: AppColors.emerald, width: 3),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.emerald.withValues(alpha: 0.25),
-                                blurRadius: 16,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: ClipOval(
-                            child: pickedBytes != null
-                                ? Image.memory(
-                                    pickedBytes!,
-                                    width: 100,
-                                    height: 100,
-                                    fit: BoxFit.cover,
-                                  )
-                                : (tempUrl.isNotEmpty)
-                                    ? Image.network(
-                                        tempUrl,
-                                        width: 100,
-                                        height: 100,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) => const Icon(
-                                          Icons.person_rounded,
-                                          size: 50,
-                                          color: AppColors.gray400,
-                                        ),
-                                      )
-                                    : const Icon(
-                                        Icons.person_rounded,
-                                        size: 50,
-                                        color: AppColors.gray400,
-                                      ),
-                          ),
-                        ),
-                        if (isUploading)
-                          Container(
-                            width: 100,
-                            height: 100,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.black.withValues(alpha: 0.5),
-                            ),
-                            child: const Center(
-                              child: CircularProgressIndicator(
-                                color: AppColors.emerald,
-                                strokeWidth: 3,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-
-                  if (uploadError != null) ...[
-                    Center(
-                      child: Text(
-                        uploadError!,
-                        style: const TextStyle(
-                          color: AppColors.error,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-
-                  // Camera & Gallery Buttons
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: isUploading ? null : () => pickAndStage(true),
-                          icon: const Icon(Icons.camera_alt_outlined, size: 20, color: AppColors.obsidian),
-                          label: const Text('Camera', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            side: const BorderSide(color: AppColors.gray200, width: 1.2),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: isUploading ? null : () => pickAndStage(false),
-                          icon: const Icon(Icons.photo_library_outlined, size: 20, color: AppColors.obsidian),
-                          label: const Text('Gallery / Files', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            side: const BorderSide(color: AppColors.gray200, width: 1.2),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Actions: Save or Remove
-                  Row(
-                    children: [
-                      if (_avatarUrl.isNotEmpty) ...[
-                        OutlinedButton(
-                          onPressed: isUploading
-                              ? null
-                              : () {
-                                  setState(() => _avatarUrl = '');
-                                  Navigator.of(modalCtx).pop();
-                                },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.error,
-                            side: const BorderSide(color: AppColors.errorLight),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          ),
-                          child: const Text('Remove'),
-                        ),
-                        const SizedBox(width: 10),
-                      ],
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: (pickedBytes == null || isUploading)
-                              ? null
-                              : executeUpload,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.emerald,
-                            foregroundColor: AppColors.white,
-                            disabledBackgroundColor: AppColors.gray200,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          ),
-                          child: isUploading
-                              ? const Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        color: AppColors.white,
-                                        strokeWidth: 2,
-                                      ),
-                                    ),
-                                    SizedBox(width: 10),
-                                    Text('Uploading...'),
-                                  ],
-                                )
-                              : const Text('Save Profile Photo'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
   }
 
   @override
@@ -528,83 +249,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 fontSize: 14,
               ),
             ),
-            const SizedBox(height: 16),
-
-            // Profile Photo Upload Component with Circular Crop Preview
-            Center(
-              child: GestureDetector(
-                onTap: () => _showAvatarPickerModal(context),
-                child: Column(
-                  children: [
-                    Stack(
-                      children: [
-                        Container(
-                          width: 80,
-                          height: 80,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(color: AppColors.emerald, width: 2.5),
-                            color: const Color(0xFFF8FAFC),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.obsidian.withValues(alpha: 0.1),
-                                blurRadius: 8,
-                                offset: const Offset(0, 3),
-                              ),
-                            ],
-                          ),
-                          child: ClipOval(
-                            child: _avatarUrl.isNotEmpty
-                                ? Image.network(
-                                    _avatarUrl,
-                                    width: 80,
-                                    height: 80,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => const Icon(
-                                      Icons.person_rounded,
-                                      size: 40,
-                                      color: AppColors.emerald,
-                                    ),
-                                  )
-                                : const Icon(
-                                    Icons.person_rounded,
-                                    size: 40,
-                                    color: AppColors.emerald,
-                                  ),
-                          ),
-                        ),
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: const BoxDecoration(
-                              color: AppColors.emerald,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.camera_alt_rounded,
-                              size: 14,
-                              color: AppColors.white,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      _avatarUrl.isNotEmpty ? 'Change Photo' : 'Add Profile Photo (Optional)',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.emeraldDark,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
 
             // Full Name
             TextFormField(
@@ -885,34 +530,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
             child: Column(
               children: [
-                if (_avatarUrl.isNotEmpty) ...[
-                  Center(
-                    child: Container(
-                      width: 68,
-                      height: 68,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(color: AppColors.emerald, width: 2.5),
-                      ),
-                      child: ClipOval(
-                        child: Image.network(
-                          _avatarUrl,
-                          width: 68,
-                          height: 68,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Icon(
-                            Icons.person_rounded,
-                            size: 34,
-                            color: AppColors.gray400,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Divider(height: 1),
-                  const SizedBox(height: 12),
-                ],
                 _SummaryRow(label: 'Role', value: _selectedRole?.displayName ?? '—', isHighlight: true),
                 const Divider(height: 20),
                 _SummaryRow(label: 'Name', value: _nameController.text),

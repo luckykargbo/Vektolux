@@ -39,6 +39,7 @@ import '../../domain/entities/vehicle_category_catalog.dart';
 import 'driver_portal_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
+import '../../../../core/widgets/vektolux_avatar.dart';
 
 class MobilityHomeScreen extends StatefulWidget {
   final String currentUserId;
@@ -845,40 +846,12 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
                   ),
                 );
               },
-              child: Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: AppColors.emerald, width: 2),
-                  color: AppColors.obsidian,
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.obsidian.withValues(alpha: 0.25),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: ClipOval(
-                  child: user?.avatarUrl != null && user!.avatarUrl!.isNotEmpty
-                      ? Image.network(
-                          user.avatarUrl!,
-                          width: 44,
-                          height: 44,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Icon(
-                            Icons.person_outline_rounded,
-                            color: AppColors.white,
-                            size: 20,
-                          ),
-                        )
-                      : const Icon(
-                          Icons.person_outline_rounded,
-                          color: AppColors.white,
-                          size: 20,
-                        ),
-                ),
+              child: VektoluxAvatar(
+                avatarUrl: user?.avatarUrl,
+                name: user?.name,
+                radius: 22,
+                borderWidth: 2,
+                borderColor: AppColors.emerald,
               ),
             );
           },
