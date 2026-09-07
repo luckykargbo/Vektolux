@@ -74,3 +74,58 @@ jobs:
           path: Vektolux.ipa
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    name: Publish Release (APK & IPA)
+    needs: [build-android, build-ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Android APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: apk-dir
+
+      - name: Download iOS IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-ipa
+          path: ipa-dir
+
+      - name: Organize Release Assets
+        run: |
+          mkdir -p release-assets
+          cp apk-dir/app-release.apk release-assets/
+          cp ipa-dir/Vektolux.ipa release-assets/
+          ls -lh release-assets/
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Vektolux Latest Mobile Release (v1.0.1)"
+          body: |
+            ## Vektolux Mobile App Builds (v1.0.1)
+
+            ### Direct Downloads:
+            - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
+              * Install on iOS devices via AltStore, Sideloadly, TrollStore, Scarlet, or Enterprise signing.
+            - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
+              * Direct sideload / install on any Android device.
+
+            ### What's New in this Build:
+            - **Streamlined Onboarding**: Simplified registration with instant credential signup (Full Name, Email, Sierra Leone +232 Phone, Passwords).
+            - **Universal Avatar System**: Dynamic initials fallback (`MK`) on Obsidian/Slate gradient circle.
+            - **Native Profile Photo Upload**: Direct device Camera and Gallery upload exclusively in Profile/Settings synced to Convex cloud.
+            - **iOS Permissions**: Configured camera, photo library, and Sierra Leone nationwide location permissions in Info.plist.
+            - **Network & Socket Recovery**: Resilient Convex client connection pool resets to prevent iOS errno 54 resets.
+          files: |
+            release-assets/Vektolux.ipa
+            release-assets/app-release.apk
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

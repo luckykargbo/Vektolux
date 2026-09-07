@@ -66,5 +66,15 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Vektolux requires camera access to take profile photos and document pictures for verification.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Vektolux requires photo library access to select profile photos and property listing images.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Vektolux requires permission to save photos to your library.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Vektolux requires location access to find nearby drivers, track trips, and show Sierra Leone marketplace listings.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Vektolux requires background location access for driver ride tracking and navigation.</string>
 </dict>
 </plist>
