@@ -100,12 +100,14 @@ export const registerUser = mutation({
     tinNumber: v.optional(v.string()),
   },
   returns: v.object({
-    userId: v.string(),
-    sessionToken: v.string(),
-    name: v.string(),
-    email: v.string(),
-    phone: v.string(),
-    role: v.string(),
+    success: v.boolean(),
+    errorMessage: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
+    name: v.optional(v.string()),
+    email: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    role: v.optional(v.string()),
     avatarUrl: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
@@ -115,7 +117,10 @@ export const registerUser = mutation({
       .withIndex("by_email", (q) => q.eq("email", args.email))
       .first();
     if (existingByEmail) {
-      throw new Error("An account with this email already exists.");
+      return {
+        success: false,
+        errorMessage: "An account with this email already exists.",
+      };
     }
 
     // 2. Check for duplicate phone
@@ -124,7 +129,10 @@ export const registerUser = mutation({
       .withIndex("by_phone", (q) => q.eq("phone", args.phone))
       .first();
     if (existingByPhone) {
-      throw new Error("An account with this phone number already exists.");
+      return {
+        success: false,
+        errorMessage: "An account with this phone number already exists.",
+      };
     }
 
     // 3. Hash password
@@ -167,6 +175,7 @@ export const registerUser = mutation({
     }
 
     return {
+      success: true,
       userId: userId as string,
       sessionToken,
       name: args.name,
@@ -188,13 +197,15 @@ export const loginWithPhoneOrEmail = mutation({
     password: v.string(),
   },
   returns: v.object({
-    userId: v.string(),
-    sessionToken: v.string(),
-    name: v.string(),
-    email: v.string(),
-    phone: v.string(),
-    role: v.string(),
-    isVerified: v.boolean(),
+    success: v.boolean(),
+    errorMessage: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
+    name: v.optional(v.string()),
+    email: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    role: v.optional(v.string()),
+    isVerified: v.optional(v.boolean()),
     avatarUrl: v.optional(v.string()),
     walletAddress: v.optional(v.string()),
   }),
@@ -213,11 +224,17 @@ export const loginWithPhoneOrEmail = mutation({
     }
 
     if (!user) {
-      throw new Error("No account found with this email or phone number.");
+      return {
+        success: false,
+        errorMessage: "No account found with this email or phone number.",
+      };
     }
 
     if (!user.isActive) {
-      throw new Error("This account has been deactivated. Contact support.");
+      return {
+        success: false,
+        errorMessage: "This account has been deactivated. Contact support.",
+      };
     }
 
     // Verify password
@@ -226,7 +243,10 @@ export const loginWithPhoneOrEmail = mutation({
       user.passwordHash ?? ""
     );
     if (!isPasswordValid) {
-      throw new Error("Invalid password. Please try again.");
+      return {
+        success: false,
+        errorMessage: "Invalid password. Please try again.",
+      };
     }
 
     // Generate new session token
@@ -237,6 +257,7 @@ export const loginWithPhoneOrEmail = mutation({
     });
 
     return {
+      success: true,
       userId: user._id as string,
       sessionToken,
       name: user.name,
@@ -306,3 +327,84 @@ export const getUserSession = query({
     }
   },
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+//                    SEED DEMO / TEST USERS
+// ═══════════════════════════════════════════════════════════════════════
+
+export const seedDemoUsers = mutation({
+  args: {},
+  returns: v.object({
+    seeded: v.array(v.string()),
+    existing: v.array(v.string()),
+  }),
+  handler: async (ctx) => {
+    const demoAccounts = [
+      {
+        email: "demo@vektolux.sl",
+        phone: "+23276100001",
+        name: "Lamin Sesay",
+        role: "client" as const,
+        balance: 1500,
+      },
+      {
+        email: "driver@vektolux.sl",
+        phone: "+23276100002",
+        name: "Abu Kamara",
+        role: "driver" as const,
+        balance: 850,
+      },
+      {
+        email: "agent@vektolux.sl",
+        phone: "+23276100003",
+        name: "Fatmatta Bangura",
+        role: "agent" as const,
+        balance: 5000,
+      },
+    ];
+
+    const seeded: string[] = [];
+    const existing: string[] = [];
+    const defaultPassword = "password123";
+    const passwordHash = await hashPassword(defaultPassword);
+    const now = Date.now();
+
+    for (const acc of demoAccounts) {
+      const existingUser = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", acc.email))
+        .first();
+
+      if (existingUser) {
+        existing.push(acc.email);
+        continue;
+      }
+
+      const sessionToken = generateSessionToken();
+      const userId = await ctx.db.insert("users", {
+        email: acc.email,
+        phone: acc.phone,
+        name: acc.name,
+        role: acc.role,
+        passwordHash,
+        sessionToken,
+        isVerified: true,
+        isActive: true,
+        updatedAt: now,
+      });
+
+      await ctx.db.insert("walletBalances", {
+        userId,
+        availableBalance: acc.balance,
+        pendingBalance: 0,
+        currency: "SLE",
+        updatedAt: now,
+      });
+
+      seeded.push(acc.email);
+    }
+
+    return { seeded, existing };
+  },
+});
+

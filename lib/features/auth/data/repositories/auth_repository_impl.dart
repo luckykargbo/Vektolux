@@ -58,7 +58,7 @@ class AuthRepositoryImpl implements AuthRepository {
     }
 
     final data = result.value as Map<String, dynamic>;
-    if (data['userId'] == null || data['sessionToken'] == null) {
+    if (data['success'] == false || data['userId'] == null || data['sessionToken'] == null) {
       throw Exception(data['errorMessage']?.toString() ?? result.errorMessage ?? 'Registration failed: Missing credentials');
     }
 
@@ -104,7 +104,7 @@ class AuthRepositoryImpl implements AuthRepository {
     }
 
     final data = result.value as Map<String, dynamic>;
-    if (data['userId'] == null || data['sessionToken'] == null) {
+    if (data['success'] == false || data['userId'] == null || data['sessionToken'] == null) {
       throw Exception(data['errorMessage']?.toString() ?? result.errorMessage ?? 'Login failed: Invalid credentials');
     }
 

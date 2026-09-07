@@ -82,7 +82,7 @@ class ConvexResult {
 ///   POST /api/action   — Side-effecting operations (external APIs)
 class ConvexClientWrapper {
   final String deploymentUrl;
-  final http.Client _httpClient;
+  http.Client _httpClient;
   final Logger _log = Logger(printer: PrettyPrinter(methodCount: 0));
 
   String? _authToken;
@@ -91,6 +91,14 @@ class ConvexClientWrapper {
     required this.deploymentUrl,
     http.Client? httpClient,
   }) : _httpClient = httpClient ?? http.Client();
+
+  /// Recreates the underlying HTTP client to flush corrupted or closed TCP socket pools.
+  void _resetHttpClient() {
+    try {
+      _httpClient.close();
+    } catch (_) {}
+    _httpClient = http.Client();
+  }
 
   // ═══════════════════════════════════════════════════════════════════
   //                        AUTH
@@ -215,6 +223,8 @@ class ConvexClientWrapper {
 
     final headers = <String, String>{
       'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'User-Agent': 'Vektolux/1.0.0 (Mobile; Dart/Flutter)',
     };
     // Convex Cloud HTTP API expects an OIDC / Convex Auth JWT if an Authorization header
     // is provided. If an arbitrary or session-hex token is attached, Convex Cloud immediately
@@ -231,36 +241,52 @@ class ConvexClientWrapper {
     });
 
     int attempt = 0;
+    const maxAttempts = 3;
     while (true) {
       attempt++;
       try {
         final response = await _httpClient
             .post(url, headers: headers, body: body)
-            .timeout(const Duration(seconds: 30));
+            .timeout(const Duration(seconds: 25));
 
         return ConvexResult.fromResponse(response);
       } on TimeoutException {
-        if (attempt >= 2) {
+        if (attempt >= maxAttempts) {
           return const ConvexResult(
             success: false,
-            errorMessage: 'Request timed out',
+            errorMessage: 'Request timed out. Please check your internet connection and try again.',
           );
         }
-        await Future.delayed(const Duration(milliseconds: 300));
+        await Future.delayed(Duration(milliseconds: 300 * attempt));
       } catch (e) {
         final err = e.toString();
-        if (attempt < 2 &&
-            (err.contains('Connection reset') ||
-             err.contains('SocketException') ||
-             err.contains('ClientException') ||
-             err.contains('Broken pipe'))) {
-          _log.w('Transient socket error on $functionPath (attempt $attempt): $err. Retrying...');
-          await Future.delayed(const Duration(milliseconds: 250));
+        final isSocketError = err.contains('Connection reset') ||
+            err.contains('SocketException') ||
+            err.contains('ClientException') ||
+            err.contains('Broken pipe') ||
+            err.contains('Failed host lookup') ||
+            err.contains('HandshakeException');
+
+        if (attempt < maxAttempts && isSocketError) {
+          _log.w('Transient socket error on $functionPath (attempt $attempt): $err. Resetting connection pool & retrying...');
+          _resetHttpClient();
+          await Future.delayed(Duration(milliseconds: 300 * attempt));
           continue;
         }
+
+        // Sanitize technical network/socket errors for clean mobile UX
+        String userFriendlyMessage = 'Network error occurred. Please check your connection and try again.';
+        if (err.contains('Connection reset') || err.contains('errno = 54') || err.contains('errno = 104')) {
+          userFriendlyMessage = 'Server connection was interrupted. Please try again.';
+        } else if (err.contains('Failed host lookup') || err.contains('No address associated')) {
+          userFriendlyMessage = 'Unable to reach Vektolux servers. Please check your internet connection.';
+        } else if (err.contains('SocketException')) {
+          userFriendlyMessage = 'Network connection failed. Please check your mobile data or Wi-Fi.';
+        }
+
         return ConvexResult(
           success: false,
-          errorMessage: 'Network error: $e',
+          errorMessage: userFriendlyMessage,
         );
       }
     }
