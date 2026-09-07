@@ -230,22 +230,39 @@ class ConvexClientWrapper {
       'format': 'json',
     });
 
-    try {
-      final response = await _httpClient
-          .post(url, headers: headers, body: body)
-          .timeout(const Duration(seconds: 30));
+    int attempt = 0;
+    while (true) {
+      attempt++;
+      try {
+        final response = await _httpClient
+            .post(url, headers: headers, body: body)
+            .timeout(const Duration(seconds: 30));
 
-      return ConvexResult.fromResponse(response);
-    } on TimeoutException {
-      return const ConvexResult(
-        success: false,
-        errorMessage: 'Request timed out',
-      );
-    } catch (e) {
-      return ConvexResult(
-        success: false,
-        errorMessage: 'Network error: $e',
-      );
+        return ConvexResult.fromResponse(response);
+      } on TimeoutException {
+        if (attempt >= 2) {
+          return const ConvexResult(
+            success: false,
+            errorMessage: 'Request timed out',
+          );
+        }
+        await Future.delayed(const Duration(milliseconds: 300));
+      } catch (e) {
+        final err = e.toString();
+        if (attempt < 2 &&
+            (err.contains('Connection reset') ||
+             err.contains('SocketException') ||
+             err.contains('ClientException') ||
+             err.contains('Broken pipe'))) {
+          _log.w('Transient socket error on $functionPath (attempt $attempt): $err. Retrying...');
+          await Future.delayed(const Duration(milliseconds: 250));
+          continue;
+        }
+        return ConvexResult(
+          success: false,
+          errorMessage: 'Network error: $e',
+        );
+      }
     }
   }
 
