@@ -167,12 +167,20 @@ class DriverMarkerPreviewCard extends StatelessWidget {
                     bottom: 0,
                     right: 0,
                     child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
                         color: AppColors.white,
                         shape: BoxShape.circle,
+                        border: Border.all(color: _categoryColor, width: 1.5),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.15),
+                            blurRadius: 4,
+                            offset: const Offset(0, 1),
+                          ),
+                        ],
                       ),
-                      child: Icon(_vehicleIcon, size: 16, color: _categoryColor),
+                      child: Icon(_vehicleIcon, size: 14, color: _categoryColor),
                     ),
                   ),
                 ],

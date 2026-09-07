@@ -522,16 +522,40 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
               // Property Category Dropdown
               DropdownButtonFormField<String>(
                 initialValue: _propCategory,
-                decoration: const InputDecoration(labelText: 'Category'),
+                dropdownColor: AppColors.white,
+                borderRadius: BorderRadius.circular(12),
+                elevation: 4,
+                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.obsidian),
+                style: const TextStyle(
+                  color: AppColors.obsidian,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Category',
+                  hintText: 'Select property category',
+                  prefixIcon: Icon(Icons.apartment_rounded),
+                ),
+                selectedItemBuilder: (context) {
+                  return const [
+                    Text('For Sale (Outright)', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                    Text('Long-Term / Annual Rent', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                    Text('Hourly Guest House', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                  ];
+                },
                 items: const [
                   DropdownMenuItem(
-                      value: 'sale', child: Text('For Sale (Outright)')),
+                    value: 'sale',
+                    child: Text('For Sale (Outright)', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                  ),
                   DropdownMenuItem(
-                      value: 'long_term_rent',
-                      child: Text('Long-Term / Annual Rent')),
+                    value: 'long_term_rent',
+                    child: Text('Long-Term / Annual Rent', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                  ),
                   DropdownMenuItem(
-                      value: 'hourly_guesthouse',
-                      child: Text('Hourly Guest House')),
+                    value: 'hourly_guesthouse',
+                    child: Text('Hourly Guest House', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                  ),
                 ],
                 onChanged: (v) {
                   if (v != null) setState(() => _propCategory = v);
@@ -600,6 +624,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                 controller: _propAddressController,
                 decoration: const InputDecoration(
                   labelText: 'Street Address',
+                  hintText: 'e.g. 15 Wilkinson Road',
                   prefixIcon: Icon(Icons.location_on_outlined),
                 ),
               ),
@@ -608,20 +633,53 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                 controller: _propCityController,
                 decoration: const InputDecoration(
                   labelText: 'City / District',
+                  hintText: 'e.g. Freetown',
+                  prefixIcon: Icon(Icons.map_outlined),
                 ),
               ),
             ] else ...[
               // Vehicle Type
               DropdownButtonFormField<String>(
                 initialValue: _vehType,
-                decoration: const InputDecoration(labelText: 'Vehicle Type'),
+                dropdownColor: AppColors.white,
+                borderRadius: BorderRadius.circular(12),
+                elevation: 4,
+                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.obsidian),
+                style: const TextStyle(
+                  color: AppColors.obsidian,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Vehicle Type',
+                  hintText: 'Select vehicle category',
+                  prefixIcon: Icon(Icons.directions_car_outlined),
+                ),
+                selectedItemBuilder: (context) {
+                  return const [
+                    Text('Standard Taxi', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                    Text('Motorcycle (Bike)', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                    Text('Delivery Van', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                    Text('Heavy Transport Truck', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                  ];
+                },
                 items: const [
-                  DropdownMenuItem(value: 'taxi', child: Text('Standard Taxi')),
-                  DropdownMenuItem(value: 'bike', child: Text('Motorcycle (Bike)')),
                   DropdownMenuItem(
-                      value: 'delivery_van', child: Text('Delivery Van')),
+                    value: 'taxi',
+                    child: Text('Standard Taxi', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                  ),
                   DropdownMenuItem(
-                      value: 'truck', child: Text('Heavy Transport Truck')),
+                    value: 'bike',
+                    child: Text('Motorcycle (Bike)', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                  ),
+                  DropdownMenuItem(
+                    value: 'delivery_van',
+                    child: Text('Delivery Van', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                  ),
+                  DropdownMenuItem(
+                    value: 'truck',
+                    child: Text('Heavy Transport Truck', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                  ),
                 ],
                 onChanged: (v) {
                   if (v != null) setState(() => _vehType = v);
@@ -632,14 +690,40 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
               // Listing Intent
               DropdownButtonFormField<String>(
                 initialValue: _vehIntent,
-                decoration: const InputDecoration(labelText: 'Listing Intent'),
+                dropdownColor: AppColors.white,
+                borderRadius: BorderRadius.circular(12),
+                elevation: 4,
+                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.obsidian),
+                style: const TextStyle(
+                  color: AppColors.obsidian,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Listing Intent',
+                  hintText: 'Select listing intent',
+                  prefixIcon: Icon(Icons.sell_outlined),
+                ),
+                selectedItemBuilder: (context) {
+                  return const [
+                    Text('Daily / Weekly Rental', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                    Text('Ride-Hailing Fleet', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                    Text('Vehicle for Sale', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                  ];
+                },
                 items: const [
                   DropdownMenuItem(
-                      value: 'rental', child: Text('Daily / Weekly Rental')),
+                    value: 'rental',
+                    child: Text('Daily / Weekly Rental', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                  ),
                   DropdownMenuItem(
-                      value: 'ride_hailing', child: Text('Ride-Hailing Fleet')),
+                    value: 'ride_hailing',
+                    child: Text('Ride-Hailing Fleet', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                  ),
                   DropdownMenuItem(
-                      value: 'sale', child: Text('Vehicle for Sale')),
+                    value: 'sale',
+                    child: Text('Vehicle for Sale', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                  ),
                 ],
                 onChanged: (v) {
                   if (v != null) setState(() => _vehIntent = v);

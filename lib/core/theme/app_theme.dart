@@ -254,6 +254,36 @@ abstract final class AppTheme {
             const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       ),
 
+      // ── Dropdown & Popup Menus ──────────────────────────────────
+      dropdownMenuTheme: DropdownMenuThemeData(
+        menuStyle: MenuStyle(
+          backgroundColor: WidgetStateProperty.all(AppColors.white),
+          elevation: WidgetStateProperty.all(8),
+          shadowColor: WidgetStateProperty.all(Colors.black.withValues(alpha: 0.1)),
+          surfaceTintColor: WidgetStateProperty.all(Colors.transparent),
+          shape: WidgetStateProperty.all(
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        textStyle: const TextStyle(
+          color: AppColors.obsidian,
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+
+      popupMenuTheme: PopupMenuThemeData(
+        color: AppColors.white,
+        elevation: 8,
+        shadowColor: Colors.black.withValues(alpha: 0.1),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        textStyle: const TextStyle(
+          color: AppColors.obsidian,
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+
       // ── Divider ─────────────────────────────────────────────────
       dividerTheme: const DividerThemeData(
         color: AppColors.border,
@@ -403,7 +433,7 @@ abstract final class AppTheme {
       borderSide: const BorderSide(color: AppColors.error, width: 1.8),
     ),
     hintStyle: const TextStyle(
-      color: Color(0xFF94A3B8),
+      color: Color(0xFF64748B),
       fontSize: 14,
       fontWeight: FontWeight.normal,
     ),

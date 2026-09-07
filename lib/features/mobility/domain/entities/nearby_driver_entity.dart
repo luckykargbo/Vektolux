@@ -90,6 +90,7 @@ class NearbyDriverEntity extends Equatable {
   final double distanceKm;
   final int etaMinutes;
   final DriverVehicleInfo? vehicle;
+  final double? bearing;
 
   const NearbyDriverEntity({
     required this.driverId,
@@ -104,6 +105,7 @@ class NearbyDriverEntity extends Equatable {
     required this.distanceKm,
     required this.etaMinutes,
     this.vehicle,
+    this.bearing,
   });
 
   factory NearbyDriverEntity.fromJson(Map<String, dynamic> json) {
@@ -122,6 +124,7 @@ class NearbyDriverEntity extends Equatable {
       vehicle: json['vehicle'] != null
           ? DriverVehicleInfo.fromJson(json['vehicle'] as Map<String, dynamic>)
           : null,
+      bearing: (json['bearing'] as num?)?.toDouble(),
     );
   }
 
@@ -137,5 +140,6 @@ class NearbyDriverEntity extends Equatable {
         distanceKm,
         etaMinutes,
         vehicle,
+        bearing,
       ];
 }

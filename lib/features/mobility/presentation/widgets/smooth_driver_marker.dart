@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import 'top_down_vehicle_painter.dart';
 
 /// Helper utility for spherical trigonometry bearing calculations.
 class GeoBearingHelper {
@@ -84,24 +85,24 @@ class _SmoothDriverMarkerState extends State<SmoothDriverMarker>
     super.dispose();
   }
 
-  IconData _getCategoryIcon(String? category) {
+  Color _getCategoryColor(String? category) {
     final cat = (category ?? '').toLowerCase();
-    if (cat.contains('kekeh') || cat.contains('tricycle')) {
-      return Icons.electric_rickshaw_rounded;
+    if (cat.contains('keke') || cat.contains('tricycle')) {
+      return AppColors.amber;
     }
-    if (cat.contains('bike') || cat.contains('courier') || cat.contains('delivery')) {
-      return Icons.two_wheeler_rounded;
+    if (cat.contains('bike') || cat.contains('okada') || cat.contains('courier') || cat.contains('delivery')) {
+      return const Color(0xFFF97316);
     }
-    if (cat.contains('comfort') || cat.contains('suv') || cat.contains('premium')) {
-      return Icons.directions_car_filled_rounded;
+    if (cat.contains('comfort') || cat.contains('premium')) {
+      return const Color(0xFF6366F1);
     }
-    return Icons.local_taxi_rounded;
+    return AppColors.emerald;
   }
 
   @override
   Widget build(BuildContext context) {
     final bearingRad = widget.bearingDegrees * (math.pi / 180.0);
-    final iconData = _getCategoryIcon(widget.vehicleCategory);
+    final categoryColor = _getCategoryColor(widget.vehicleCategory);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -113,7 +114,7 @@ class _SmoothDriverMarkerState extends State<SmoothDriverMarker>
             decoration: BoxDecoration(
               color: AppColors.obsidian,
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppColors.emerald, width: 1),
+              border: Border.all(color: categoryColor, width: 1),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withValues(alpha: 0.3),
@@ -148,7 +149,7 @@ class _SmoothDriverMarkerState extends State<SmoothDriverMarker>
                     height: 38 + (_pulseController.value * 16),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: AppColors.emerald.withValues(
+                      color: categoryColor.withValues(
                         alpha: 0.35 * (1 - _pulseController.value),
                       ),
                     ),
@@ -168,43 +169,43 @@ class _SmoothDriverMarkerState extends State<SmoothDriverMarker>
                     child: Container(
                       width: 0,
                       height: 0,
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                         border: Border(
-                          left: BorderSide(color: Colors.transparent, width: 5),
-                          right: BorderSide(color: Colors.transparent, width: 5),
-                          bottom: BorderSide(color: AppColors.emerald, width: 7),
+                          left: const BorderSide(color: Colors.transparent, width: 5),
+                          right: const BorderSide(color: Colors.transparent, width: 5),
+                          bottom: BorderSide(color: categoryColor, width: 7),
                         ),
                       ),
                     ),
                   ),
 
-                  // Core Vehicle Pod
+                  // Core Vehicle Pod with Top-Down Vector
                   Container(
                     margin: const EdgeInsets.only(top: 4),
-                    width: 36,
-                    height: 36,
+                    width: 38,
+                    height: 38,
                     decoration: BoxDecoration(
                       color: AppColors.obsidian,
                       shape: BoxShape.circle,
-                      border: Border.all(color: AppColors.white, width: 2.5),
+                      border: Border.all(color: AppColors.white, width: 2),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.emerald.withValues(alpha: 0.4),
+                          color: categoryColor.withValues(alpha: 0.45),
                           blurRadius: 8,
                           offset: const Offset(0, 2),
                         ),
                         BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.25),
+                          color: Colors.black.withValues(alpha: 0.3),
                           blurRadius: 6,
                           offset: const Offset(0, 3),
                         ),
                       ],
                     ),
                     child: Center(
-                      child: Icon(
-                        iconData,
-                        size: 18,
-                        color: AppColors.emerald,
+                      child: TopDownVehicleWidget(
+                        category: widget.vehicleCategory,
+                        size: 32,
+                        accentColor: categoryColor,
                       ),
                     ),
                   ),

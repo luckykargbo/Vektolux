@@ -15,6 +15,7 @@ import '../../domain/entities/mobility_vehicle_entity.dart';
 import '../../domain/entities/nearby_driver_entity.dart';
 import '../../domain/entities/nearby_seller_entity.dart';
 import 'smooth_driver_marker.dart';
+import 'top_down_vehicle_painter.dart';
 
 class InteractiveMapView extends StatefulWidget {
   final double pickupLat;
@@ -431,7 +432,7 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                   );
                 }),
 
-                // ── D. On-Demand Live Drivers (ETAs & Category Icons) ──
+                // ── D. On-Demand Live Drivers (Uber-Style Top-Down Vector Silhouettes) ──
                 ...widget.onDemandDrivers.map((driver) {
                   final isKekeh = driver.vehicle?.category == DriverVehicleCategory.kekehTricycle ||
                       driver.vehicle?.categoryIconKey == 'kekeh_tricycle';
@@ -440,17 +441,23 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                   final pinColor = isKekeh
                       ? AppColors.amber
                       : (isBike ? const Color(0xFFF97316) : AppColors.emerald);
-                  final pinIcon = isKekeh
-                      ? Icons.moped_rounded
-                      : (isBike ? Icons.two_wheeler_rounded : Icons.local_taxi_rounded);
+                  final categoryString = isKekeh ? 'keke' : (isBike ? 'bike' : 'car');
                   final labelText = isKekeh
                       ? 'KEKEH ${driver.etaMinutes}m'
-                      : (isBike ? 'BIKE ${driver.etaMinutes}m' : 'TAXI ${driver.etaMinutes}m');
+                      : (isBike ? 'OKADA ${driver.etaMinutes}m' : 'TAXI ${driver.etaMinutes}m');
+
+                  // Calculate bearing heading: driver bearing or heading toward pickup
+                  final heading = driver.bearing ??
+                      GeoBearingHelper.calculateBearing(
+                        LatLng(driver.currentLat, driver.currentLng),
+                        _pickup,
+                      );
+                  final headingRad = heading * (3.141592653589793 / 180.0);
 
                   return Marker(
                     point: LatLng(driver.currentLat, driver.currentLng),
-                    width: 68,
-                    height: 64,
+                    width: 72,
+                    height: 72,
                     child: GestureDetector(
                       onTap: () {
                         _mapController.move(LatLng(driver.currentLat, driver.currentLng), 16.0);
@@ -459,6 +466,7 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          // ETA Pill Badge
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
@@ -482,45 +490,75 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                               ),
                             ),
                           ),
-                          const SizedBox(height: 3),
-                          Container(
-                            width: 38,
-                            height: 38,
-                            decoration: BoxDecoration(
-                              color: AppColors.white,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: pinColor, width: 2.5),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.25),
-                                  blurRadius: 6,
-                                  offset: const Offset(0, 3),
-                                ),
-                              ],
-                            ),
-                            child: ClipOval(
-                              child: (driver.avatarUrl != null && driver.avatarUrl!.isNotEmpty)
-                                  ? Image.network(
-                                      driver.avatarUrl!,
-                                      width: 38,
-                                      height: 38,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) => Center(
-                                        child: Icon(
-                                          pinIcon,
-                                          size: 19,
-                                          color: AppColors.obsidian,
-                                        ),
+                          const SizedBox(height: 2),
+
+                          // Top-Down Vehicle Silhouette with Heading Rotation and Avatar Overlay
+                          Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // Rotated Vehicle Body
+                              Transform.rotate(
+                                angle: headingRad,
+                                child: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.obsidian,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: AppColors.white, width: 2),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: pinColor.withValues(alpha: 0.45),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 2),
                                       ),
-                                    )
-                                  : Center(
-                                      child: Icon(
-                                        pinIcon,
-                                        size: 19,
-                                        color: AppColors.obsidian,
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.3),
+                                        blurRadius: 6,
+                                        offset: const Offset(0, 3),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Center(
+                                    child: TopDownVehicleWidget(
+                                      category: categoryString,
+                                      size: 34,
+                                      accentColor: pinColor,
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              // Driver's actual uploaded avatar mini badge if available
+                              if (driver.avatarUrl != null && driver.avatarUrl!.isNotEmpty)
+                                Positioned(
+                                  bottom: 0,
+                                  right: 0,
+                                  child: Container(
+                                    width: 18,
+                                    height: 18,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: AppColors.white, width: 1.5),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withValues(alpha: 0.3),
+                                          blurRadius: 3,
+                                        ),
+                                      ],
+                                    ),
+                                    child: ClipOval(
+                                      child: Image.network(
+                                        driver.avatarUrl!,
+                                        width: 18,
+                                        height: 18,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                                       ),
                                     ),
-                            ),
+                                  ),
+                                ),
+                            ],
                           ),
                         ],
                       ),

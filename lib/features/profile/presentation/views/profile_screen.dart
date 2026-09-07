@@ -5,11 +5,13 @@
 // KYC verification status, vendor tools, and secure session logout.
 // ═══════════════════════════════════════════════════════════════════════
 
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
+import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
 import '../../../auth/domain/entities/user_entity.dart';
@@ -143,17 +145,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showAvatarPickerModal(BuildContext context, UserEntity? user) {
-    String selectedUrl = user?.avatarUrl ?? '';
-    final urlController = TextEditingController(text: user?.avatarUrl ?? '');
-
-    final avatarPresets = [
-      {'name': 'Client', 'url': 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'},
-      {'name': 'Vendor', 'url': 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150'},
-      {'name': 'Driver', 'url': 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150'},
-      {'name': 'Agent', 'url': 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150'},
-      {'name': 'Traveler', 'url': 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150'},
-      {'name': 'Partner', 'url': 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=150'},
-    ];
+    Uint8List? pickedBytes;
+    String? currentAvatarUrl = user?.avatarUrl;
+    bool isUploading = false;
+    String? uploadError;
 
     showModalBottomSheet(
       context: context,
@@ -165,6 +160,54 @@ class _ProfileScreenState extends State<ProfileScreen> {
       builder: (modalCtx) {
         return StatefulBuilder(
           builder: (ctx, setModalState) {
+            Future<void> pickAndStage(bool isCamera) async {
+              setModalState(() {
+                uploadError = null;
+              });
+              final file = isCamera
+                  ? await ImageUploadService.pickImageFromCamera()
+                  : await ImageUploadService.pickImageFromGallery();
+              if (file != null) {
+                final bytes = await file.readAsBytes();
+                setModalState(() {
+                  pickedBytes = bytes;
+                });
+              }
+            }
+
+            Future<void> executeUpload() async {
+              if (pickedBytes == null) return;
+              setModalState(() {
+                isUploading = true;
+                uploadError = null;
+              });
+              try {
+                final convexClient = context.read<ConvexClientWrapper>();
+                final publicUrl = await ImageUploadService.uploadImageToConvex(
+                  convexClient: convexClient,
+                  imageBytes: pickedBytes!,
+                );
+                if (modalCtx.mounted) {
+                  context.read<AuthBloc>().add(
+                        UpdateUserProfileEvent(avatarUrl: publicUrl),
+                      );
+                  Navigator.of(modalCtx).pop();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Profile photo uploaded and synced successfully!'),
+                      backgroundColor: AppColors.emerald,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              } catch (e) {
+                setModalState(() {
+                  isUploading = false;
+                  uploadError = 'Upload failed: $e';
+                });
+              }
+            }
+
             return Padding(
               padding: EdgeInsets.only(
                 left: 20,
@@ -188,7 +231,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 18),
                   const Text(
-                    'Update Profile Photo',
+                    'Profile Photo',
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w700,
@@ -197,18 +240,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 4),
                   const Text(
-                    'Choose a role avatar or enter a cloud image URL.',
+                    'Take a photo or choose an image from your device gallery.',
                     style: TextStyle(fontSize: 13, color: AppColors.gray500),
                   ),
                   const SizedBox(height: 20),
 
-                  // Circular Crop Preview with Emerald Ring
+                  // 1:1 Circular Crop Preview with Emerald Ring
                   Center(
                     child: Stack(
+                      alignment: Alignment.center,
                       children: [
                         Container(
-                          width: 88,
-                          height: 88,
+                          width: 100,
+                          height: 100,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             border: Border.all(color: AppColors.emerald, width: 3),
@@ -221,165 +265,156 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ],
                           ),
                           child: ClipOval(
-                            child: selectedUrl.isNotEmpty
-                                ? Image.network(
-                                    selectedUrl,
-                                    width: 88,
-                                    height: 88,
+                            child: pickedBytes != null
+                                ? Image.memory(
+                                    pickedBytes!,
+                                    width: 100,
+                                    height: 100,
                                     fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => const Icon(
-                                      Icons.broken_image_rounded,
-                                      size: 36,
-                                      color: AppColors.gray400,
-                                    ),
                                   )
-                                : const Icon(
-                                    Icons.person_rounded,
-                                    size: 44,
-                                    color: AppColors.gray400,
-                                  ),
+                                : (currentAvatarUrl != null && currentAvatarUrl.isNotEmpty)
+                                    ? Image.network(
+                                        currentAvatarUrl,
+                                        width: 100,
+                                        height: 100,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => const Icon(
+                                          Icons.person_rounded,
+                                          size: 50,
+                                          color: AppColors.gray400,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        Icons.person_rounded,
+                                        size: 50,
+                                        color: AppColors.gray400,
+                                      ),
                           ),
                         ),
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: const BoxDecoration(
-                              color: AppColors.emerald,
+                        if (isUploading)
+                          Container(
+                            width: 100,
+                            height: 100,
+                            decoration: BoxDecoration(
                               shape: BoxShape.circle,
+                              color: Colors.black.withValues(alpha: 0.5),
                             ),
-                            child: const Icon(
-                              Icons.camera_alt_rounded,
-                              size: 14,
-                              color: AppColors.white,
+                            child: const Center(
+                              child: CircularProgressIndicator(
+                                color: AppColors.emerald,
+                                strokeWidth: 3,
+                              ),
                             ),
                           ),
-                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 14),
 
-                  // Avatar Presets
-                  const Text(
-                    'Select Preset Role Avatar',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.obsidian,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    height: 72,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: avatarPresets.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 10),
-                      itemBuilder: (context, idx) {
-                        final preset = avatarPresets[idx];
-                        final isSelected = selectedUrl == preset['url'];
-                        return GestureDetector(
-                          onTap: () {
-                            setModalState(() {
-                              selectedUrl = preset['url']!;
-                              urlController.text = preset['url']!;
-                            });
-                          },
-                          child: Column(
-                            children: [
-                              Container(
-                                width: 48,
-                                height: 48,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: isSelected ? AppColors.emerald : AppColors.gray200,
-                                    width: isSelected ? 2.5 : 1,
-                                  ),
-                                ),
-                                child: ClipOval(
-                                  child: Image.network(
-                                    preset['url']!,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => const Icon(Icons.person),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                preset['name']!,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                                  color: isSelected ? AppColors.emeraldDark : AppColors.gray600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Custom URL Input
-                  TextFormField(
-                    controller: urlController,
-                    style: const TextStyle(fontSize: 13, color: AppColors.obsidian),
-                    decoration: InputDecoration(
-                      labelText: 'Cloud Image URL',
-                      hintText: 'https://...',
-                      prefixIcon: const Icon(Icons.link_rounded, size: 18),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.check_circle_outline, color: AppColors.emerald),
-                        onPressed: () {
-                          setModalState(() {
-                            selectedUrl = urlController.text.trim();
-                          });
-                        },
+                  if (uploadError != null) ...[
+                    Center(
+                      child: Text(
+                        uploadError!,
+                        style: const TextStyle(
+                          color: AppColors.error,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        textAlign: TextAlign.center,
                       ),
                     ),
-                    onChanged: (val) {
-                      setModalState(() {
-                        selectedUrl = val.trim();
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 20),
+                    const SizedBox(height: 10),
+                  ],
 
-                  // Action Buttons
+                  // Camera and Gallery Quick Pickers
                   Row(
                     children: [
-                      if (selectedUrl.isNotEmpty) ...[
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isUploading ? null : () => pickAndStage(true),
+                          icon: const Icon(Icons.camera_alt_outlined, size: 20, color: AppColors.obsidian),
+                          label: const Text('Camera', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            side: const BorderSide(color: AppColors.gray200, width: 1.2),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isUploading ? null : () => pickAndStage(false),
+                          icon: const Icon(Icons.photo_library_outlined, size: 20, color: AppColors.obsidian),
+                          label: const Text('Gallery / Files', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            side: const BorderSide(color: AppColors.gray200, width: 1.2),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Actions: Save or Remove
+                  Row(
+                    children: [
+                      if (currentAvatarUrl != null && currentAvatarUrl.isNotEmpty) ...[
                         OutlinedButton(
-                          onPressed: () {
-                            setModalState(() {
-                              selectedUrl = '';
-                              urlController.clear();
-                            });
-                          },
-                          child: const Text('Remove Photo'),
+                          onPressed: isUploading
+                              ? null
+                              : () {
+                                  context.read<AuthBloc>().add(
+                                        const UpdateUserProfileEvent(avatarUrl: ''),
+                                      );
+                                  Navigator.of(modalCtx).pop();
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Profile photo removed.'),
+                                      behavior: SnackBarBehavior.floating,
+                                    ),
+                                  );
+                                },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.error,
+                            side: const BorderSide(color: AppColors.errorLight),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: const Text('Remove'),
                         ),
                         const SizedBox(width: 10),
                       ],
                       Expanded(
                         child: ElevatedButton(
-                          onPressed: () {
-                            context.read<AuthBloc>().add(
-                                  UpdateUserProfileEvent(avatarUrl: selectedUrl),
-                                );
-                            Navigator.of(modalCtx).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Profile photo updated successfully.'),
-                                backgroundColor: AppColors.emerald,
-                                behavior: SnackBarBehavior.floating,
-                              ),
-                            );
-                          },
-                          child: const Text('Save Profile Photo'),
+                          onPressed: (pickedBytes == null || isUploading)
+                              ? null
+                              : executeUpload,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.emerald,
+                            foregroundColor: AppColors.white,
+                            disabledBackgroundColor: AppColors.gray200,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: isUploading
+                              ? const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        color: AppColors.white,
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                    SizedBox(width: 10),
+                                    Text('Uploading to Cloud...'),
+                                  ],
+                                )
+                              : const Text('Upload & Save Photo'),
                         ),
                       ),
                     ],

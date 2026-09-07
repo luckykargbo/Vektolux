@@ -4,9 +4,12 @@
 // Stepped registration with animated role cards and business profile fields.
 // ═══════════════════════════════════════════════════════════════════════
 
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/network/convex_client_wrapper.dart';
+import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../mobility/presentation/views/mobility_home_screen.dart';
 import '../../domain/entities/user_entity.dart';
@@ -87,17 +90,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   void _showAvatarPickerModal(BuildContext context) {
+    Uint8List? pickedBytes;
     String tempUrl = _avatarUrl;
-    final urlController = TextEditingController(text: _avatarUrl);
-
-    final avatarPresets = [
-      {'name': 'Client', 'url': 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'},
-      {'name': 'Vendor', 'url': 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150'},
-      {'name': 'Driver', 'url': 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150'},
-      {'name': 'Agent', 'url': 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150'},
-      {'name': 'Traveler', 'url': 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150'},
-      {'name': 'Partner', 'url': 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=150'},
-    ];
+    bool isUploading = false;
+    String? uploadError;
 
     showModalBottomSheet(
       context: context,
@@ -109,6 +105,52 @@ class _RegisterScreenState extends State<RegisterScreen> {
       builder: (modalCtx) {
         return StatefulBuilder(
           builder: (ctx, setModalState) {
+            Future<void> pickAndStage(bool isCamera) async {
+              setModalState(() {
+                uploadError = null;
+              });
+              final file = isCamera
+                  ? await ImageUploadService.pickImageFromCamera()
+                  : await ImageUploadService.pickImageFromGallery();
+              if (file != null) {
+                final bytes = await file.readAsBytes();
+                setModalState(() {
+                  pickedBytes = bytes;
+                });
+              }
+            }
+
+            Future<void> executeUpload() async {
+              if (pickedBytes == null) return;
+              setModalState(() {
+                isUploading = true;
+                uploadError = null;
+              });
+              try {
+                final convexClient = context.read<ConvexClientWrapper>();
+                final publicUrl = await ImageUploadService.uploadImageToConvex(
+                  convexClient: convexClient,
+                  imageBytes: pickedBytes!,
+                );
+                if (modalCtx.mounted) {
+                  setState(() => _avatarUrl = publicUrl);
+                  Navigator.of(modalCtx).pop();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Profile photo staged successfully!'),
+                      backgroundColor: AppColors.emerald,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              } catch (e) {
+                setModalState(() {
+                  isUploading = false;
+                  uploadError = 'Upload failed: $e';
+                });
+              }
+            }
+
             return Padding(
               padding: EdgeInsets.only(
                 left: 20,
@@ -132,7 +174,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   const SizedBox(height: 18),
                   const Text(
-                    'Choose Profile Photo',
+                    'Profile Photo',
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w700,
@@ -141,156 +183,176 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   const SizedBox(height: 4),
                   const Text(
-                    'Select a role avatar preset or enter a cloud image URL.',
+                    'Take a photo or choose an image from your device gallery.',
                     style: TextStyle(fontSize: 13, color: AppColors.gray500),
                   ),
                   const SizedBox(height: 20),
 
-                  // Circular Crop Preview with Emerald Ring
+                  // 1:1 Circular Crop Preview with Emerald Ring
                   Center(
-                    child: Container(
-                      width: 88,
-                      height: 88,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(color: AppColors.emerald, width: 3),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.emerald.withValues(alpha: 0.25),
-                            blurRadius: 16,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: ClipOval(
-                        child: tempUrl.isNotEmpty
-                            ? Image.network(
-                                tempUrl,
-                                width: 88,
-                                height: 88,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => const Icon(
-                                  Icons.person_rounded,
-                                  size: 44,
-                                  color: AppColors.gray400,
-                                ),
-                              )
-                            : const Icon(
-                                Icons.person_rounded,
-                                size: 44,
-                                color: AppColors.gray400,
-                              ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Presets Row
-                  const Text(
-                    'Role Presets',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.obsidian,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    height: 72,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: avatarPresets.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 12),
-                      itemBuilder: (_, idx) {
-                        final preset = avatarPresets[idx];
-                        final isSelected = tempUrl == preset['url'];
-                        return GestureDetector(
-                          onTap: () {
-                            setModalState(() {
-                              tempUrl = preset['url']!;
-                              urlController.text = preset['url']!;
-                            });
-                          },
-                          child: Column(
-                            children: [
-                              Container(
-                                width: 48,
-                                height: 48,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: isSelected ? AppColors.emerald : AppColors.gray200,
-                                    width: isSelected ? 2.5 : 1.5,
-                                  ),
-                                ),
-                                child: ClipOval(
-                                  child: Image.network(
-                                    preset['url']!,
-                                    fit: BoxFit.cover,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                preset['name']!,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                                  color: isSelected ? AppColors.emerald : AppColors.gray600,
-                                ),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Container(
+                          width: 100,
+                          height: 100,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: AppColors.emerald, width: 3),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.emerald.withValues(alpha: 0.25),
+                                blurRadius: 16,
+                                offset: const Offset(0, 4),
                               ),
                             ],
                           ),
-                        );
-                      },
+                          child: ClipOval(
+                            child: pickedBytes != null
+                                ? Image.memory(
+                                    pickedBytes!,
+                                    width: 100,
+                                    height: 100,
+                                    fit: BoxFit.cover,
+                                  )
+                                : (tempUrl.isNotEmpty)
+                                    ? Image.network(
+                                        tempUrl,
+                                        width: 100,
+                                        height: 100,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => const Icon(
+                                          Icons.person_rounded,
+                                          size: 50,
+                                          color: AppColors.gray400,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        Icons.person_rounded,
+                                        size: 50,
+                                        color: AppColors.gray400,
+                                      ),
+                          ),
+                        ),
+                        if (isUploading)
+                          Container(
+                            width: 100,
+                            height: 100,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.black.withValues(alpha: 0.5),
+                            ),
+                            child: const Center(
+                              child: CircularProgressIndicator(
+                                color: AppColors.emerald,
+                                strokeWidth: 3,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  if (uploadError != null) ...[
+                    Center(
+                      child: Text(
+                        uploadError!,
+                        style: const TextStyle(
+                          color: AppColors.error,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+
+                  // Camera & Gallery Buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isUploading ? null : () => pickAndStage(true),
+                          icon: const Icon(Icons.camera_alt_outlined, size: 20, color: AppColors.obsidian),
+                          label: const Text('Camera', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            side: const BorderSide(color: AppColors.gray200, width: 1.2),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isUploading ? null : () => pickAndStage(false),
+                          icon: const Icon(Icons.photo_library_outlined, size: 20, color: AppColors.obsidian),
+                          label: const Text('Gallery / Files', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            side: const BorderSide(color: AppColors.gray200, width: 1.2),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 16),
 
-                  // Custom Cloud Image URL Input
-                  TextFormField(
-                    controller: urlController,
-                    onChanged: (val) {
-                      setModalState(() => tempUrl = val.trim());
-                    },
-                    decoration: InputDecoration(
-                      labelText: 'Cloud Avatar URL',
-                      hintText: 'https://...',
-                      prefixIcon: const Icon(Icons.link_rounded),
-                      suffixIcon: urlController.text.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear, size: 18),
-                              onPressed: () {
-                                urlController.clear();
-                                setModalState(() => tempUrl = '');
-                              },
-                            )
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Apply Button
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        setState(() => _avatarUrl = tempUrl);
-                        Navigator.of(modalCtx).pop();
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.emerald,
-                        foregroundColor: AppColors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                  // Actions: Save or Remove
+                  Row(
+                    children: [
+                      if (_avatarUrl.isNotEmpty) ...[
+                        OutlinedButton(
+                          onPressed: isUploading
+                              ? null
+                              : () {
+                                  setState(() => _avatarUrl = '');
+                                  Navigator.of(modalCtx).pop();
+                                },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.error,
+                            side: const BorderSide(color: AppColors.errorLight),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: const Text('Remove'),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: (pickedBytes == null || isUploading)
+                              ? null
+                              : executeUpload,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.emerald,
+                            foregroundColor: AppColors.white,
+                            disabledBackgroundColor: AppColors.gray200,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: isUploading
+                              ? const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        color: AppColors.white,
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                    SizedBox(width: 10),
+                                    Text('Uploading...'),
+                                  ],
+                                )
+                              : const Text('Save Profile Photo'),
                         ),
                       ),
-                      child: const Text(
-                        'Set Profile Photo',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ),
+                    ],
                   ),
                 ],
               ),
