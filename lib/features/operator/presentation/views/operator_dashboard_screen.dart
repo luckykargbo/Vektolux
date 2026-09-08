@@ -13,6 +13,7 @@ import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/domain/entities/user_entity.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
+import '../../../auth/presentation/bloc/auth_event.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../mobility/presentation/views/driver_portal_screen.dart';
@@ -34,13 +35,17 @@ class OperatorDashboardScreen extends StatefulWidget {
 }
 
 class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
+  UserRole? _activeWorkspace;
+
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<AuthBloc, AuthState>(
       builder: (context, authState) {
         final user = authState.user;
         final role = user?.role ?? UserRole.client;
-        final roleName = role.displayName;
+        final currentWorkspace =
+            _activeWorkspace ?? (role == UserRole.client ? UserRole.driver : role);
+        final roleName = currentWorkspace.displayName;
 
         return Scaffold(
           backgroundColor: AppColors.gray50,
@@ -120,9 +125,9 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                           borderRadius: BorderRadius.circular(14),
                         ),
                         child: Icon(
-                          role == UserRole.driver
+                          currentWorkspace == UserRole.driver
                               ? Icons.local_taxi_rounded
-                              : role == UserRole.agent
+                              : currentWorkspace == UserRole.agent
                                   ? Icons.apartment_rounded
                                   : Icons.directions_car_filled_rounded,
                           size: 32,
@@ -135,7 +140,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Active Mode: $roleName',
+                              'Active Workspace: $roleName',
                               style: const TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w700,
@@ -144,9 +149,9 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              role == UserRole.driver
+                              currentWorkspace == UserRole.driver
                                   ? 'Accept on-demand rides & track SLE earnings'
-                                  : role == UserRole.agent
+                                  : currentWorkspace == UserRole.agent
                                       ? 'Manage property listings & schedule visits'
                                       : 'Manage showroom inventory & fleet rentals',
                               style: TextStyle(
@@ -161,17 +166,27 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 24),
+                const SizedBox(height: 18),
 
-                // ── 2. Role Specific Modules ────────────────────────
-                if (role == UserRole.driver) ...[
+                // ── 2. Workspace Selector Tabs ─────────────────────
+                _buildWorkspaceSelector(currentWorkspace),
+
+                const SizedBox(height: 18),
+
+                // ── 3. Activation Banner (If user is in Client Mode)
+                if (role == UserRole.client || role != currentWorkspace) ...[
+                  _buildWorkspaceActivationBanner(
+                      user, currentWorkspace, role),
+                  const SizedBox(height: 18),
+                ],
+
+                // ── 4. Role Specific Modules ────────────────────────
+                if (currentWorkspace == UserRole.driver) ...[
                   _buildDriverSection(user),
-                ] else if (role == UserRole.agent) ...[
+                ] else if (currentWorkspace == UserRole.agent) ...[
                   _buildAgentSection(user),
-                ] else if (role == UserRole.merchant) ...[
+                ] else if (currentWorkspace == UserRole.merchant) ...[
                   _buildDealerSection(user),
-                ] else ...[
-                  _buildGenericVendorSection(user),
                 ],
 
                 const SizedBox(height: 24),
@@ -422,33 +437,6 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
     );
   }
 
-  Widget _buildGenericVendorSection(UserEntity? user) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionHeader('VENDOR TOOLS'),
-        _buildActionTile(
-          icon: Icons.add_box_outlined,
-          title: 'Create New Listing',
-          subtitle: 'Publish real estate or vehicles',
-          isPrimary: true,
-          onTap: () {
-            if (user != null) {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => CreateListingScreen(
-                    database: widget.database,
-                    convexClient: widget.convexClient,
-                    currentUser: user,
-                  ),
-                ),
-              );
-            }
-          },
-        ),
-      ],
-    );
-  }
 
   Widget _buildStatBox(String value, String label, IconData icon) {
     return Container(
@@ -590,6 +578,408 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
           ? const Icon(Icons.check_circle_rounded, color: AppColors.emerald, size: 20)
           : null,
       onTap: onTap,
+    );
+  }
+
+  Widget _buildWorkspaceSelector(UserRole activeWorkspace) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppColors.gray200,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          _buildWorkspaceTabItem(
+            role: UserRole.driver,
+            icon: Icons.local_taxi_rounded,
+            label: 'Driver',
+            isSelected: activeWorkspace == UserRole.driver,
+          ),
+          _buildWorkspaceTabItem(
+            role: UserRole.agent,
+            icon: Icons.apartment_rounded,
+            label: 'Real Estate',
+            isSelected: activeWorkspace == UserRole.agent,
+          ),
+          _buildWorkspaceTabItem(
+            role: UserRole.merchant,
+            icon: Icons.directions_car_filled_rounded,
+            label: 'Auto Dealer',
+            isSelected: activeWorkspace == UserRole.merchant,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWorkspaceTabItem({
+    required UserRole role,
+    required IconData icon,
+    required String label,
+    required bool isSelected,
+  }) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _activeWorkspace = role),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: isSelected ? AppColors.obsidian : AppColors.gray600,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight:
+                      isSelected ? FontWeight.w700 : FontWeight.w500,
+                  color:
+                      isSelected ? AppColors.obsidian : AppColors.gray600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWorkspaceActivationBanner(
+    UserEntity? user,
+    UserRole currentWorkspace,
+    UserRole userRole,
+  ) {
+    final isClient = userRole == UserRole.client;
+    final title = isClient
+        ? 'Preview Mode (${currentWorkspace.displayName})'
+        : 'Switch to ${currentWorkspace.displayName}';
+    final subtitle = isClient
+        ? 'You are viewing operator tools. Activate your credentials to accept live tasks.'
+        : 'Switch your active operational mode to ${currentWorkspace.displayName}.';
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.emeraldSurface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppColors.emerald.withValues(alpha: 0.5),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.verified_user_outlined,
+              color: AppColors.emeraldDark,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.obsidian,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.gray600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.emeraldDark,
+              foregroundColor: Colors.white,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              elevation: 0,
+            ),
+            onPressed: () async {
+              if (currentWorkspace == UserRole.driver) {
+                final res = await Navigator.of(context).push<bool>(
+                  MaterialPageRoute(
+                    builder: (_) => DriverVehicleRegistrationScreen(
+                      driverId: user?.id ?? '',
+                    ),
+                  ),
+                );
+                if (res == true && mounted) {
+                  context
+                      .read<AuthBloc>()
+                      .add(const UserRoleUpdatedEvent(UserRole.driver));
+                }
+              } else if (currentWorkspace == UserRole.agent) {
+                _showAgentDialog(context, user);
+              } else if (currentWorkspace == UserRole.merchant) {
+                _showDealerDialog(context, user);
+              }
+            },
+            child: Text(
+              isClient ? 'Activate' : 'Switch',
+              style:
+                  const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAgentDialog(BuildContext context, UserEntity? user) {
+    if (user == null) return;
+    final agencyCtrl =
+        TextEditingController(text: '${user.name} Properties SL');
+    final tinCtrl = TextEditingController(text: 'TIN-SL-88402');
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 20,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.gray300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Real Estate Agent Verification',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: AppColors.obsidian,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Submit agency credentials to publish verified properties across Sierra Leone.',
+              style: TextStyle(fontSize: 13, color: AppColors.gray500),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: agencyCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Agency / Business Name',
+                prefixIcon: Icon(Icons.business_rounded),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: tinCtrl,
+              decoration: const InputDecoration(
+                labelText: 'TIN / Business Registration',
+                prefixIcon: Icon(Icons.badge_outlined),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.emeraldDark,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () async {
+                  final client = context.read<ConvexClientWrapper>();
+                  await client.mutation(
+                    'users:mockApproveRoleUpgrade',
+                    args: {'userId': user.id, 'targetRole': 'agent'},
+                  );
+                  if (context.mounted) {
+                    context
+                        .read<AuthBloc>()
+                        .add(const UserRoleUpdatedEvent(UserRole.agent));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Agent credentials verified!'),
+                        backgroundColor: AppColors.emeraldDark,
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                  if (ctx.mounted) Navigator.pop(ctx);
+                },
+                child: const Text(
+                  'Submit & Activate (Demo)',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showDealerDialog(BuildContext context, UserEntity? user) {
+    if (user == null) return;
+    final dealerCtrl =
+        TextEditingController(text: '${user.name} Motors & Fleet');
+    final tinCtrl = TextEditingController(text: 'TIN-SL-90241');
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 20,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.gray300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Auto Dealer Verification',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: AppColors.obsidian,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Submit showroom credentials to list vehicles and fleet rentals.',
+              style: TextStyle(fontSize: 13, color: AppColors.gray500),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: dealerCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Dealership / Fleet Name',
+                prefixIcon: Icon(Icons.directions_car_rounded),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: tinCtrl,
+              decoration: const InputDecoration(
+                labelText: 'TIN / Trade License Number',
+                prefixIcon: Icon(Icons.badge_outlined),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF92400E),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () async {
+                  final client = context.read<ConvexClientWrapper>();
+                  await client.mutation(
+                    'users:mockApproveRoleUpgrade',
+                    args: {'userId': user.id, 'targetRole': 'merchant'},
+                  );
+                  if (context.mounted) {
+                    context
+                        .read<AuthBloc>()
+                        .add(const UserRoleUpdatedEvent(UserRole.merchant));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Auto Dealer verified!'),
+                        backgroundColor: Color(0xFF92400E),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                  if (ctx.mounted) Navigator.pop(ctx);
+                },
+                child: const Text(
+                  'Submit & Activate (Demo)',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

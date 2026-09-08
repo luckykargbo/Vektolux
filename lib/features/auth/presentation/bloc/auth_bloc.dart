@@ -25,6 +25,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<LoginSubmittedEvent>(_onLoginSubmitted);
     on<LogoutEvent>(_onLogout);
     on<UpdateUserProfileEvent>(_onUpdateUserProfile);
+    on<UserRoleUpdatedEvent>(_onUserRoleUpdated);
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -206,6 +207,21 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       emit(state.copyWith(
         errorMessage: 'Failed to update profile: $e',
       ));
+    }
+  }
+
+  void _onUserRoleUpdated(
+    UserRoleUpdatedEvent event,
+    Emitter<AuthState> emit,
+  ) {
+    if (state.user != null) {
+      final updatedUser = state.user!.copyWith(
+        role: event.newRole,
+        isVerified: true,
+        verificationStatus: 'verified',
+      );
+      emit(state.copyWith(user: updatedUser));
+      _log.i('User role updated in state: ${event.newRole.displayName}');
     }
   }
 

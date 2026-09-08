@@ -87,3 +87,13 @@ class UpdateUserProfileEvent extends AuthEvent {
   @override
   List<Object?> get props => [name, phone, avatarUrl];
 }
+
+/// User upgraded or switched active role.
+class UserRoleUpdatedEvent extends AuthEvent {
+  final UserRole newRole;
+
+  const UserRoleUpdatedEvent(this.newRole);
+
+  @override
+  List<Object?> get props => [newRole];
+}

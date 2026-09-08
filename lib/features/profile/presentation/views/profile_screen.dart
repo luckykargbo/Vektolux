@@ -821,14 +821,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   actionLabel: 'Register Vehicle',
                   badgeText: role == UserRole.driver ? 'ACTIVE' : 'APPLY',
                   isEnrolled: role == UserRole.driver,
-                  onTap: () {
-                    Navigator.of(context).push(
+                  onTap: () async {
+                    final res = await Navigator.of(context).push<bool>(
                       MaterialPageRoute(
                         builder: (_) => DriverVehicleRegistrationScreen(
                           driverId: user?.id ?? '',
                         ),
                       ),
                     );
+                    if (res == true && context.mounted) {
+                      context
+                          .read<AuthBloc>()
+                          .add(const UserRoleUpdatedEvent(UserRole.driver));
+                    }
                   },
                 ),
                 const SizedBox(height: 10),
@@ -1468,8 +1473,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     'users:mockApproveRoleUpgrade',
                     args: {'userId': user.id, 'targetRole': 'agent'},
                   );
-                  if (ctx.mounted) Navigator.pop(ctx);
                   if (context.mounted) {
+                    context
+                        .read<AuthBloc>()
+                        .add(const UserRoleUpdatedEvent(UserRole.agent));
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text(
@@ -1479,6 +1486,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     );
                   }
+                  if (ctx.mounted) Navigator.pop(ctx);
                 },
                 child: const Text(
                   'Submit & Activate (Demo)',
@@ -1574,8 +1582,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     'users:mockApproveRoleUpgrade',
                     args: {'userId': user.id, 'targetRole': 'merchant'},
                   );
-                  if (ctx.mounted) Navigator.pop(ctx);
                   if (context.mounted) {
+                    context
+                        .read<AuthBloc>()
+                        .add(const UserRoleUpdatedEvent(UserRole.merchant));
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text(
@@ -1585,6 +1595,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     );
                   }
+                  if (ctx.mounted) Navigator.pop(ctx);
                 },
                 child: const Text(
                   'Submit & Activate (Demo)',
