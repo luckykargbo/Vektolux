@@ -130,7 +130,10 @@ class _DriverPortalScreenViewState extends State<_DriverPortalScreenView> {
         'driverVehicles:mockApproveDriverVehicle',
         args: {
           'driverId': widget.currentUserId,
+          'status': 'approved',
           'approve': true,
+          if (_driverVehicle != null && _driverVehicle!.id.isNotEmpty)
+            'vehicleId': _driverVehicle!.id,
         },
       );
       if (!mounted) return;
@@ -144,9 +147,13 @@ class _DriverPortalScreenViewState extends State<_DriverPortalScreenView> {
         );
         await _loadDriverVehicle();
       } else {
+        final rawErr = result.errorMessage ?? 'Unable to complete demo approval';
+        final cleanErr = rawErr
+            .replaceAll(RegExp(r'\[Request ID:[^\]]+\]\s*Server Error\s*'), '')
+            .trim();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed: ${result.errorMessage ?? "Approval error"}'),
+            content: Text(cleanErr.isNotEmpty ? cleanErr : 'Approval error. Please try again.'),
             backgroundColor: AppColors.error,
             behavior: SnackBarBehavior.floating,
           ),

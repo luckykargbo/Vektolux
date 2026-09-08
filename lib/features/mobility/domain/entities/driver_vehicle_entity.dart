@@ -80,7 +80,15 @@ class DriverVehicleEntity extends Equatable {
 
   /// Clean formatted text badge: `{Color} {Make} {Model} • {Plate Number}`
   /// Example: "Silver Toyota Corolla • SL-940-BA" or "Yellow Bajaj RE • SL-402-KE"
-  String get formattedBadge => '$color $make $model • $licensePlate';
+  String get formattedBadge {
+    final parts = <String>[];
+    if (color.trim().isNotEmpty) parts.add(color.trim());
+    if (make.trim().isNotEmpty) parts.add(make.trim());
+    if (model.trim().isNotEmpty) parts.add(model.trim());
+    final vehicleDesc = parts.isNotEmpty ? parts.join(' ') : 'Commercial Vehicle';
+    final plate = licensePlate.trim().isNotEmpty ? licensePlate.trim() : 'SL-PENDING';
+    return '$vehicleDesc • $plate';
+  }
 
   /// Map to corresponding 3D Isometric Vehicle Tier
   VehicleTierId get tierId {

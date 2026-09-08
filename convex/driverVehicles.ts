@@ -187,27 +187,80 @@ export const getDriverVehicle = query({
 
 export const mockApproveDriverVehicle = mutation({
   args: {
-    vehicleId: v.string(),
-    status: v.union(v.literal("approved"), v.literal("rejected"), v.literal("pending")),
+    vehicleId: v.optional(v.string()),
+    driverId: v.optional(v.string()),
+    status: v.optional(v.union(v.literal("approved"), v.literal("rejected"), v.literal("pending"))),
+    approve: v.optional(v.boolean()),
     rejectionReason: v.optional(v.string()),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    const vId = ctx.db.normalizeId("driver_vehicles", args.vehicleId);
-    if (!vId) return false;
+    // 1. Determine target status
+    let targetStatus: "approved" | "rejected" | "pending" = "approved";
+    if (args.status) {
+      targetStatus = args.status;
+    } else if (args.approve !== undefined) {
+      targetStatus = args.approve ? "approved" : "rejected";
+    }
 
-    const isApproved = args.status === "approved";
+    const isApproved = targetStatus === "approved";
     const now = Date.now();
 
-    await ctx.db.patch(vId, {
-      verificationStatus: args.status,
-      isVerified: isApproved,
-      rejectionReason: args.status === "rejected" ? (args.rejectionReason ?? "Document unreadable") : undefined,
-      approvedAt: isApproved ? now : undefined,
-      updatedAt: now,
-    });
+    // 2. Locate vehicle by vehicleId OR driverId
+    let vehicle = null;
+    if (args.vehicleId) {
+      const vId = ctx.db.normalizeId("driver_vehicles", args.vehicleId);
+      if (vId) vehicle = await ctx.db.get(vId);
+    }
 
-    return true;
+    if (!vehicle && args.driverId) {
+      vehicle = await ctx.db
+        .query("driver_vehicles")
+        .withIndex("by_driver", (q) => q.eq("driverId", args.driverId!))
+        .first();
+    }
+
+    if (vehicle) {
+      // Ensure make/model/color/plate are non-empty for clean UI badges
+      const make = vehicle.make && vehicle.make.trim().length > 0 ? vehicle.make : "Toyota";
+      const model = vehicle.model && vehicle.model.trim().length > 0 ? vehicle.model : "Corolla";
+      const color = vehicle.color && vehicle.color.trim().length > 0 ? vehicle.color : "Silver";
+      const plate = vehicle.licensePlate && vehicle.licensePlate.trim().length > 0 ? vehicle.licensePlate : "SL-940-BA";
+
+      await ctx.db.patch(vehicle._id, {
+        make,
+        model,
+        color,
+        licensePlate: plate,
+        verificationStatus: targetStatus,
+        isVerified: isApproved,
+        rejectionReason: targetStatus === "rejected" ? (args.rejectionReason ?? "Document unreadable") : undefined,
+        approvedAt: isApproved ? now : undefined,
+        updatedAt: now,
+      });
+      return true;
+    }
+
+    // 3. If no vehicle record existed at all, create an approved commercial vehicle profile
+    if (args.driverId) {
+      await ctx.db.insert("driver_vehicles", {
+        driverId: args.driverId,
+        vehicleType: "car",
+        category: "standard",
+        make: "Toyota",
+        model: "Corolla",
+        year: 2021,
+        color: "Silver",
+        licensePlate: "SL-940-BA",
+        verificationStatus: targetStatus,
+        isVerified: isApproved,
+        approvedAt: isApproved ? now : undefined,
+        updatedAt: now,
+      });
+      return true;
+    }
+
+    return false;
   },
 });
 
