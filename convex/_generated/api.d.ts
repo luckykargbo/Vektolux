@@ -21,6 +21,7 @@ import type * as mobility from "../mobility.js";
 import type * as payments from "../payments.js";
 import type * as realEstate from "../realEstate.js";
 import type * as rides from "../rides.js";
+import type * as seedData from "../seedData.js";
 import type * as users from "../users.js";
 import type * as vehicleCatalog from "../vehicleCatalog.js";
 import type * as verification from "../verification.js";
@@ -45,6 +46,7 @@ declare const fullApi: ApiFromModules<{
   payments: typeof payments;
   realEstate: typeof realEstate;
   rides: typeof rides;
+  seedData: typeof seedData;
   users: typeof users;
   vehicleCatalog: typeof vehicleCatalog;
   verification: typeof verification;

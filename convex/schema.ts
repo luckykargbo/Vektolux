@@ -193,6 +193,21 @@ export default defineSchema({
     currentGeohash: v.optional(v.string()),
     locationUpdatedAt: v.optional(v.number()),
 
+    // Multi-Role & Operator State
+    activeRole: v.optional(
+      v.union(
+        v.literal("client"),
+        v.literal("driver"),
+        v.literal("agent"),
+        v.literal("merchant"),
+        v.literal("admin")
+      )
+    ),
+    isVerifiedDriver: v.optional(v.boolean()),
+    isVerifiedAgent: v.optional(v.boolean()),
+    isVerifiedMerchant: v.optional(v.boolean()),
+    driverVehicleId: v.optional(v.string()),
+
     // Metadata
     updatedAt: v.number(),
   })
@@ -669,4 +684,20 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_pickup_geohash", ["pickupGeohash"])
     .index("by_service_status", ["serviceType", "status"]),
+
+  // ─── ROLE & OPERATOR APPLICATIONS ──────────────────────────────
+  role_applications: defineTable({
+    userId: v.id("users"),
+    targetRole: v.union(v.literal("driver"), v.literal("agent"), v.literal("merchant")),
+    businessName: v.optional(v.string()),
+    tinNumber: v.optional(v.string()),
+    licenseNumber: v.optional(v.string()),
+    documentUrls: v.array(v.string()),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected")),
+    reviewNotes: v.optional(v.string()),
+    reviewedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_role_status", ["targetRole", "status"]),
 });

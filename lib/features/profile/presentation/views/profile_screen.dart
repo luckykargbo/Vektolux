@@ -20,13 +20,17 @@ import '../../../auth/presentation/bloc/auth_event.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../auth/presentation/views/login_screen.dart';
 import '../../../../core/widgets/vektolux_avatar.dart';
+import '../../../operator/presentation/views/operator_dashboard_screen.dart';
+import '../../../mobility/presentation/views/driver_vehicle_registration_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? currentUserId;
+  final bool showBackButton;
 
   const ProfileScreen({
     super.key,
     this.currentUserId,
+    this.showBackButton = true,
   });
 
   @override
@@ -585,10 +589,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 color: AppColors.white,
               ),
             ),
-            leading: IconButton(
-              icon: const Icon(Icons.arrow_back_ios_new, size: 18, color: AppColors.white),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
+            leading: (widget.showBackButton && Navigator.canPop(context))
+                ? IconButton(
+                    icon: const Icon(Icons.arrow_back_ios_new, size: 18, color: AppColors.white),
+                    onPressed: () => Navigator.of(context).pop(),
+                  )
+                : null,
+            automaticallyImplyLeading:
+                widget.showBackButton && Navigator.canPop(context),
           ),
           body: SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -712,7 +720,142 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                 const SizedBox(height: 18),
 
-                // ── 2. Vendor / Merchant Hub (If vendor role) ────────
+                // ── 2. Operator Workspace Card (If vendor role) ──────
+                if (isVendor) ...[
+                  _buildSectionHeader('OPERATOR WORKSPACE'),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [AppColors.obsidian, Color(0xFF1E293B)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.1),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: AppColors.emerald.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.storefront_rounded,
+                              color: AppColors.emerald, size: 24),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Operator Portal',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Launch ${role.displayName} Portal',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.8),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.emerald,
+                            foregroundColor: AppColors.obsidian,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 10),
+                          ),
+                          onPressed: () {
+                            final db = context.read<AppDatabase>();
+                            final client = context.read<ConvexClientWrapper>();
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => OperatorDashboardScreen(
+                                  database: db,
+                                  convexClient: client,
+                                ),
+                              ),
+                            );
+                          },
+                          child: const Text(
+                            'Open Hub',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                ],
+
+                // ── 3. Partner & Vendor Upgrades (All Users) ─────────
+                _buildSectionHeader('BECOME A VEKTOLUX PARTNER'),
+                _buildPartnerCard(
+                  icon: Icons.local_taxi_rounded,
+                  title: 'Become a Driver / Keke Operator',
+                  subtitle:
+                      'Earn with on-demand rides & deliveries across Sierra Leone',
+                  actionLabel: 'Register Vehicle',
+                  badgeText: role == UserRole.driver ? 'ACTIVE' : 'APPLY',
+                  isEnrolled: role == UserRole.driver,
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => DriverVehicleRegistrationScreen(
+                          driverId: user?.id ?? '',
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 10),
+                _buildPartnerCard(
+                  icon: Icons.apartment_rounded,
+                  title: 'List Properties as Real Estate Agent',
+                  subtitle:
+                      'Reach thousands of verified buyers & renters nationwide',
+                  actionLabel: 'Apply as Agent',
+                  badgeText: role == UserRole.agent ? 'ACTIVE' : 'APPLY',
+                  isEnrolled: role == UserRole.agent,
+                  onTap: () => _showAgentApplicationDialog(context, user),
+                ),
+                const SizedBox(height: 10),
+                _buildPartnerCard(
+                  icon: Icons.directions_car_filled_rounded,
+                  title: 'Sell Vehicles as Auto Dealer',
+                  subtitle:
+                      'List showroom cars, kekes & fleet rentals with escrow',
+                  actionLabel: 'Apply as Dealer',
+                  badgeText: role == UserRole.merchant ? 'ACTIVE' : 'APPLY',
+                  isEnrolled: role == UserRole.merchant,
+                  onTap: () => _showDealerApplicationDialog(context, user),
+                ),
+                const SizedBox(height: 18),
+
+                // ── 4. Vendor / Merchant Hub (If vendor role) ────────
                 if (isVendor) ...[
                   _buildSectionHeader('VENDOR & MERCHANT HUB'),
                   Container(
@@ -1135,6 +1278,323 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       trailing: trailing ?? const Icon(Icons.chevron_right_rounded, color: AppColors.gray400, size: 18),
       onTap: onTap,
+    );
+  }
+
+  Widget _buildPartnerCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required String actionLabel,
+    required String badgeText,
+    required bool isEnrolled,
+    required VoidCallback onTap,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isEnrolled ? AppColors.emerald : AppColors.border,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: isEnrolled ? AppColors.emeraldSurface : AppColors.gray100,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              icon,
+              color: isEnrolled ? AppColors.emeraldDark : AppColors.obsidian,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.obsidian,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: isEnrolled
+                            ? AppColors.emeraldSurface
+                            : AppColors.gray100,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        badgeText,
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          color: isEnrolled
+                              ? AppColors.emeraldDark
+                              : AppColors.gray600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.gray500),
+                ),
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onTap: onTap,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        isEnrolled ? 'Manage Portal' : actionLabel,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.emeraldDark,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.arrow_forward_ios_rounded,
+                          size: 10, color: AppColors.emeraldDark),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAgentApplicationDialog(BuildContext context, UserEntity? user) {
+    if (user == null) return;
+    final agencyCtrl =
+        TextEditingController(text: '${user.name} Real Estate Agency');
+    final tinCtrl = TextEditingController(text: 'TIN-SL-84920');
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 20,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.gray300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Real Estate Agent Verification',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: AppColors.obsidian,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Submit your agency details to unlock the property manager and publish listings across Sierra Leone.',
+              style: TextStyle(fontSize: 13, color: AppColors.gray500),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: agencyCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Agency / Business Name',
+                prefixIcon: Icon(Icons.business_rounded),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: tinCtrl,
+              decoration: const InputDecoration(
+                labelText: 'TIN / Business Registration',
+                prefixIcon: Icon(Icons.badge_outlined),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.emeraldDark,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () async {
+                  final client = context.read<ConvexClientWrapper>();
+                  await client.mutation(
+                    'users:mockApproveRoleUpgrade',
+                    args: {'userId': user.id, 'targetRole': 'agent'},
+                  );
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                            'Agent credentials verified! You can now publish properties.'),
+                        backgroundColor: AppColors.emeraldDark,
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                },
+                child: const Text(
+                  'Submit & Activate (Demo)',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showDealerApplicationDialog(BuildContext context, UserEntity? user) {
+    if (user == null) return;
+    final dealerCtrl =
+        TextEditingController(text: '${user.name} Motors & Fleet');
+    final tinCtrl = TextEditingController(text: 'TIN-SL-90241');
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 20,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.gray300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Auto Dealer & Fleet Verification',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: AppColors.obsidian,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Submit your dealership registration to list cars for sale, kekes, and fleet rentals.',
+              style: TextStyle(fontSize: 13, color: AppColors.gray500),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: dealerCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Dealership / Fleet Name',
+                prefixIcon: Icon(Icons.directions_car_rounded),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: tinCtrl,
+              decoration: const InputDecoration(
+                labelText: 'TIN / Trade License Number',
+                prefixIcon: Icon(Icons.badge_outlined),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF92400E),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () async {
+                  final client = context.read<ConvexClientWrapper>();
+                  await client.mutation(
+                    'users:mockApproveRoleUpgrade',
+                    args: {'userId': user.id, 'targetRole': 'merchant'},
+                  );
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                            'Auto Dealer verified! You can now list vehicles in the showroom.'),
+                        backgroundColor: Color(0xFF92400E),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                },
+                child: const Text(
+                  'Submit & Activate (Demo)',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

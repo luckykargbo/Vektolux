@@ -9,7 +9,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../../core/theme/app_colors.dart';
-import '../../../mobility/presentation/views/mobility_home_screen.dart';
+import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
@@ -102,9 +102,7 @@ class _SplashScreenState extends State<SplashScreen>
         if (state.status == AuthStatus.authenticated && state.user != null) {
           Navigator.of(context).pushReplacement(
             _createFadeRoute(
-              MobilityHomeScreen(
-                currentUserId: state.user!.id,
-              ),
+              const MainNavigationShell(),
             ),
           );
         } else if (state.status == AuthStatus.unauthenticated) {

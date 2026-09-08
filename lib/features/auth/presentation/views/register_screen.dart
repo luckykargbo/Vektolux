@@ -8,7 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/theme/app_colors.dart';
-import '../../../mobility/presentation/views/mobility_home_screen.dart';
+import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../../domain/entities/user_entity.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
@@ -91,9 +91,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         if (state.status == AuthStatus.authenticated && state.user != null) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
-              builder: (_) => MobilityHomeScreen(
-                currentUserId: state.user!.id,
-              ),
+              builder: (_) => const MainNavigationShell(),
             ),
           );
         } else if (state.status == AuthStatus.error && state.errorMessage != null) {
