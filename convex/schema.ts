@@ -252,6 +252,7 @@ export default defineSchema({
     // Status
     availabilityStatus: availabilityStatus,
     isFeatured: v.boolean(),
+    isPublished: v.optional(v.boolean()),
     viewCount: v.number(),
 
     // Metadata
@@ -263,6 +264,7 @@ export default defineSchema({
     .index("by_category_price", ["category", "price"])
     .index("by_city_category", ["city", "category"])
     .index("by_featured", ["isFeatured", "availabilityStatus"])
+    .index("by_published", ["isPublished", "availabilityStatus"])
     .searchIndex("search_title", {
       searchField: "title",
       filterFields: ["category", "availabilityStatus", "city"],
@@ -332,6 +334,7 @@ export default defineSchema({
 
     // Status
     availabilityStatus: availabilityStatus,
+    isPublished: v.optional(v.boolean()),
 
     // Metadata
     updatedAt: v.number(),
@@ -341,6 +344,7 @@ export default defineSchema({
     .index("by_geohash", ["geohash"])
     .index("by_availability_intent", ["availabilityStatus", "listingIntent"])
     .index("by_type_availability", ["vehicleType", "availabilityStatus"])
+    .index("by_published", ["isPublished", "availabilityStatus"])
     .searchIndex("search_vehicle", {
       searchField: "make",
       filterFields: ["vehicleType", "listingIntent", "availabilityStatus"],

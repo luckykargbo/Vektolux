@@ -35,6 +35,7 @@ export const createPropertyListing = mutation({
     bathrooms: v.optional(v.number()),
     areaSqM: v.optional(v.number()),
     amenities: v.optional(v.array(v.string())),
+    isPublished: v.optional(v.boolean()),
   },
   returns: v.string(), // Returns listing _id
   handler: async (ctx, args) => {
@@ -101,6 +102,7 @@ export const createPropertyListing = mutation({
       imageUrls: resolvedImageUrls,
       availabilityStatus: "available",
       isFeatured: false,
+      isPublished: args.isPublished ?? true,
       viewCount: 0,
       updatedAt: now,
     });
@@ -135,7 +137,8 @@ export const listProperties = query({
           .order("desc")
           .take(args.limit ?? 50);
 
-    let filtered = listings;
+    // Exclude unpublished / draft listings from public discovery
+    let filtered = listings.filter((l) => l.isPublished !== false);
 
     // Apply price and city filters in-memory if requested
     if (args.minPrice !== undefined) {

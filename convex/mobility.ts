@@ -45,6 +45,7 @@ export const createVehicleListing = mutation({
     latitude: v.number(),
     longitude: v.number(),
     imageStorageIds: v.array(v.string()),
+    isPublished: v.optional(v.boolean()),
   },
   returns: v.string(), // Returns listing _id
   handler: async (ctx, args) => {
@@ -108,6 +109,7 @@ export const createVehicleListing = mutation({
       longitude: args.longitude,
       geohash,
       availabilityStatus: "available",
+      isPublished: args.isPublished ?? true,
       updatedAt: now,
     });
 
@@ -143,6 +145,9 @@ export const listVehicles = query({
           .take(args.limit ?? 50);
 
     let filtered = vehicles;
+
+    // Exclude unpublished / draft listings from public discovery
+    filtered = filtered.filter((v) => v.isPublished !== false);
 
     // Apply vehicleType filter in-memory if specified
     if (args.vehicleType) {

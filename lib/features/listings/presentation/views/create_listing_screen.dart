@@ -4,12 +4,13 @@
 // 4-step listing creation for vendors/agents with media upload & offline cache.
 // ═══════════════════════════════════════════════════════════════════════
 
-import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 
 import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
+import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/verified_badge.dart';
 import '../../../auth/domain/entities/user_entity.dart';
@@ -70,9 +71,16 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   final double _vehLng = -13.2344;
 
   // ── Uploaded Images ───────────────────────────────────────────────
-  final List<String> _imageUrls = [];
-  final List<String> _imageStorageIds = [];
-  bool _isUploadingImage = false;
+  final List<StagedMediaItem> _stagedImages = [];
+
+  List<String> get _imageUrls => _stagedImages
+      .map((i) => i.remoteUrl ?? i.localPath ?? '')
+      .where((url) => url.isNotEmpty)
+      .toList();
+
+  List<String> get _imageStorageIds => _stagedImages
+      .map((i) => i.storageId ?? 'local_media_${i.id}')
+      .toList();
 
   // ── Verification Gate State ───────────────────────────────────────
   late bool _isUserVerified;
@@ -155,86 +163,137 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
     );
   }
 
-  /// Upload sample image bytes to Convex storage via generateUploadUrl
-  Future<void> _uploadImageToConvex({required String label}) async {
-    setState(() => _isUploadingImage = true);
+  /// Pick and upload a single photo for a named preset slot
+  Future<void> _pickAndUploadForSlot(String slotLabel) async {
+    final option = await ImageUploadService.showImageSourceDialog(context, allowMulti: false);
+    if (option == null) return;
 
-    try {
-      // 1. Get signed upload URL from Convex
-      final urlResult = await widget.convexClient.mutation(
-        'files:generateUploadUrl',
-        args: {},
-      );
+    final XFile? file = option == ImageSourceOption.camera
+        ? await ImageUploadService.pickImageFromCamera()
+        : await ImageUploadService.pickImageFromGallery();
 
-      if (!urlResult.success || urlResult.value == null) {
-        throw Exception(
-            urlResult.errorMessage ?? 'Failed to generate upload URL');
+    if (file == null) return;
+
+    await _processAndUploadFile(file, slotLabel: slotLabel);
+  }
+
+  /// Pick multiple photos from gallery or camera for central staging
+  Future<void> _pickAndUploadMultiple({String defaultSlot = 'Photo'}) async {
+    final option = await ImageUploadService.showImageSourceDialog(context, allowMulti: true);
+    if (option == null) return;
+
+    if (option == ImageSourceOption.camera) {
+      final file = await ImageUploadService.pickImageFromCamera();
+      if (file != null) {
+        await _processAndUploadFile(file, slotLabel: defaultSlot);
       }
-
-      final uploadUrl = urlResult.value as String;
-
-      // 2. Generate a 1x1 colored pixel PNG as demo image payload
-      final sampleBytes = _generateSampleImageBytes(label);
-
-      // 3. POST bytes to Convex storage URL
-      final response = await http.post(
-        Uri.parse(uploadUrl),
-        headers: {'Content-Type': 'image/png'},
-        body: sampleBytes,
-      );
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final storageId = data['storageId'] as String;
-
-        setState(() {
-          _imageStorageIds.add(storageId);
-          _imageUrls.add(label);
-        });
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Image "$label" uploaded to Convex storage!'),
-              backgroundColor: AppColors.emerald,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
+    } else {
+      final files = await ImageUploadService.pickMultipleImages();
+      if (files.isEmpty) {
+        // Fallback to single picker if multi returns empty
+        final single = await ImageUploadService.pickImageFromGallery();
+        if (single != null) {
+          await _processAndUploadFile(single, slotLabel: defaultSlot);
         }
-      } else {
-        throw Exception('Upload failed: HTTP ${response.statusCode}');
+        return;
       }
-    } catch (e) {
-      if (mounted) {
-        // Fallback: still record simulated image so creation isn't blocked
-        setState(() {
-          _imageStorageIds.add('local_asset_${DateTime.now().millisecondsSinceEpoch}');
-          _imageUrls.add(label);
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Image staged locally: $label'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isUploadingImage = false);
+      for (int i = 0; i < files.length; i++) {
+        final label = files.length == 1 ? defaultSlot : '$defaultSlot ${i + 1}';
+        await _processAndUploadFile(files[i], slotLabel: label);
       }
     }
   }
 
-  List<int> _generateSampleImageBytes(String label) {
-    // 1x1 transparent PNG bytes for demonstration
-    return [
-      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
-      0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-      0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
-      0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
-      0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
-      0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82
-    ];
+  /// Read file bytes, stage thumbnail immediately, and trigger background Convex upload
+  Future<void> _processAndUploadFile(XFile file, {required String slotLabel}) async {
+    final bytes = await file.readAsBytes();
+    final item = StagedMediaItem(
+      id: 'img_${DateTime.now().microsecondsSinceEpoch}',
+      slotLabel: slotLabel,
+      localBytes: bytes,
+      localPath: file.path,
+      isUploading: true,
+    );
+
+    setState(() {
+      _stagedImages.add(item);
+    });
+
+    try {
+      final uploadRes = await ImageUploadService.uploadImageBinaryWithStorageId(
+        convexClient: widget.convexClient,
+        imageBytes: bytes,
+        contentType: file.mimeType ?? 'image/jpeg',
+      );
+
+      if (mounted) {
+        setState(() {
+          item.storageId = uploadRes.storageId;
+          item.remoteUrl = uploadRes.publicUrl;
+          item.isUploading = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Uploaded "$slotLabel" to Convex cloud storage!'),
+            backgroundColor: AppColors.emerald,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          item.isUploading = false;
+          item.error = e.toString();
+          item.storageId = 'local_${DateTime.now().millisecondsSinceEpoch}';
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Upload failed for "$slotLabel": $e (Staged locally)'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  void _removeStagedImage(StagedMediaItem item) {
+    setState(() {
+      _stagedImages.removeWhere((i) => i.id == item.id);
+    });
+  }
+
+  Future<void> _retryUpload(StagedMediaItem item) async {
+    if (item.localBytes == null) return;
+    setState(() {
+      item.isUploading = true;
+      item.error = null;
+    });
+
+    try {
+      final uploadRes = await ImageUploadService.uploadImageBinaryWithStorageId(
+        convexClient: widget.convexClient,
+        imageBytes: item.localBytes!,
+        contentType: 'image/jpeg',
+      );
+      if (mounted) {
+        setState(() {
+          item.storageId = uploadRes.storageId;
+          item.remoteUrl = uploadRes.publicUrl;
+          item.isUploading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          item.isUploading = false;
+          item.error = e.toString();
+        });
+      }
+    }
   }
 
   /// Final submit: save to Convex backend & cache directly to SQLite
@@ -869,6 +928,9 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             'Odometer & Engine'
           ];
 
+    final hasImages = _stagedImages.isNotEmpty;
+    final isAnyUploading = _stagedImages.any((i) => i.isUploading);
+
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -886,16 +948,29 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             'High-quality media increases inquiries by up to 3x on Vektolux',
             style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
 
           // Upload action cards
-          const Text(
-            'Quick Upload Presets:',
-            style: TextStyle(
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
-              color: AppColors.obsidian,
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Quick Upload Presets:',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  color: AppColors.obsidian,
+                ),
+              ),
+              Text(
+                '${_stagedImages.length} photo(s)',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.emeraldDark,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 10),
 
@@ -903,95 +978,366 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             spacing: 8,
             runSpacing: 8,
             children: samplePhotos.map((photo) {
-              final isUploaded = _imageUrls.contains(photo);
+              final isUploaded =
+                  _stagedImages.any((img) => img.slotLabel == photo);
               return ActionChip(
                 avatar: Icon(
                   isUploaded ? Icons.check_circle : Icons.camera_alt_outlined,
                   size: 16,
                   color: isUploaded ? AppColors.emerald : AppColors.gray600,
                 ),
+                backgroundColor: isUploaded ? const Color(0xFFECFDF5) : null,
+                side: isUploaded
+                    ? const BorderSide(color: AppColors.emerald)
+                    : null,
                 label: Text(photo),
-                onPressed: _isUploadingImage || isUploaded
-                    ? null
-                    : () => _uploadImageToConvex(label: photo),
+                onPressed: () => _pickAndUploadForSlot(photo),
               );
             }).toList(),
           ),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
 
-          // Staged photos list
+          // Staged photos container or thumbnail grid
           Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppColors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: _imageUrls.isEmpty
-                  ? const Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.cloud_upload_outlined,
-                              size: 48, color: AppColors.gray400),
-                          SizedBox(height: 12),
-                          Text(
-                            'No photos staged yet',
-                            style: TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          SizedBox(height: 4),
-                          Text(
-                            'Tap any preset above to upload to Convex storage',
-                            style: TextStyle(
-                                fontSize: 12, color: AppColors.textSecondary),
-                          ),
-                        ],
+            child: !hasImages
+                ? GestureDetector(
+                    onTap: () => _pickAndUploadMultiple(defaultSlot: 'Photo'),
+                    child: CustomPaint(
+                      painter: _DashedBorderPainter(
+                        color: const Color(0xFFCBD5E1),
+                        strokeWidth: 2,
+                        dash: 6,
+                        gap: 4,
+                        radius: 16,
                       ),
-                    )
-                  : ListView.builder(
-                      itemCount: _imageUrls.length,
+                      child: Container(
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 24),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF059669)
+                                    .withValues(alpha: 0.12),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.cloud_upload_outlined,
+                                size: 42,
+                                color: Color(0xFF059669),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            const Text(
+                              'No photos uploaded yet',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF0F172A),
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'Tap any slot above or choose from gallery to upload images',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF475569),
+                                height: 1.4,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 16),
+                            ElevatedButton.icon(
+                              onPressed: () =>
+                                  _pickAndUploadMultiple(defaultSlot: 'Photo'),
+                              icon: const Icon(Icons.add_photo_alternate,
+                                  size: 18),
+                              label: const Text('Choose from Gallery'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF059669),
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 18, vertical: 10),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  )
+                : Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: GridView.builder(
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
+                        childAspectRatio: 1.15,
+                      ),
+                      itemCount: _stagedImages.length + 1,
                       itemBuilder: (context, index) {
-                        return ListTile(
-                          leading: const Icon(Icons.image,
-                              color: AppColors.emerald),
-                          title: Text(_imageUrls[index]),
-                          subtitle: Text('Storage ID: ${_imageStorageIds[index]}',
-                              maxLines: 1, overflow: TextOverflow.ellipsis),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete_outline,
-                                color: AppColors.error),
-                            onPressed: () {
-                              setState(() {
-                                _imageUrls.removeAt(index);
-                                _imageStorageIds.removeAt(index);
-                              });
-                            },
+                        if (index == _stagedImages.length) {
+                          // "+ Add More" tile
+                          return InkWell(
+                            onTap: () =>
+                                _pickAndUploadMultiple(defaultSlot: 'Photo'),
+                            borderRadius: BorderRadius.circular(12),
+                            child: CustomPaint(
+                              painter: _DashedBorderPainter(
+                                color: const Color(0xFFCBD5E1),
+                                strokeWidth: 1.5,
+                                dash: 5,
+                                gap: 3,
+                                radius: 12,
+                              ),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.add_a_photo_outlined,
+                                        size: 28, color: Color(0xFF059669)),
+                                    SizedBox(height: 6),
+                                    Text(
+                                      'Add More',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: Color(0xFF0F172A),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        }
+
+                        final item = _stagedImages[index];
+                        return ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              // Image preview
+                              if (item.localBytes != null)
+                                Image.memory(
+                                  item.localBytes!,
+                                  fit: BoxFit.cover,
+                                )
+                              else if (item.remoteUrl != null &&
+                                  item.remoteUrl!.startsWith('http'))
+                                Image.network(
+                                  item.remoteUrl!,
+                                  fit: BoxFit.cover,
+                                )
+                              else
+                                Container(
+                                  color: AppColors.gray200,
+                                  child: const Icon(Icons.image,
+                                      color: AppColors.gray400),
+                                ),
+
+                              // Slot Label Tag (Top-Left)
+                              Positioned(
+                                top: 6,
+                                left: 6,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xCC0F172A),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    item.slotLabel,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              // Delete Button (Top-Right)
+                              Positioned(
+                                top: 6,
+                                right: 6,
+                                child: InkWell(
+                                  onTap: () => _removeStagedImage(item),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: const BoxDecoration(
+                                      color: Color(0xCCEF4444),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.close,
+                                      size: 14,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              // Uploading overlay
+                              if (item.isUploading)
+                                Container(
+                                  color: Colors.black54,
+                                  child: const Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        SizedBox(
+                                          width: 24,
+                                          height: 24,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2.5,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                        SizedBox(height: 6),
+                                        Text(
+                                          'Uploading...',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+
+                              // Success checkmark (Bottom-Right)
+                              if (!item.isUploading &&
+                                  item.storageId != null &&
+                                  item.error == null)
+                                Positioned(
+                                  bottom: 6,
+                                  right: 6,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(3),
+                                    decoration: const BoxDecoration(
+                                      color: Color(0xFF059669),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.check,
+                                      size: 12,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+
+                              // Error overlay with retry
+                              if (item.error != null && !item.isUploading)
+                                Positioned(
+                                  bottom: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: Container(
+                                    color: const Color(0xDDDC2626),
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 2, horizontal: 4),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        const Text(
+                                          'Retry',
+                                          style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold),
+                                        ),
+                                        const SizedBox(width: 4),
+                                        InkWell(
+                                          onTap: () => _retryUpload(item),
+                                          child: const Icon(Icons.refresh,
+                                              color: Colors.white, size: 12),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                         );
                       },
                     ),
-            ),
+                  ),
           ),
 
-          if (_isUploadingImage)
+          const SizedBox(height: 12),
+
+          // Validation guidance message if empty
+          if (!hasImages)
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
+              padding: EdgeInsets.only(bottom: 8),
               child: Row(
                 children: [
-                  SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                  Icon(Icons.info_outline, size: 15, color: Color(0xFFDC2626)),
+                  SizedBox(width: 6),
+                  Text(
+                    'Please upload at least 1 image to proceed',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xFFDC2626),
+                    ),
                   ),
-                  SizedBox(width: 10),
-                  Text('Uploading to Convex Storage...'),
                 ],
               ),
             ),
 
-          const SizedBox(height: 16),
+          if (isAnyUploading)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Color(0xFF059669)),
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    'Uploading images to Convex cloud storage...',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF059669),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
           Row(
             children: [
@@ -1004,7 +1350,15 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: ElevatedButton(
-                  onPressed: () => _goToStep(3),
+                  onPressed: (!hasImages || isAnyUploading)
+                      ? null
+                      : () => _goToStep(3),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF059669),
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: const Color(0xFFCBD5E1),
+                    disabledForegroundColor: const Color(0xFF94A3B8),
+                  ),
                   child: const Text('Review Listing'),
                 ),
               ),
@@ -1250,3 +1604,84 @@ class _ReviewRow extends StatelessWidget {
     );
   }
 }
+
+/// Represents a media item in the multi-image staging pipeline
+class StagedMediaItem {
+  final String id;
+  final String slotLabel;
+  final Uint8List? localBytes;
+  final String? localPath;
+  String? storageId;
+  String? remoteUrl;
+  bool isUploading;
+  String? error;
+
+  StagedMediaItem({
+    required this.id,
+    required this.slotLabel,
+    this.localBytes,
+    this.localPath,
+    this.storageId,
+    this.remoteUrl,
+    this.isUploading = false,
+    this.error,
+  });
+}
+
+/// Custom painter for dashed borders (used in empty upload staging & add tile)
+class _DashedBorderPainter extends CustomPainter {
+  final Color color;
+  final double strokeWidth;
+  final double gap;
+  final double dash;
+  final double radius;
+
+  _DashedBorderPainter({
+    this.color = const Color(0xFFCBD5E1),
+    this.strokeWidth = 2,
+    this.dash = 6,
+    this.gap = 4,
+    this.radius = 16,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = strokeWidth
+      ..style = PaintingStyle.stroke;
+
+    final rrect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(
+        strokeWidth / 2,
+        strokeWidth / 2,
+        size.width - strokeWidth,
+        size.height - strokeWidth,
+      ),
+      Radius.circular(radius),
+    );
+
+    final path = Path()..addRRect(rrect);
+    final pathMetrics = path.computeMetrics();
+
+    for (final metric in pathMetrics) {
+      double distance = 0.0;
+      while (distance < metric.length) {
+        final double len =
+            distance + dash > metric.length ? metric.length - distance : dash;
+        final extractPath = metric.extractPath(distance, distance + len);
+        canvas.drawPath(extractPath, paint);
+        distance += dash + gap;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DashedBorderPainter oldDelegate) =>
+      oldDelegate.color != color ||
+      oldDelegate.strokeWidth != strokeWidth ||
+      oldDelegate.dash != dash ||
+      oldDelegate.gap != gap ||
+      oldDelegate.radius != radius;
+}
+
