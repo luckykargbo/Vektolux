@@ -167,7 +167,7 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
     }).toList();
   }
 
-  void _openCreateListing() {
+  Future<void> _openCreateListing() async {
     final user = context.read<AuthBloc>().state.user;
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -179,7 +179,7 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
       return;
     }
 
-    Navigator.of(context).push(
+    final res = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => CreateListingScreen(
           database: widget.database,
@@ -188,6 +188,10 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
         ),
       ),
     );
+
+    if (res == true) {
+      _fetchVehicles();
+    }
   }
 
   @override

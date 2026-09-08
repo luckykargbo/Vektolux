@@ -10,6 +10,7 @@ enum RideStatus {
   requested,
   accepted,
   driverArriving,
+  arrived,
   inTransit,
   completed,
   cancelled;
@@ -19,6 +20,7 @@ enum RideStatus {
       'requested' => RideStatus.requested,
       'accepted' => RideStatus.accepted,
       'driver_arriving' || 'driverarriving' => RideStatus.driverArriving,
+      'arrived' => RideStatus.arrived,
       'in_transit' || 'intransit' => RideStatus.inTransit,
       'completed' => RideStatus.completed,
       'cancelled' => RideStatus.cancelled,
@@ -30,6 +32,7 @@ enum RideStatus {
         RideStatus.requested => 'Finding Driver...',
         RideStatus.accepted => 'Driver Accepted',
         RideStatus.driverArriving => 'Driver Arriving',
+        RideStatus.arrived => 'Driver Arrived at Pickup',
         RideStatus.inTransit => 'Ride In Transit',
         RideStatus.completed => 'Completed',
         RideStatus.cancelled => 'Cancelled',
@@ -39,6 +42,7 @@ enum RideStatus {
       this == RideStatus.requested ||
       this == RideStatus.accepted ||
       this == RideStatus.driverArriving ||
+      this == RideStatus.arrived ||
       this == RideStatus.inTransit;
 }
 
@@ -169,4 +173,74 @@ class RideEntity extends Equatable {
         vehiclePlate,
         verificationPin,
       ];
+
+  RideEntity copyWith({
+    String? id,
+    String? passengerId,
+    String? driverId,
+    String? vehicleId,
+    double? pickupLat,
+    double? pickupLng,
+    String? pickupAddress,
+    double? dropoffLat,
+    double? dropoffLng,
+    String? dropoffAddress,
+    double? distanceKm,
+    int? estimatedDurationMin,
+    double? fareAmount,
+    String? currency,
+    double? platformFee,
+    double? driverPayout,
+    RideStatus? status,
+    String? paymentStatus,
+    String? paymentReference,
+    String? blockchainLogHash,
+    String? driverName,
+    String? driverPhone,
+    double? driverRating,
+    String? driverAvatarUrl,
+    double? driverLat,
+    double? driverLng,
+    String? vehicleCategory,
+    String? vehicleMake,
+    String? vehicleModel,
+    String? vehicleColor,
+    String? vehiclePlate,
+    String? verificationPin,
+  }) {
+    return RideEntity(
+      id: id ?? this.id,
+      passengerId: passengerId ?? this.passengerId,
+      driverId: driverId ?? this.driverId,
+      vehicleId: vehicleId ?? this.vehicleId,
+      pickupLat: pickupLat ?? this.pickupLat,
+      pickupLng: pickupLng ?? this.pickupLng,
+      pickupAddress: pickupAddress ?? this.pickupAddress,
+      dropoffLat: dropoffLat ?? this.dropoffLat,
+      dropoffLng: dropoffLng ?? this.dropoffLng,
+      dropoffAddress: dropoffAddress ?? this.dropoffAddress,
+      distanceKm: distanceKm ?? this.distanceKm,
+      estimatedDurationMin: estimatedDurationMin ?? this.estimatedDurationMin,
+      fareAmount: fareAmount ?? this.fareAmount,
+      currency: currency ?? this.currency,
+      platformFee: platformFee ?? this.platformFee,
+      driverPayout: driverPayout ?? this.driverPayout,
+      status: status ?? this.status,
+      paymentStatus: paymentStatus ?? this.paymentStatus,
+      paymentReference: paymentReference ?? this.paymentReference,
+      blockchainLogHash: blockchainLogHash ?? this.blockchainLogHash,
+      driverName: driverName ?? this.driverName,
+      driverPhone: driverPhone ?? this.driverPhone,
+      driverRating: driverRating ?? this.driverRating,
+      driverAvatarUrl: driverAvatarUrl ?? this.driverAvatarUrl,
+      driverLat: driverLat ?? this.driverLat,
+      driverLng: driverLng ?? this.driverLng,
+      vehicleCategory: vehicleCategory ?? this.vehicleCategory,
+      vehicleMake: vehicleMake ?? this.vehicleMake,
+      vehicleModel: vehicleModel ?? this.vehicleModel,
+      vehicleColor: vehicleColor ?? this.vehicleColor,
+      vehiclePlate: vehiclePlate ?? this.vehiclePlate,
+      verificationPin: verificationPin ?? this.verificationPin,
+    );
+  }
 }

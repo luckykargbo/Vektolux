@@ -17,6 +17,7 @@ import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
 import '../../../listings/presentation/views/vehicle_detail_screen.dart';
+import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../mobility/presentation/bloc/mobility_bloc.dart';
 import '../../../mobility/presentation/bloc/mobility_event.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
@@ -302,8 +303,78 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         final user = authState.user;
         final userName = user?.name.split(' ').first ?? 'Friend';
 
+        final query = _searchController.text.trim().toLowerCase();
+        final isSearching = query.isNotEmpty;
+
+        final matchingProperties = isSearching
+            ? _properties.where((p) {
+                final title = (p['title'] as String? ?? '').toLowerCase();
+                final address = (p['address'] as String? ?? '').toLowerCase();
+                final desc = (p['description'] as String? ?? '').toLowerCase();
+                final cat = (p['category'] as String? ?? '').toLowerCase();
+                return title.contains(query) ||
+                    address.contains(query) ||
+                    desc.contains(query) ||
+                    cat.contains(query);
+              }).toList()
+            : <Map<String, dynamic>>[];
+
+        final matchingVehicles = isSearching
+            ? _vehicles.where((v) {
+                final make = (v['make'] as String? ?? '').toLowerCase();
+                final model = (v['model'] as String? ?? '').toLowerCase();
+                final color = (v['color'] as String? ?? '').toLowerCase();
+                final type = (v['vehicleType'] as String? ?? '').toLowerCase();
+                return make.contains(query) ||
+                    model.contains(query) ||
+                    color.contains(query) ||
+                    type.contains(query);
+              }).toList()
+            : <Map<String, dynamic>>[];
+
+        final matchingDestinations = isSearching
+            ? _quickDestinations.where((d) {
+                final name = (d['name'] as String? ?? '').toLowerCase();
+                final area = (d['area'] as String? ?? '').toLowerCase();
+                return name.contains(query) || area.contains(query);
+              }).toList()
+            : <Map<String, dynamic>>[];
+
         return Scaffold(
           backgroundColor: AppColors.gray50,
+          floatingActionButton: FloatingActionButton.extended(
+            backgroundColor: AppColors.emeraldDark,
+            foregroundColor: Colors.white,
+            elevation: 4,
+            icon: const Icon(Icons.add_circle_outline_rounded, size: 20),
+            label: const Text(
+              'List House / Car',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+            onPressed: () async {
+              if (user == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please log in to publish listings.'),
+                    backgroundColor: AppColors.obsidian,
+                  ),
+                );
+                return;
+              }
+              final res = await Navigator.of(context).push<bool>(
+                MaterialPageRoute(
+                  builder: (_) => CreateListingScreen(
+                    database: widget.database,
+                    convexClient: widget.convexClient,
+                    currentUser: user,
+                  ),
+                ),
+              );
+              if (res == true) {
+                _loadDiscoveryData();
+              }
+            },
+          ),
           body: SafeArea(
             bottom: false,
             child: RefreshIndicator(
@@ -324,25 +395,37 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     child: _buildSearchBar(),
                   ),
 
-                  // ── 3. Quick Launch Service Grid ──────────────────
-                  SliverToBoxAdapter(
-                    child: _buildQuickLaunchGrid(),
-                  ),
+                  if (isSearching) ...[
+                    // ── Active Live Search Results ──────────────────
+                    SliverToBoxAdapter(
+                      child: _buildSearchResultsSection(
+                        query: _searchController.text.trim(),
+                        properties: matchingProperties,
+                        vehicles: matchingVehicles,
+                        destinations: matchingDestinations,
+                      ),
+                    ),
+                  ] else ...[
+                    // ── 3. Quick Launch Service Grid ──────────────────
+                    SliverToBoxAdapter(
+                      child: _buildQuickLaunchGrid(),
+                    ),
 
-                  // ── 4. Showroom Carousel: Properties ──────────────
-                  SliverToBoxAdapter(
-                    child: _buildPropertiesCarousel(),
-                  ),
+                    // ── 4. Showroom Carousel: Properties ──────────────
+                    SliverToBoxAdapter(
+                      child: _buildPropertiesCarousel(),
+                    ),
 
-                  // ── 5. Showroom Carousel: Vehicles ────────────────
-                  SliverToBoxAdapter(
-                    child: _buildVehiclesCarousel(),
-                  ),
+                    // ── 5. Showroom Carousel: Vehicles ────────────────
+                    SliverToBoxAdapter(
+                      child: _buildVehiclesCarousel(),
+                    ),
 
-                  // ── 6. Quick Ride Shortcuts ───────────────────────
-                  SliverToBoxAdapter(
-                    child: _buildQuickDestinationsSection(),
-                  ),
+                    // ── 6. Quick Ride Shortcuts ───────────────────────
+                    SliverToBoxAdapter(
+                      child: _buildQuickDestinationsSection(),
+                    ),
+                  ],
 
                   // Bottom padding for persistent navigation bar
                   const SliverToBoxAdapter(
@@ -454,16 +537,23 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   }
 
   Widget _buildSearchBar() {
+    final hasQuery = _searchController.text.trim().isNotEmpty;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.border),
+          border: Border.all(
+            color: hasQuery ? AppColors.emerald : AppColors.border,
+            width: hasQuery ? 1.5 : 1.0,
+          ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
+              color: hasQuery
+                  ? AppColors.emerald.withValues(alpha: 0.08)
+                  : Colors.black.withValues(alpha: 0.04),
               blurRadius: 10,
               offset: const Offset(0, 3),
             ),
@@ -471,28 +561,291 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         ),
         child: TextField(
           controller: _searchController,
+          onChanged: (val) => setState(() {}),
           decoration: InputDecoration(
             hintText: 'Search homes, cars, or destinations in Sierra Leone...',
-            hintStyle: TextStyle(
+            hintStyle: const TextStyle(
               fontSize: 13,
               color: AppColors.gray400,
               fontWeight: FontWeight.w400,
             ),
-            prefixIcon: const Icon(Icons.search_rounded, color: AppColors.gray400),
-            suffixIcon: Container(
-              margin: const EdgeInsets.all(8),
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: AppColors.obsidian,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.tune_rounded, size: 16, color: Colors.white),
+            prefixIcon: Icon(
+              Icons.search_rounded,
+              color: hasQuery ? AppColors.emerald : AppColors.gray400,
             ),
+            suffixIcon: hasQuery
+                ? IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 20, color: AppColors.gray500),
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() {});
+                    },
+                  )
+                : Container(
+                    margin: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: AppColors.obsidian,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.tune_rounded, size: 16, color: Colors.white),
+                  ),
             border: InputBorder.none,
             contentPadding: const EdgeInsets.symmetric(vertical: 14),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildSearchResultsSection({
+    required String query,
+    required List<Map<String, dynamic>> properties,
+    required List<Map<String, dynamic>> vehicles,
+    required List<Map<String, dynamic>> destinations,
+  }) {
+    final totalMatches = properties.length + vehicles.length + destinations.length;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Search Summary Header
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Search: "$query"',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.obsidian,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$totalMatches matching result${totalMatches == 1 ? '' : 's'} found',
+                      style: const TextStyle(fontSize: 12, color: AppColors.gray500),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () {
+                  _searchController.clear();
+                  setState(() {});
+                },
+                icon: const Icon(Icons.close_rounded, size: 16, color: AppColors.gray600),
+                label: const Text(
+                  'Clear',
+                  style: TextStyle(color: AppColors.gray600, fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // If no matches found
+          if (totalMatches == 0) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(28),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: const BoxDecoration(
+                      color: AppColors.gray100,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.search_off_rounded, size: 36, color: AppColors.gray400),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'No exact matches found',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'We couldn\'t find any listings or places matching "$query". Try searching for "Lumley", "Wilkinson", "Toyota", "Guesthouse", or "Keke".',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 12, color: AppColors.gray500, height: 1.4),
+                  ),
+                  const SizedBox(height: 16),
+                  OutlinedButton(
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() {});
+                    },
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppColors.emerald),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: const Text('Show All Listings', style: TextStyle(color: AppColors.emeraldDark)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // Matching Destinations
+          if (destinations.isNotEmpty) ...[
+            _buildResultCategoryHeader(
+              title: 'Ride Destinations',
+              count: destinations.length,
+              icon: Icons.local_taxi_rounded,
+              color: AppColors.emerald,
+            ),
+            const SizedBox(height: 8),
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: destinations.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, idx) {
+                final dest = destinations[idx];
+                return InkWell(
+                  onTap: () => _handleQuickDestinationTap(dest),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: AppColors.emeraldSurface,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(dest['icon'] as IconData, size: 20, color: AppColors.emeraldDark),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                dest['name'] as String,
+                                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                              ),
+                              Text(
+                                dest['area'] as String,
+                                style: const TextStyle(fontSize: 11, color: AppColors.gray500),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: AppColors.gray400),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          // Matching Properties
+          if (properties.isNotEmpty) ...[
+            _buildResultCategoryHeader(
+              title: 'Properties & Real Estate',
+              count: properties.length,
+              icon: Icons.apartment_rounded,
+              color: const Color(0xFF0284C7),
+              onSeeAll: () => MainNavigationShell.switchToTab(context, 2),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 265,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                itemCount: properties.length,
+                itemBuilder: (context, idx) => _buildPropertyCard(properties[idx]),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          // Matching Vehicles
+          if (vehicles.isNotEmpty) ...[
+            _buildResultCategoryHeader(
+              title: 'Vehicles & Rentals',
+              count: vehicles.length,
+              icon: Icons.directions_car_rounded,
+              color: const Color(0xFFF59E0B),
+              onSeeAll: () => MainNavigationShell.switchToTab(context, 3),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 255,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                itemCount: vehicles.length,
+                itemBuilder: (context, idx) => _buildVehicleCard(vehicles[idx]),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResultCategoryHeader({
+    required String title,
+    required int count,
+    required IconData icon,
+    required Color color,
+    VoidCallback? onSeeAll,
+  }) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 6),
+            Text(
+              '$title ($count)',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: AppColors.obsidian,
+              ),
+            ),
+          ],
+        ),
+        if (onSeeAll != null)
+          GestureDetector(
+            onTap: onSeeAll,
+            child: const Text(
+              'See All',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: AppColors.emeraldDark,
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -736,7 +1089,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           ),
           const SizedBox(height: 10),
           SizedBox(
-            height: 240,
+            height: 265,
             child: _isLoadingProperties
                 ? const Center(
                     child: CircularProgressIndicator(color: AppColors.emerald),
@@ -951,7 +1304,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           ),
           const SizedBox(height: 10),
           SizedBox(
-            height: 230,
+            height: 255,
             child: _isLoadingVehicles
                 ? const Center(
                     child: CircularProgressIndicator(color: AppColors.emerald),

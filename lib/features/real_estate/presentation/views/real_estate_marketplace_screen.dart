@@ -268,7 +268,7 @@ class _RealEstateMarketplaceScreenState
     );
   }
 
-  void _openCreateListing() {
+  Future<void> _openCreateListing() async {
     final user = context.read<AuthBloc>().state.user;
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -280,7 +280,7 @@ class _RealEstateMarketplaceScreenState
       return;
     }
 
-    Navigator.of(context).push(
+    final res = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => CreateListingScreen(
           database: widget.database,
@@ -289,6 +289,10 @@ class _RealEstateMarketplaceScreenState
         ),
       ),
     );
+
+    if (res == true) {
+      _fetchProperties();
+    }
   }
 
   @override

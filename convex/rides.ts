@@ -652,6 +652,7 @@ export const updateRideStatus = mutation({
     driverId: v.id("users"),
     newStatus: v.union(
       v.literal("driver_arriving"),
+      v.literal("arrived"),
       v.literal("in_transit"),
       v.literal("completed"),
       v.literal("cancelled")
@@ -669,8 +670,9 @@ export const updateRideStatus = mutation({
 
     // ── Valid state transitions ───────────────────────────────────
     const VALID_TRANSITIONS: Record<string, string[]> = {
-      accepted: ["driver_arriving", "cancelled"],
-      driver_arriving: ["in_transit", "cancelled"],
+      accepted: ["driver_arriving", "arrived", "cancelled"],
+      driver_arriving: ["arrived", "in_transit", "cancelled"],
+      arrived: ["in_transit", "cancelled"],
       in_transit: ["completed"],
     };
 
@@ -688,7 +690,9 @@ export const updateRideStatus = mutation({
       updatedAt: now,
     };
 
-    if (args.newStatus === "in_transit") {
+    if (args.newStatus === "arrived") {
+      patch.arrivedAt = now;
+    } else if (args.newStatus === "in_transit") {
       patch.startedAt = now;
     } else if (args.newStatus === "completed") {
       patch.completedAt = now;
@@ -716,6 +720,101 @@ export const updateRideStatus = mutation({
     }
 
     return { success: true, newStatus: args.newStatus, timestamp: now };
+  },
+});
+
+/**
+ * Check in driver arrival when approaching within proximity (<= 50m) of pickup.
+ */
+export const checkInDriverArrival = mutation({
+  args: {
+    rideId: v.id("rideRequests"),
+    driverId: v.id("users"),
+    lat: v.optional(v.number()),
+    lng: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const ride = await ctx.db.get(args.rideId);
+    if (!ride) throw new Error("Ride request not found");
+    if (ride.driverId !== args.driverId) {
+      throw new Error("Only the assigned driver can check in at pickup");
+    }
+
+    if (ride.status !== "accepted" && ride.status !== "driver_arriving") {
+      if (ride.status === "arrived") {
+        return { success: true, alreadyArrived: true };
+      }
+      throw new Error(`Cannot check in driver in status: ${ride.status}`);
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(args.rideId, {
+      status: "arrived",
+      arrivedAt: now,
+      updatedAt: now,
+    });
+
+    if (args.lat !== undefined && args.lng !== undefined) {
+      const geohash = encodeGeohash(args.lat, args.lng, 7);
+      await ctx.db.patch(args.driverId, {
+        currentLat: args.lat,
+        currentLng: args.lng,
+        currentGeohash: geohash,
+        locationUpdatedAt: now,
+        updatedAt: now,
+      });
+    }
+
+    return {
+      success: true,
+      status: "arrived",
+      arrivedAt: now,
+      message: "Driver checked in at pickup location",
+    };
+  },
+});
+
+/**
+ * Get the current active ride for a passenger with live driver telemetry.
+ */
+export const getActiveRideForPassenger = query({
+  args: {
+    passengerId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const activeRide = await ctx.db
+      .query("rideRequests")
+      .withIndex("by_passenger", (q) => q.eq("passengerId", args.passengerId))
+      .filter((q) =>
+        q.and(
+          q.neq(q.field("status"), "completed"),
+          q.neq(q.field("status"), "cancelled")
+        )
+      )
+      .first();
+
+    if (!activeRide) return null;
+
+    let driver = null;
+    if (activeRide.driverId) {
+      const driverDoc = await ctx.db.get(activeRide.driverId);
+      if (driverDoc) {
+        driver = {
+          id: driverDoc._id,
+          name: driverDoc.name,
+          phone: driverDoc.phone,
+          avatarUrl: driverDoc.avatarUrl,
+          currentLat: driverDoc.currentLat,
+          currentLng: driverDoc.currentLng,
+          locationUpdatedAt: driverDoc.locationUpdatedAt,
+        };
+      }
+    }
+
+    return {
+      ...activeRide,
+      driver,
+    };
   },
 });
 

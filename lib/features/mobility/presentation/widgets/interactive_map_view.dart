@@ -42,6 +42,8 @@ class InteractiveMapView extends StatefulWidget {
   final ValueChanged<VehicleListingEntity>? onVehicleTap;
   final ValueChanged<LatLng>? onPickupPositionChanged;
   final VoidCallback? onConfirmPinSpot;
+  final VoidCallback? onDriverArrived;
+  final ValueChanged<double>? onDistanceToPickupChanged;
 
   const InteractiveMapView({
     super.key,
@@ -69,6 +71,8 @@ class InteractiveMapView extends StatefulWidget {
     this.onVehicleTap,
     this.onPickupPositionChanged,
     this.onConfirmPinSpot,
+    this.onDriverArrived,
+    this.onDistanceToPickupChanged,
   });
 
   @override
@@ -93,8 +97,25 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
   double _prevBearing = 0.0;
   double _targetBearing = 0.0;
 
+  // Proximity check-in state
+  bool _hasTriggeredArrival = false;
+  double _distanceToPickupMeters = double.infinity;
+
   LatLng get _pickup => LatLng(widget.pickupLat, widget.pickupLng);
   LatLng get _dropoff => LatLng(widget.dropoffLat, widget.dropoffLng);
+
+  void _checkDriverProximity(LatLng? driverPos) {
+    if (driverPos == null) return;
+    final dist = const Distance().as(LengthUnit.Meter, driverPos, _pickup);
+    if ((dist - _distanceToPickupMeters).abs() > 2) {
+      _distanceToPickupMeters = dist;
+      widget.onDistanceToPickupChanged?.call(dist);
+    }
+    if (dist <= 50.0 && !_hasTriggeredArrival) {
+      _hasTriggeredArrival = true;
+      widget.onDriverArrived?.call();
+    }
+  }
 
   @override
   void initState() {
@@ -118,6 +139,7 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
       _currentBearing = widget.assignedDriverBearing ?? 0.0;
       _prevBearing = _currentBearing;
       _targetBearing = _currentBearing;
+      _checkDriverProximity(initialPos);
     }
 
     _driverInterpolationController.addListener(() {
@@ -138,6 +160,7 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
             t,
           );
         });
+        _checkDriverProximity(_currentDriverPosition);
       }
     });
 
@@ -175,6 +198,10 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
             GeoBearingHelper.calculateBearing(_prevDriverPosition!, _targetDriverPosition!);
         _driverInterpolationController.forward(from: 0.0);
       }
+      _checkDriverProximity(newTarget);
+    } else {
+      _hasTriggeredArrival = false;
+      _distanceToPickupMeters = double.infinity;
     }
   }
 
@@ -737,6 +764,81 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
             ],
           ),
         ),
+
+        // ── Proximity Arrival Check-In Banner ───────────────────────
+        if (_distanceToPickupMeters <= 60 && widget.assignedDriverLat != null)
+          Positioned(
+            top: 75,
+            left: 16,
+            right: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F172A),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.emerald, width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.emerald.withValues(alpha: 0.3),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: AppColors.emerald.withValues(alpha: 0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.check_circle_rounded, color: AppColors.emerald, size: 20),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Driver Arrived at Pickup Point',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                        ),
+                        Text(
+                          '${widget.assignedDriverName ?? "Driver"} is waiting (${_distanceToPickupMeters.round()}m away)',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.emerald,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'CHECK-IN',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 10,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
 
         // Loading spinner while route calculates
         if (_isLoadingRoute)

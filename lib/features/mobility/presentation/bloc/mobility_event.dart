@@ -233,3 +233,28 @@ class DriverAcceptedTripEvent extends MobilityEvent {
   List<Object?> get props => [trip];
 }
 
+/// Driver arrived at pickup location check-in event.
+class DriverArrivedEvent extends MobilityEvent {
+  final double? lat;
+  final double? lng;
+  const DriverArrivedEvent({this.lat, this.lng});
+
+  @override
+  List<Object?> get props => [lat, lng];
+}
+
+/// Simulated or live driver location progression update event along the route.
+class DriverLocationProgressionEvent extends MobilityEvent {
+  final double lat;
+  final double lng;
+  final double bearing;
+  const DriverLocationProgressionEvent({
+    required this.lat,
+    required this.lng,
+    required this.bearing,
+  });
+
+  @override
+  List<Object?> get props => [lat, lng, bearing];
+}
+

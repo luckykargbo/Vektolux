@@ -5,16 +5,20 @@
 // unblocked gesture responsiveness, real-time routing, and full checkout.
 // ═══════════════════════════════════════════════════════════════════════
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
+import '../widgets/smooth_driver_marker.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../bookings/presentation/views/checkout_screen.dart';
 import '../../../discovery/presentation/views/discovery_feed_screen.dart';
 import '../../domain/entities/mobility_vehicle_entity.dart';
+import '../../domain/entities/ride_entity.dart';
 import '../bloc/mobility_bloc.dart';
 import '../bloc/mobility_event.dart';
 import '../bloc/mobility_state.dart';
@@ -63,6 +67,11 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
   NearbyDriverEntity? _selectedDriverPreview;
   NearbySellerEntity? _selectedSellerPreview;
 
+  // Real-time driver approach movement simulation
+  Timer? _driverMovementTimer;
+  int _simulationStep = 0;
+  List<LatLng> _approachWaypoints = [];
+
   @override
   void initState() {
     super.initState();
@@ -80,8 +89,53 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
 
   @override
   void dispose() {
+    _driverMovementTimer?.cancel();
     _sheetController.dispose();
     super.dispose();
+  }
+
+  void _startDriverApproachSimulation(double pickupLat, double pickupLng) {
+    _driverMovementTimer?.cancel();
+    _simulationStep = 0;
+
+    // Generate 6 approach waypoints from ~380 meters away toward pickup
+    _approachWaypoints = List.generate(7, (i) {
+      final ratio = i / 6.0;
+      final startLat = pickupLat + 0.0032;
+      final startLng = pickupLng + 0.0025;
+      return LatLng(
+        startLat + (pickupLat - startLat) * ratio,
+        startLng + (pickupLng - startLng) * ratio,
+      );
+    });
+
+    _driverMovementTimer = Timer.periodic(const Duration(milliseconds: 2200), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_simulationStep < _approachWaypoints.length) {
+        final currentPoint = _approachWaypoints[_simulationStep];
+        final nextPoint = (_simulationStep + 1 < _approachWaypoints.length)
+            ? _approachWaypoints[_simulationStep + 1]
+            : currentPoint;
+        final bearing = GeoBearingHelper.calculateBearing(currentPoint, nextPoint);
+
+        context.read<MobilityBloc>().add(
+          DriverLocationProgressionEvent(
+            lat: currentPoint.latitude,
+            lng: currentPoint.longitude,
+            bearing: bearing,
+          ),
+        );
+        _simulationStep++;
+      } else {
+        timer.cancel();
+        context.read<MobilityBloc>().add(
+          DriverArrivedEvent(lat: pickupLat, lng: pickupLng),
+        );
+      }
+    });
   }
 
   void _handleRentalCheckout(VehicleListingEntity vehicle, MobilityState state) {
@@ -270,6 +324,21 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
             ),
           );
         }
+
+        // Live animated driver route progression towards pickup
+        if (state.hasActiveRide &&
+            state.activeRide!.status != RideStatus.arrived &&
+            state.activeRide!.status != RideStatus.completed &&
+            state.activeRide!.status != RideStatus.cancelled) {
+          if (_driverMovementTimer == null || !_driverMovementTimer!.isActive) {
+            _startDriverApproachSimulation(state.pickupLat, state.pickupLng);
+          }
+        } else if (!state.hasActiveRide ||
+            state.activeRide!.status == RideStatus.completed ||
+            state.activeRide!.status == RideStatus.cancelled) {
+          _driverMovementTimer?.cancel();
+          _simulationStep = 0;
+        }
       },
       builder: (context, state) {
         final isRideMode = state.mode == MobilityHomeMode.rideHailing;
@@ -343,6 +412,25 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
                   behavior: SnackBarBehavior.floating,
                 ),
               );
+            },
+            onDriverArrived: () {
+              context.read<MobilityBloc>().add(
+                    DriverArrivedEvent(
+                      lat: state.pickupLat,
+                      lng: state.pickupLng,
+                    ),
+                  );
+              if (state.activeRide != null && state.activeRide!.driverId != null) {
+                context.read<ConvexClientWrapper>().mutation(
+                  'rides:checkInDriverArrival',
+                  args: {
+                    'rideId': state.activeRide!.id,
+                    'driverId': state.activeRide!.driverId!,
+                    'lat': state.pickupLat,
+                    'lng': state.pickupLng,
+                  },
+                );
+              }
             },
           ),
         ),

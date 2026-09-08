@@ -58,6 +58,8 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
           .switchMap(mapper),
     );
     on<_ActiveRideUpdatedInternalEvent>(_onActiveRideUpdated);
+    on<DriverArrivedEvent>(_onDriverArrived);
+    on<DriverLocationProgressionEvent>(_onDriverLocationProgression);
   }
 
   Future<void> _onLoadMobilityHome(
@@ -291,6 +293,36 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
       emit(state.copyWith(activeRide: event.ride));
     } else {
       emit(state.copyWith(clearActiveRide: true));
+    }
+  }
+
+  void _onDriverArrived(
+    DriverArrivedEvent event,
+    Emitter<MobilityState> emit,
+  ) {
+    if (state.activeRide != null) {
+      final updatedRide = state.activeRide!.copyWith(
+        status: RideStatus.arrived,
+        driverLat: event.lat ?? state.activeRide!.driverLat,
+        driverLng: event.lng ?? state.activeRide!.driverLng,
+      );
+      emit(state.copyWith(
+        activeRide: updatedRide,
+        successMessage: 'Driver has arrived at pickup point!',
+      ));
+    }
+  }
+
+  void _onDriverLocationProgression(
+    DriverLocationProgressionEvent event,
+    Emitter<MobilityState> emit,
+  ) {
+    if (state.activeRide != null) {
+      final updatedRide = state.activeRide!.copyWith(
+        driverLat: event.lat,
+        driverLng: event.lng,
+      );
+      emit(state.copyWith(activeRide: updatedRide));
     }
   }
 

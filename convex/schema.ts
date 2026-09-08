@@ -81,6 +81,7 @@ export const rideStatus = v.union(
   v.literal("requested"),
   v.literal("accepted"),
   v.literal("driver_arriving"),
+  v.literal("arrived"),
   v.literal("in_transit"),
   v.literal("completed"),
   v.literal("cancelled")
@@ -184,6 +185,7 @@ export default defineSchema({
     // Auth
     passwordHash: v.optional(v.string()),
     sessionToken: v.optional(v.string()),
+    walletPinHash: v.optional(v.string()),
     authProvider: v.optional(v.string()),
     externalAuthId: v.optional(v.string()),
 
@@ -385,6 +387,7 @@ export default defineSchema({
 
     // Timestamps
     acceptedAt: v.optional(v.number()),
+    arrivedAt: v.optional(v.number()),
     startedAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
     cancelledAt: v.optional(v.number()),
@@ -429,8 +432,19 @@ export default defineSchema({
     gatewayProvider: v.optional(v.string()),
     gatewayReference: v.optional(v.string()),
 
-    // Blockchain
+    // Blockchain & Escrow Split Ledger
     blockchainTxHash: v.optional(v.string()),
+    partnerSplitPercent: v.optional(v.number()),
+    partnerAmount: v.optional(v.number()),
+    platformFeeAmount: v.optional(v.number()),
+    agentNumber: v.optional(v.string()),
+    escrowStatus: v.optional(
+      v.union(
+        v.literal("locked"),
+        v.literal("released"),
+        v.literal("refunded")
+      )
+    ),
 
     // Status
     status: transactionStatus,
@@ -533,6 +547,8 @@ export default defineSchema({
     txRef: v.optional(v.string()),
     flwRef: v.optional(v.string()),
     notes: v.optional(v.string()),
+    escrowId: v.optional(v.string()),
+    blockchainTxHash: v.optional(v.string()),
     cancelledAt: v.optional(v.number()),
     cancelReason: v.optional(v.string()),
     updatedAt: v.number(),
