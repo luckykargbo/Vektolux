@@ -105,9 +105,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Vektolux Latest Mobile Release (v1.0.1)"
+          name: "Vektolux Latest Mobile Release (v1.0.2)"
           body: |
-            ## Vektolux Mobile App Builds (v1.0.1)
+            ## Vektolux Mobile App Builds (v1.0.2)
 
             ### Direct Downloads:
             - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
@@ -115,12 +115,14 @@ jobs:
             - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
               * Direct sideload / install on any Android device.
 
-            ### What's New in this Build:
-            - **Streamlined Onboarding**: Simplified registration with instant credential signup (Full Name, Email, Sierra Leone +232 Phone, Passwords).
-            - **Universal Avatar System**: Dynamic initials fallback (`MK`) on Obsidian/Slate gradient circle.
-            - **Native Profile Photo Upload**: Direct device Camera and Gallery upload exclusively in Profile/Settings synced to Convex cloud.
-            - **iOS Permissions**: Configured camera, photo library, and Sierra Leone nationwide location permissions in Info.plist.
-            - **Network & Socket Recovery**: Resilient Convex client connection pool resets to prevent iOS errno 54 resets.
+            ### What's New in this Build (v1.0.2):
+            - **Dynamic Vehicle Tier Catalog**: 4 Sierra Leone transport tiers (Keke/Bajaj, Okada/Bike, Standard Taxi, Cargo/Van) with transparent upfront SLE rates.
+            - **3D Isometric Vehicle Render Engine**: Offline-safe vector isometric illustrations with glass glare, alloy rims, and dynamic drop shadows.
+            - **Driver Vehicle Onboarding Multi-Step Wizard**: Complete onboarding flow with category selection, structured vehicle specs, dynamic brand suggestions, and private verification document uploads.
+            - **Driver Verification Online Gating**: Strict security enforcement preventing unverified drivers from accepting rides until approved by an administrator.
+            - **Clean Rider-Facing Identity**: 100% elimination of raw camera car photos; replaced by clean 3D isometric twin renders, verified driver avatars, and formatted vehicle badges.
+            - **Universal Avatar System & Post-Registration Uploads**: Dynamic initials fallback (`MK`), no avatar friction during signup, and direct profile photo upload in Settings.
+            - **Resilient Network & Socket Recovery**: Hardened connection pool handling on iOS Darwin sockets to eliminate errno 54 resets.
           files: |
             release-assets/Vektolux.ipa
             release-assets/app-release.apk
