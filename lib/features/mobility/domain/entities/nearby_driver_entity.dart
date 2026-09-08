@@ -10,13 +10,15 @@ enum DriverVehicleCategory {
   standard,
   comfort,
   kekehTricycle,
-  deliveryBike;
+  deliveryBike,
+  deliveryVan;
 
   static DriverVehicleCategory fromString(String val) {
     return switch (val.toLowerCase()) {
       'comfort' => DriverVehicleCategory.comfort,
       'kekeh_tricycle' || 'kekehtricycle' => DriverVehicleCategory.kekehTricycle,
       'delivery_bike' || 'deliverybike' => DriverVehicleCategory.deliveryBike,
+      'delivery_van' || 'deliveryvan' || 'van' || 'cargo' => DriverVehicleCategory.deliveryVan,
       _ => DriverVehicleCategory.standard,
     };
   }
@@ -26,6 +28,7 @@ enum DriverVehicleCategory {
         DriverVehicleCategory.comfort => 'Comfort Sedan',
         DriverVehicleCategory.kekehTricycle => 'Kekeh Tricycle',
         DriverVehicleCategory.deliveryBike => 'Express Bike Delivery',
+        DriverVehicleCategory.deliveryVan => 'Cargo Delivery Van',
       };
 
   String get iconKey => switch (this) {
@@ -33,6 +36,7 @@ enum DriverVehicleCategory {
         DriverVehicleCategory.comfort => 'sedan_premium',
         DriverVehicleCategory.kekehTricycle => 'kekeh_tricycle',
         DriverVehicleCategory.deliveryBike => 'two_wheeler_delivery',
+        DriverVehicleCategory.deliveryVan => 'delivery_van',
       };
 }
 

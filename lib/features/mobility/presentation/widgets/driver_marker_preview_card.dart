@@ -36,6 +36,7 @@ class DriverMarkerPreviewCard extends StatelessWidget {
         DriverVehicleCategory.deliveryBike => 'Okada Bike',
         DriverVehicleCategory.comfort => 'Comfort Sedan',
         DriverVehicleCategory.standard => 'Standard Taxi',
+        DriverVehicleCategory.deliveryVan => 'Cargo Van',
       };
       return '${v.make} ${v.model} • $categoryLabel';
     }
@@ -51,6 +52,7 @@ class DriverMarkerPreviewCard extends StatelessWidget {
       DriverVehicleCategory.deliveryBike => Icons.two_wheeler_rounded,
       DriverVehicleCategory.comfort => Icons.directions_car_filled_rounded,
       DriverVehicleCategory.standard => Icons.local_taxi_rounded,
+      DriverVehicleCategory.deliveryVan => Icons.local_shipping_rounded,
     };
   }
 
@@ -61,6 +63,7 @@ class DriverMarkerPreviewCard extends StatelessWidget {
       DriverVehicleCategory.deliveryBike => const Color(0xFFF97316), // Orange
       DriverVehicleCategory.comfort => const Color(0xFF6366F1), // Indigo
       DriverVehicleCategory.standard => AppColors.emerald,
+      DriverVehicleCategory.deliveryVan => const Color(0xFF3B82F6), // Blue
     };
   }
 

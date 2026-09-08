@@ -13,11 +13,15 @@ enum VehicleSilhouetteType {
   keke,
   okada,
   car,
+  van,
 }
 
 /// Helper to determine silhouette type from a string category.
 VehicleSilhouetteType getVehicleSilhouette(String? category) {
   final cat = (category ?? '').toLowerCase();
+  if (cat.contains('van') || cat.contains('cargo') || cat.contains('truck') || cat.contains('delivery_van') || cat.contains('haulage')) {
+    return VehicleSilhouetteType.van;
+  }
   if (cat.contains('keke') || cat.contains('tricycle') || cat.contains('bajaj')) {
     return VehicleSilhouetteType.keke;
   }
@@ -54,6 +58,9 @@ class TopDownVehicleWidget extends StatelessWidget {
         break;
       case VehicleSilhouetteType.car:
         painter = SedanTopDownPainter(accentColor: accentColor ?? AppColors.emerald);
+        break;
+      case VehicleSilhouetteType.van:
+        painter = VanTopDownPainter(accentColor: accentColor ?? const Color(0xFF3B82F6));
         break;
     }
 
@@ -423,3 +430,167 @@ class SedanTopDownPainter extends CustomPainter {
   bool shouldRepaint(covariant SedanTopDownPainter oldDelegate) =>
       oldDelegate.accentColor != accentColor;
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+//               4. DELIVERY VAN / CARGO TRUCK VECTOR PAINTER
+// ═══════════════════════════════════════════════════════════════════════
+
+class VanTopDownPainter extends CustomPainter {
+  final Color accentColor;
+
+  VanTopDownPainter({required this.accentColor});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+
+    canvas.save();
+
+    final wheelPaint = Paint()
+      ..color = const Color(0xFF0F172A)
+      ..style = PaintingStyle.fill;
+
+    final bodyPaint = Paint()
+      ..color = accentColor
+      ..style = PaintingStyle.fill;
+
+    final glassPaint = Paint()
+      ..color = const Color(0xFF334155)
+      ..style = PaintingStyle.fill;
+
+    final roofPaint = Paint()
+      ..color = const Color(0xFF1E293B)
+      ..style = PaintingStyle.fill;
+
+    final ribPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.35)
+      ..strokeWidth = 1.0
+      ..style = PaintingStyle.stroke;
+
+    final headlightPaint = Paint()
+      ..color = const Color(0xFFFEF08A)
+      ..style = PaintingStyle.fill;
+
+    final tailLightPaint = Paint()
+      ..color = const Color(0xFFEF4444)
+      ..style = PaintingStyle.fill;
+
+    final borderPaint = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 1.4
+      ..style = PaintingStyle.stroke;
+
+    // ── 1. 4 Sturdy Wheels ──
+    // Front Left
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(w * 0.16, h * 0.28), width: w * 0.09, height: h * 0.20),
+        const Radius.circular(2),
+      ),
+      wheelPaint,
+    );
+    // Front Right
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(w * 0.84, h * 0.28), width: w * 0.09, height: h * 0.20),
+        const Radius.circular(2),
+      ),
+      wheelPaint,
+    );
+    // Rear Left
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(w * 0.16, h * 0.74), width: w * 0.10, height: h * 0.22),
+        const Radius.circular(2),
+      ),
+      wheelPaint,
+    );
+    // Rear Right
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(w * 0.84, h * 0.74), width: w * 0.10, height: h * 0.22),
+        const Radius.circular(2),
+      ),
+      wheelPaint,
+    );
+
+    // ── 2. Boxy Commercial Van Body ──
+    final vanRect = RRect.fromRectAndCorners(
+      Rect.fromLTWH(w * 0.20, h * 0.12, w * 0.60, h * 0.78),
+      topLeft: const Radius.circular(8),
+      topRight: const Radius.circular(8),
+      bottomLeft: const Radius.circular(4),
+      bottomRight: const Radius.circular(4),
+    );
+    canvas.drawRRect(vanRect, bodyPaint);
+    canvas.drawRRect(vanRect, borderPaint);
+
+    // ── 3. Front Cab Windshield ──
+    final windshieldPath = Path();
+    windshieldPath.moveTo(w * 0.26, h * 0.26);
+    windshieldPath.quadraticBezierTo(w * 0.50, h * 0.22, w * 0.74, h * 0.26);
+    windshieldPath.lineTo(w * 0.72, h * 0.34);
+    windshieldPath.lineTo(w * 0.28, h * 0.34);
+    windshieldPath.close();
+    canvas.drawPath(windshieldPath, glassPaint);
+
+    // ── 4. Main Cargo Roof Panel ──
+    final cargoRoof = RRect.fromRectAndRadius(
+      Rect.fromLTWH(w * 0.24, h * 0.38, w * 0.52, h * 0.48),
+      const Radius.circular(3),
+    );
+    canvas.drawRRect(cargoRoof, roofPaint);
+
+    // Longitudinal Roof Ribs (3 Ridges for cargo reinforcement)
+    canvas.drawLine(Offset(w * 0.34, h * 0.40), Offset(w * 0.34, h * 0.83), ribPaint);
+    canvas.drawLine(Offset(w * 0.50, h * 0.40), Offset(w * 0.50, h * 0.83), ribPaint);
+    canvas.drawLine(Offset(w * 0.66, h * 0.40), Offset(w * 0.66, h * 0.83), ribPaint);
+
+    // ── 5. Rear Split Door Seam ──
+    final seamPaint = Paint()
+      ..color = const Color(0xFF0F172A)
+      ..strokeWidth = 1.6
+      ..style = PaintingStyle.stroke;
+    canvas.drawLine(Offset(w * 0.50, h * 0.86), Offset(w * 0.50, h * 0.90), seamPaint);
+
+    // ── 6. Front Headlights ──
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(w * 0.29, h * 0.14), width: w * 0.08, height: h * 0.035),
+        const Radius.circular(1),
+      ),
+      headlightPaint,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(w * 0.71, h * 0.14), width: w * 0.08, height: h * 0.035),
+        const Radius.circular(1),
+      ),
+      headlightPaint,
+    );
+
+    // ── 7. Rear Taillights ──
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(w * 0.25, h * 0.89), width: w * 0.06, height: h * 0.03),
+        const Radius.circular(1),
+      ),
+      tailLightPaint,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(w * 0.75, h * 0.89), width: w * 0.06, height: h * 0.03),
+        const Radius.circular(1),
+      ),
+      tailLightPaint,
+    );
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant VanTopDownPainter oldDelegate) =>
+      oldDelegate.accentColor != accentColor;
+}
+

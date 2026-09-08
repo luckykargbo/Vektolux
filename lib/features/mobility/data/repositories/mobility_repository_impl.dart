@@ -505,6 +505,30 @@ class MobilityRepositoryImpl implements MobilityRepository {
           isVerified: true,
         ),
       ),
+      NearbyDriverEntity(
+        driverId: 'drv_van_01',
+        userId: 'usr_drv_06',
+        driverName: 'Samuel Kamara',
+        driverPhone: '+232 76 441 230',
+        avatarUrl: null,
+        serviceType: 'delivery',
+        currentLat: lat - 0.0032,
+        currentLng: lng + 0.0045,
+        distanceMeters: 550,
+        distanceKm: 0.55,
+        etaMinutes: 6,
+        vehicle: const DriverVehicleInfo(
+          id: 'veh_van_01',
+          make: 'Toyota',
+          model: 'HiAce Cargo Van',
+          year: 2023,
+          color: 'White',
+          licensePlate: 'SL-720-VN',
+          category: DriverVehicleCategory.deliveryVan,
+          categoryIconKey: 'delivery_van',
+          isVerified: true,
+        ),
+      ),
     ];
   }
 

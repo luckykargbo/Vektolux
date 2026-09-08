@@ -9,7 +9,9 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
 import '../../domain/entities/vehicle_category_catalog.dart';
+import '../../domain/entities/vehicle_tier_catalog.dart';
 import '../../domain/services/fare_calculation_service.dart';
+import 'isometric_vehicle_3d_render.dart';
 
 class VehicleSelectionBottomSheet extends StatefulWidget {
   /// 'ride' | 'delivery'
@@ -289,9 +291,7 @@ class _VehicleSelectionBottomSheetState
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: VxButton(
-              label: isDelivery
-                  ? 'Confirm ${_localSelected.title} ($currency ${fare.toStringAsFixed(0)})'
-                  : 'Confirm ${_localSelected.title} ($currency ${fare.toStringAsFixed(0)})',
+              label: '${VehicleTierConfig.fromBookingCategory(_localSelected).buttonLabel} ($currency ${fare.toStringAsFixed(0)})',
               icon: isDelivery
                   ? Icons.local_shipping_rounded
                   : Icons.directions_car_filled_rounded,
@@ -312,6 +312,8 @@ class _VehicleSelectionBottomSheetState
     required bool hasDriver,
     required VoidCallback onTap,
   }) {
+    final tierConfig = VehicleTierConfig.fromBookingCategory(category);
+
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
@@ -337,18 +339,13 @@ class _VehicleSelectionBottomSheetState
         ),
         child: Row(
           children: [
-            // Category icon
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: isSelected ? AppColors.emerald : AppColors.gray100,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(
-                category.iconData,
-                size: 22,
-                color: isSelected ? AppColors.white : AppColors.obsidian,
-              ),
+            // 3D Isometric Transparent Vehicle Render
+            IsometricVehicle3DRender(
+              tierId: tierConfig.tierId,
+              render3DUrl: tierConfig.render3DUrl,
+              width: 62,
+              height: 44,
+              isSelected: isSelected,
             ),
             const SizedBox(width: 14),
 

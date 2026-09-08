@@ -433,18 +433,58 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                 }),
 
                 // ── D. On-Demand Live Drivers (Uber-Style Top-Down Vector Silhouettes) ──
-                ...widget.onDemandDrivers.map((driver) {
-                  final isKekeh = driver.vehicle?.category == DriverVehicleCategory.kekehTricycle ||
-                      driver.vehicle?.categoryIconKey == 'kekeh_tricycle';
-                  final isBike = driver.vehicle?.category == DriverVehicleCategory.deliveryBike ||
-                      driver.vehicle?.categoryIconKey == 'two_wheeler_delivery';
-                  final pinColor = isKekeh
-                      ? AppColors.amber
-                      : (isBike ? const Color(0xFFF97316) : AppColors.emerald);
-                  final categoryString = isKekeh ? 'keke' : (isBike ? 'bike' : 'car');
-                  final labelText = isKekeh
-                      ? 'KEKEH ${driver.etaMinutes}m'
-                      : (isBike ? 'OKADA ${driver.etaMinutes}m' : 'TAXI ${driver.etaMinutes}m');
+                ...(() {
+                  final filteredDrivers = widget.onDemandDrivers.where((driver) {
+                    if (widget.selectedCategory == null ||
+                        widget.selectedCategory!.isEmpty ||
+                        widget.selectedCategory!.toLowerCase() == 'all') {
+                      return true;
+                    }
+                    final sel = widget.selectedCategory!.toLowerCase();
+                    final isDriverKekeh = driver.vehicle?.category == DriverVehicleCategory.kekehTricycle ||
+                        driver.vehicle?.categoryIconKey == 'kekeh_tricycle';
+                    final isDriverBike = driver.vehicle?.category == DriverVehicleCategory.deliveryBike ||
+                        driver.vehicle?.categoryIconKey == 'two_wheeler_delivery';
+                    final isDriverVan = driver.vehicle?.category == DriverVehicleCategory.deliveryVan ||
+                        driver.vehicle?.categoryIconKey == 'delivery_van' ||
+                        driver.vehicle?.categoryIconKey == 'van';
+
+                    if (sel.contains('keke') || sel.contains('tricycle') || sel.contains('bajaj')) {
+                      return isDriverKekeh;
+                    }
+                    if (sel.contains('bike') || sel.contains('okada') || sel.contains('courier')) {
+                      return isDriverBike;
+                    }
+                    if (sel.contains('van') || sel.contains('cargo') || sel.contains('truck') || sel.contains('haulage')) {
+                      return isDriverVan;
+                    }
+                    // Standard ride / Taxi
+                    return !isDriverKekeh && !isDriverBike && !isDriverVan;
+                  }).toList();
+
+                  final displayDrivers = filteredDrivers.isNotEmpty
+                      ? filteredDrivers
+                      : widget.onDemandDrivers;
+
+                  return displayDrivers.map((driver) {
+                    final isKekeh = driver.vehicle?.category == DriverVehicleCategory.kekehTricycle ||
+                        driver.vehicle?.categoryIconKey == 'kekeh_tricycle';
+                    final isBike = driver.vehicle?.category == DriverVehicleCategory.deliveryBike ||
+                        driver.vehicle?.categoryIconKey == 'two_wheeler_delivery';
+                    final isVan = driver.vehicle?.category == DriverVehicleCategory.deliveryVan ||
+                        driver.vehicle?.categoryIconKey == 'delivery_van' ||
+                        driver.vehicle?.categoryIconKey == 'van';
+                    final pinColor = isKekeh
+                        ? AppColors.amber
+                        : (isBike
+                            ? const Color(0xFFF97316)
+                            : (isVan ? const Color(0xFF3B82F6) : AppColors.emerald));
+                    final categoryString = isKekeh ? 'keke' : (isBike ? 'bike' : (isVan ? 'van' : 'car'));
+                    final labelText = isKekeh
+                        ? 'KEKEH ${driver.etaMinutes}m'
+                        : (isBike
+                            ? 'OKADA ${driver.etaMinutes}m'
+                            : (isVan ? 'VAN ${driver.etaMinutes}m' : 'TAXI ${driver.etaMinutes}m'));
 
                   // Calculate bearing heading: driver bearing or heading toward pickup
                   final heading = driver.bearing ??
@@ -564,7 +604,8 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                       ),
                     ),
                   );
-                }),
+                });
+              })(),
 
                 // ── E. Nearby Verified Sellers (Vendors & Merchants) ──
                 ...widget.nearbySellers.map((seller) {

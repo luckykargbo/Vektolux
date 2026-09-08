@@ -10,9 +10,11 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
 import '../../domain/entities/trip_delivery_entity.dart';
 import '../../domain/entities/vehicle_category_catalog.dart';
+import '../../domain/entities/vehicle_tier_catalog.dart';
 import '../../domain/services/fare_calculation_service.dart';
 import 'booking_service_mode_toggle.dart';
 import 'delivery_recipient_panel.dart';
+import 'isometric_vehicle_3d_render.dart';
 
 class RideSearchPanel extends StatefulWidget {
   final String pickupAddress;
@@ -294,7 +296,7 @@ class _RideSearchPanelState extends State<RideSearchPanel> {
         const SizedBox(height: 10),
 
         SizedBox(
-          height: 154,
+          height: 168,
           child: ListView.separated(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             scrollDirection: Axis.horizontal,
@@ -326,9 +328,7 @@ class _RideSearchPanelState extends State<RideSearchPanel> {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: VxButton(
-            label: isDelivery
-                ? 'Confirm ${widget.selectedCategory.title} ($currency ${fare.toStringAsFixed(0)})'
-                : 'Confirm ${widget.selectedCategory.title} ($currency ${fare.toStringAsFixed(0)})',
+            label: '${VehicleTierConfig.fromBookingCategory(widget.selectedCategory).buttonLabel} ($currency ${fare.toStringAsFixed(0)})',
             icon: isDelivery ? Icons.local_shipping_rounded : Icons.directions_car_filled_rounded,
             isLoading: widget.isSubmitting,
             onPressed: widget.isSubmitting ? null : _handleConfirm,
@@ -347,12 +347,14 @@ class _RideSearchPanelState extends State<RideSearchPanel> {
     required bool hasDriver,
     required VoidCallback onTap,
   }) {
+    final tierConfig = VehicleTierConfig.fromBookingCategory(category);
+
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        width: 158,
+        width: 160,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: isSelected ? AppColors.emeraldSurface : AppColors.white,
@@ -381,21 +383,17 @@ class _RideSearchPanelState extends State<RideSearchPanel> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // Top: Static Vector Icon & Arrival ETA Pill
+            // Top: 3D Isometric Transparent Vehicle Render & Arrival ETA Pill
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: isSelected ? AppColors.emerald : AppColors.gray100,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    category.iconData,
-                    size: 20,
-                    color: isSelected ? AppColors.white : AppColors.obsidian,
-                  ),
+                IsometricVehicle3DRender(
+                  tierId: tierConfig.tierId,
+                  render3DUrl: tierConfig.render3DUrl,
+                  width: 60,
+                  height: 42,
+                  isSelected: isSelected,
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),

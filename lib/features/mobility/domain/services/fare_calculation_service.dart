@@ -141,7 +141,8 @@ class FareCalculationService {
       BookingVehicleCategory.courierBike =>
         vehicleCategory == DriverVehicleCategory.deliveryBike,
       BookingVehicleCategory.truckHaulage =>
-        vehicleCategory == DriverVehicleCategory.standard,
+        vehicleCategory == DriverVehicleCategory.deliveryVan ||
+            vehicleCategory == DriverVehicleCategory.standard,
     };
   }
 }

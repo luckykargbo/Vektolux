@@ -470,6 +470,7 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
                   DriverVehicleCategory.deliveryBike => BookingVehicleCategory.courierBike,
                   DriverVehicleCategory.comfort => BookingVehicleCategory.comfortRide,
                   DriverVehicleCategory.standard => BookingVehicleCategory.standardRide,
+                  DriverVehicleCategory.deliveryVan => BookingVehicleCategory.truckHaulage,
                 };
                 context.read<MobilityBloc>().add(SelectBookingCategoryEvent(bookingCat));
                 setState(() => _selectedDriverPreview = null);
