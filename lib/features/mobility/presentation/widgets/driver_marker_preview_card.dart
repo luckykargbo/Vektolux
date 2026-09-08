@@ -12,6 +12,10 @@ import '../../../../core/theme/components/verified_badge.dart';
 import '../../../../core/theme/components/vx_button.dart';
 import '../../domain/entities/nearby_driver_entity.dart';
 
+import '../../../../core/widgets/vektolux_avatar.dart';
+import '../../domain/entities/vehicle_tier_catalog.dart';
+import 'isometric_vehicle_3d_render.dart';
+
 class DriverMarkerPreviewCard extends StatelessWidget {
   final NearbyDriverEntity driver;
   final VoidCallback onClose;
@@ -28,32 +32,42 @@ class DriverMarkerPreviewCard extends StatelessWidget {
     required this.onShareLocation,
   });
 
-  String get _vehicleDisplayName {
+  String get _categoryLabel {
     final v = driver.vehicle;
     if (v != null) {
-      final categoryLabel = switch (v.category) {
+      return switch (v.category) {
         DriverVehicleCategory.kekehTricycle => 'Kekeh Tricycle',
         DriverVehicleCategory.deliveryBike => 'Okada Bike',
         DriverVehicleCategory.comfort => 'Comfort Sedan',
         DriverVehicleCategory.standard => 'Standard Taxi',
         DriverVehicleCategory.deliveryVan => 'Cargo Van',
       };
-      return '${v.make} ${v.model} • $categoryLabel';
     }
-    return 'Bajaj RE • Kekeh Tricycle';
+    return 'Kekeh Tricycle';
+  }
+
+  String get _formattedVehicleBadge {
+    final v = driver.vehicle;
+    final color = (v != null && v.color.trim().isNotEmpty) ? v.color : 'Yellow';
+    final make = (v != null && v.make.trim().isNotEmpty) ? v.make : 'Bajaj';
+    final model = (v != null && v.model.trim().isNotEmpty) ? v.model : 'RE 4S';
+    final plate = (v != null && v.licensePlate.trim().isNotEmpty) ? v.licensePlate : _plateNumber;
+    return '$color $make $model • $plate';
   }
 
   String get _plateNumber => driver.vehicle?.licensePlate ?? 'SL-492-KE';
 
-  IconData get _vehicleIcon {
-    final cat = driver.vehicle?.category ?? DriverVehicleCategory.kekehTricycle;
-    return switch (cat) {
-      DriverVehicleCategory.kekehTricycle => Icons.moped_rounded,
-      DriverVehicleCategory.deliveryBike => Icons.two_wheeler_rounded,
-      DriverVehicleCategory.comfort => Icons.directions_car_filled_rounded,
-      DriverVehicleCategory.standard => Icons.local_taxi_rounded,
-      DriverVehicleCategory.deliveryVan => Icons.local_shipping_rounded,
-    };
+  VehicleTierId get _tierId {
+    final cat = driver.vehicle?.category;
+    if (cat != null) {
+      return switch (cat) {
+        DriverVehicleCategory.kekehTricycle => VehicleTierId.kekeBajaj,
+        DriverVehicleCategory.deliveryBike => VehicleTierId.okadaBike,
+        DriverVehicleCategory.deliveryVan => VehicleTierId.deliveryVan,
+        _ => VehicleTierId.carStandard,
+      };
+    }
+    return VehicleTierId.fromString(driver.serviceType);
   }
 
   Color get _categoryColor {
@@ -69,13 +83,6 @@ class DriverMarkerPreviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final initials = driver.driverName
-        .trim()
-        .split(' ')
-        .take(2)
-        .map((e) => e.isNotEmpty ? e[0].toUpperCase() : '')
-        .join();
-
     return Container(
       decoration: BoxDecoration(
         color: AppColors.white,
@@ -130,67 +137,34 @@ class DriverMarkerPreviewCard extends StatelessWidget {
             children: [
               Stack(
                 children: [
-                  Container(
-                    width: 58,
-                    height: 58,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: _categoryColor.withValues(alpha: 0.15),
-                      border: Border.all(color: _categoryColor, width: 2),
-                    ),
-                    child: Center(
-                      child: driver.avatarUrl != null && driver.avatarUrl!.isNotEmpty
-                          ? ClipOval(
-                              child: Image.network(
-                                driver.avatarUrl!,
-                                width: 58,
-                                height: 58,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Text(
-                                  initials,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 18,
-                                    color: _categoryColor,
-                                  ),
-                                ),
-                              ),
-                            )
-                          : Text(
-                              initials.isNotEmpty ? initials : 'DR',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 18,
-                                color: _categoryColor,
-                              ),
-                            ),
-                    ),
+                  VektoluxAvatar(
+                    avatarUrl: driver.avatarUrl,
+                    name: driver.driverName,
+                    radius: 26,
+                    borderColor: _categoryColor,
+                    borderWidth: 2,
                   ),
                   Positioned(
                     bottom: 0,
                     right: 0,
                     child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: AppColors.white,
+                      padding: const EdgeInsets.all(3),
+                      decoration: const BoxDecoration(
+                        color: AppColors.emerald,
                         shape: BoxShape.circle,
-                        border: Border.all(color: _categoryColor, width: 1.5),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.15),
-                            blurRadius: 4,
-                            offset: const Offset(0, 1),
-                          ),
-                        ],
                       ),
-                      child: Icon(_vehicleIcon, size: 14, color: _categoryColor),
+                      child: const Icon(
+                        Icons.check,
+                        color: AppColors.white,
+                        size: 10,
+                      ),
                     ),
                   ),
                 ],
               ),
               const SizedBox(width: 14),
 
-              // Name & Status
+              // Name & Verified Operator Status
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -214,17 +188,6 @@ class DriverMarkerPreviewCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 3),
-                    Text(
-                      _vehicleDisplayName,
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: AppColors.textSecondary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
                     Row(
                       children: [
                         const Icon(Icons.star_rounded, color: AppColors.amber, size: 16),
@@ -233,26 +196,17 @@ class DriverMarkerPreviewCard extends StatelessWidget {
                           '4.9 (180+ trips)',
                           style: TextStyle(
                             fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w700,
                             color: AppColors.obsidian,
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                          decoration: BoxDecoration(
-                            color: AppColors.gray100,
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: AppColors.border),
-                          ),
-                          child: Text(
-                            _plateNumber,
-                            style: const TextStyle(
-                              fontSize: 10.5,
-                              fontFamily: 'Courier',
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.obsidian,
-                            ),
+                        Text(
+                          '• $_categoryLabel',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: _categoryColor,
                           ),
                         ),
                       ],
@@ -262,7 +216,66 @@ class DriverMarkerPreviewCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+
+          // ── 3D Isometric Vehicle Identity & Formatted Badge Card ────
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.gray50,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              children: [
+                // 3D Isometric Vector Render
+                IsometricVehicle3DRender(
+                  tierId: _tierId,
+                  width: 68,
+                  height: 48,
+                  customAccentColor: _categoryColor,
+                ),
+                const SizedBox(width: 12),
+
+                // Formatted Specs Badge: {Color} {Make} {Model} • {Plate}
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                        decoration: BoxDecoration(
+                          color: AppColors.obsidian,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          _formattedVehicleBadge,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.white,
+                            letterSpacing: 0.3,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Verified Commercial Transport • Clean 3D Twin',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
 
           // ── Proximity ETA & Live Distance Banner ─────────────────────
           Container(

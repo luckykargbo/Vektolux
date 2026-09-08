@@ -136,7 +136,8 @@ export const vehicleCategoryEnum = v.union(
   v.literal("standard"),
   v.literal("comfort"),
   v.literal("kekeh_tricycle"),
-  v.literal("delivery_bike")
+  v.literal("delivery_bike"),
+  v.literal("delivery_van")
 );
 
 export const tripDeliveryStatusEnum = v.union(
@@ -594,20 +595,34 @@ export default defineSchema({
 
   // 2. Driver Vehicles (Registered vehicle metadata, categories & verification)
   driver_vehicles: defineTable({
-    driverId: v.id("driver_profiles"),
+    driverId: v.string(), // Can be driver_profile ID or user ID
+    vehicleType: v.optional(v.string()), // "keke" | "okada" | "car" | "van"
     make: v.string(),
     model: v.string(),
     year: v.number(),
     color: v.string(),
     licensePlate: v.string(),
-    category: vehicleCategoryEnum, // "standard" | "comfort" | "kekeh_tricycle" | "delivery_bike"
+    category: vehicleCategoryEnum,
+    verificationStatus: v.union(
+      v.literal("pending"),
+      v.literal("approved"),
+      v.literal("rejected")
+    ),
     isVerified: v.boolean(),
+    licenseFrontUrl: v.optional(v.string()),
+    licenseBackUrl: v.optional(v.string()),
+    registrationDocUrl: v.optional(v.string()),
+    insuranceDocUrl: v.optional(v.string()),
+    inspectionPhotoUrl: v.optional(v.string()), // Private for admin only
     documentUrls: v.optional(v.record(v.string(), v.string())),
+    rejectionReason: v.optional(v.string()),
+    approvedAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index("by_driver", ["driverId"])
     .index("by_license_plate", ["licensePlate"])
-    .index("by_category", ["category"]),
+    .index("by_category", ["category"])
+    .index("by_verification_status", ["verificationStatus"]),
 
   // 3. Trips & Deliveries (Lifecycle bookings for rides & package couriers)
   trips_deliveries: defineTable({

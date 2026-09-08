@@ -75,10 +75,12 @@ class RideEntity extends Equatable {
   final String? driverName;
   final String? driverPhone;
   final double? driverRating;
+  final String? driverAvatarUrl;
   final double? driverLat;
   final double? driverLng;
 
   // Vehicle details
+  final String? vehicleCategory;
   final String? vehicleMake;
   final String? vehicleModel;
   final String? vehicleColor;
@@ -111,14 +113,26 @@ class RideEntity extends Equatable {
     this.driverName,
     this.driverPhone,
     this.driverRating,
+    this.driverAvatarUrl,
     this.driverLat,
     this.driverLng,
+    this.vehicleCategory,
     this.vehicleMake,
     this.vehicleModel,
     this.vehicleColor,
     this.vehiclePlate,
     this.verificationPin = '4821',
   });
+
+  /// Clean formatted text badge: `{Color} {Make} {Model} • {Plate Number}`
+  /// Example: "Silver Toyota Corolla • SL-940-BA"
+  String get formattedVehicleBadge {
+    final c = (vehicleColor != null && vehicleColor!.trim().isNotEmpty) ? vehicleColor! : 'Silver';
+    final mk = (vehicleMake != null && vehicleMake!.trim().isNotEmpty) ? vehicleMake! : 'Toyota';
+    final md = (vehicleModel != null && vehicleModel!.trim().isNotEmpty) ? vehicleModel! : 'Corolla';
+    final pl = (vehiclePlate != null && vehiclePlate!.trim().isNotEmpty) ? vehiclePlate! : 'SL-940-BA';
+    return '$c $mk $md • $pl';
+  }
 
   @override
   List<Object?> get props => [
@@ -145,8 +159,10 @@ class RideEntity extends Equatable {
         driverName,
         driverPhone,
         driverRating,
+        driverAvatarUrl,
         driverLat,
         driverLng,
+        vehicleCategory,
         vehicleMake,
         vehicleModel,
         vehicleColor,

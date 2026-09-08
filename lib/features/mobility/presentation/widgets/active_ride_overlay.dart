@@ -10,6 +10,9 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
 import '../../../../core/theme/components/vx_status_badge.dart';
 import '../../domain/entities/ride_entity.dart';
+import '../../../../core/widgets/vektolux_avatar.dart';
+import '../../domain/entities/vehicle_tier_catalog.dart';
+import 'isometric_vehicle_3d_render.dart';
 import 'share_trip_sheet.dart';
 import 'emergency_sos_modal.dart';
 
@@ -22,6 +25,12 @@ class ActiveRideOverlay extends StatelessWidget {
     required this.ride,
     required this.onCancelRide,
   });
+
+  VehicleTierId get _tierId {
+    return VehicleTierId.fromString(
+      ride.vehicleCategory ?? ride.vehicleModel ?? ride.vehicleMake ?? 'car',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -86,135 +95,195 @@ class ActiveRideOverlay extends StatelessWidget {
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: AppColors.gray50,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(18),
               border: Border.all(color: AppColors.border),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Driver Avatar
-                Stack(
+                // Driver Profile & Contact Row
+                Row(
                   children: [
-                    const CircleAvatar(
-                      radius: 26,
-                      backgroundColor: AppColors.emeraldSurface,
-                      child: Icon(
-                        Icons.person_rounded,
-                        color: AppColors.emeraldDark,
-                        size: 30,
-                      ),
-                    ),
-                    Positioned(
-                      bottom: 0,
-                      right: 0,
-                      child: Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: const BoxDecoration(
-                          color: AppColors.emerald,
-                          shape: BoxShape.circle,
+                    // Verified Driver Profile Avatar
+                    Stack(
+                      children: [
+                        VektoluxAvatar(
+                          avatarUrl: ride.driverAvatarUrl,
+                          name: ride.driverName ?? 'Momoh Kargbo',
+                          radius: 24,
+                          borderColor: AppColors.emerald,
+                          borderWidth: 2,
                         ),
-                        child: const Icon(
-                          Icons.check,
-                          color: AppColors.white,
-                          size: 10,
+                        Positioned(
+                          bottom: 0,
+                          right: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(2.5),
+                            decoration: const BoxDecoration(
+                              color: AppColors.emerald,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.check,
+                              color: AppColors.white,
+                              size: 10,
+                            ),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
-                ),
-                const SizedBox(width: 14),
+                    const SizedBox(width: 12),
 
-                // Driver Details
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        ride.driverName ?? 'Momoh Kargbo (Verified Driver)',
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.obsidian,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Row(
+                    // Driver Name & Rating
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(
-                            Icons.star_rounded,
-                            size: 16,
-                            color: AppColors.amber,
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  ride.driverName ?? 'Momoh Kargbo (Verified)',
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.obsidian,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              const Icon(
+                                Icons.verified_rounded,
+                                size: 14,
+                                color: AppColors.emerald,
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 3),
-                          Text(
-                            '${ride.driverRating ?? 4.9}',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.obsidian,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '• ${ride.vehicleMake ?? 'Toyota'} ${ride.vehicleModel ?? 'Corolla'} (${ride.vehicleColor ?? 'Silver'})',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.gray600,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          const SizedBox(height: 3),
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.star_rounded,
+                                size: 15,
+                                color: AppColors.amber,
+                              ),
+                              const SizedBox(width: 3),
+                              Text(
+                                '${ride.driverRating ?? 4.9}',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.obsidian,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              const Text(
+                                '• Verified Operator',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: AppColors.emeraldDark,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                      const SizedBox(height: 3),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: AppColors.gray200,
-                          borderRadius: BorderRadius.circular(4),
+                    ),
+
+                    // Quick Call & Chat Actions
+                    Row(
+                      children: [
+                        _buildCircleActionButton(
+                          icon: Icons.phone_rounded,
+                          color: AppColors.emerald,
+                          onTap: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Calling ${ride.driverName ?? 'driver'}...'),
+                              ),
+                            );
+                          },
                         ),
-                        child: Text(
-                          ride.vehiclePlate ?? 'SL-940-BA',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontFamily: 'Courier',
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.obsidian,
-                          ),
+                        const SizedBox(width: 8),
+                        _buildCircleActionButton(
+                          icon: Icons.chat_bubble_outline_rounded,
+                          color: AppColors.obsidian,
+                          onTap: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Opening live in-app ride chat...'),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 10),
+                  child: Divider(height: 1, color: AppColors.gray200),
+                ),
+
+                // ── Vehicle 3D Isometric Identity & Formatted Badge ──
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Row(
+                    children: [
+                      // 3D Isometric Vehicle Render
+                      IsometricVehicle3DRender(
+                        tierId: _tierId,
+                        width: 62,
+                        height: 44,
+                      ),
+                      const SizedBox(width: 10),
+
+                      // Formatted Vehicle Specs Badge: {Color} {Make} {Model} • {Plate}
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: AppColors.obsidian,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                ride.formattedVehicleBadge,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.white,
+                                  letterSpacing: 0.3,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            const Text(
+                              'Standardized 3D Model • Sierra Leone Fleet',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: AppColors.textSecondary,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
-                ),
-
-                // Quick Call & Message Actions
-                Row(
-                  children: [
-                    _buildCircleActionButton(
-                      icon: Icons.phone_rounded,
-                      color: AppColors.emerald,
-                      onTap: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Calling ${ride.driverName ?? 'driver'}...'),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(width: 8),
-                    _buildCircleActionButton(
-                      icon: Icons.chat_bubble_outline_rounded,
-                      color: AppColors.obsidian,
-                      onTap: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Opening live in-app ride chat...'),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
                 ),
               ],
             ),

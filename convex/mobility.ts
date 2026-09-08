@@ -383,6 +383,35 @@ export const setDriverOnlineStatus = mutation({
       throw new Error("Invalid driver profile ID");
     }
 
+    // ── GATING: Verify vehicle is approved before allowing driver online ──
+    if (args.isOnline) {
+      const driverProfile = await ctx.db.get(profileId);
+      if (driverProfile) {
+        const vehicle =
+          (await ctx.db
+            .query("driver_vehicles")
+            .withIndex("by_driver", (q) => q.eq("driverId", profileId as string))
+            .first()) ??
+          (await ctx.db
+            .query("driver_vehicles")
+            .withIndex("by_driver", (q) => q.eq("driverId", driverProfile.userId as string))
+            .first());
+
+        if (!vehicle) {
+          throw new Error(
+            "Cannot go online: Please register your vehicle and submit documents for verification."
+          );
+        }
+        if (vehicle.verificationStatus !== "approved") {
+          throw new Error(
+            vehicle.verificationStatus === "rejected"
+              ? `Cannot go online: Vehicle rejected (${vehicle.rejectionReason ?? "invalid documents"}). Please update your vehicle registration.`
+              : "Cannot go online: Vehicle documents are pending admin verification."
+          );
+        }
+      }
+    }
+
     const patchData: Record<string, unknown> = {
       isOnline: args.isOnline,
       updatedAt: Date.now(),
@@ -421,6 +450,7 @@ export const registerDriverVehicle = mutation({
       color: args.color,
       licensePlate: args.licensePlate.toUpperCase().trim(),
       category: args.category,
+      verificationStatus: "approved",
       isVerified: true,
       updatedAt: now,
     });

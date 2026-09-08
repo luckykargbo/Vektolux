@@ -11,6 +11,7 @@
 import type * as auth from "../auth.js";
 import type * as blockchain from "../blockchain.js";
 import type * as bookings from "../bookings.js";
+import type * as driverVehicles from "../driverVehicles.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as lib_geo from "../lib/geo.js";
@@ -34,6 +35,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   blockchain: typeof blockchain;
   bookings: typeof bookings;
+  driverVehicles: typeof driverVehicles;
   files: typeof files;
   http: typeof http;
   "lib/geo": typeof lib_geo;
