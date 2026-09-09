@@ -206,6 +206,9 @@ export default defineSchema({
       )
     ),
     isVerifiedDriver: v.optional(v.boolean()),
+    is_driver_verified: v.optional(v.boolean()),
+    active_mode: v.optional(v.union(v.literal("passenger"), v.literal("driver"))),
+    driver_status: v.optional(v.union(v.literal("offline"), v.literal("online"), v.literal("busy"))),
     isVerifiedAgent: v.optional(v.boolean()),
     isVerifiedMerchant: v.optional(v.boolean()),
     driverVehicleId: v.optional(v.string()),
@@ -616,9 +619,12 @@ export default defineSchema({
     userId: v.id("users"),
     isOnline: v.boolean(),
     isAvailable: v.boolean(),
+    driver_status: v.optional(v.union(v.literal("offline"), v.literal("online"), v.literal("busy"))),
     serviceType: serviceTypeEnum, // "ride" | "delivery" | "both"
     currentLat: v.number(),
     currentLng: v.number(),
+    heading: v.optional(v.number()),
+    speed: v.optional(v.number()),
     currentGeohash: v.string(), // Spatial indexing cell (precision 5 or 6)
     lastLocationUpdate: v.number(),
     updatedAt: v.number(),
@@ -688,6 +694,7 @@ export default defineSchema({
       })
     ),
     verificationPin: v.optional(v.string()),
+    pickupPin: v.optional(v.string()),
     driverPayout: v.optional(v.number()),
     passengerRating: v.optional(v.number()),
     driverRating: v.optional(v.number()),

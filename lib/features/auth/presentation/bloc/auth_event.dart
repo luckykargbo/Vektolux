@@ -97,3 +97,14 @@ class UserRoleUpdatedEvent extends AuthEvent {
   @override
   List<Object?> get props => [newRole];
 }
+
+/// User switches between passenger and driver mode.
+class SwitchUserModeEvent extends AuthEvent {
+  final String targetMode; // 'passenger' | 'driver'
+
+  const SwitchUserModeEvent(this.targetMode);
+
+  @override
+  List<Object?> get props => [targetMode];
+}
+

@@ -355,6 +355,8 @@ export const updateDriverLocation = mutation({
     driverProfileId: v.string(),
     lat: v.number(),
     lng: v.number(),
+    heading: v.optional(v.number()),
+    speed: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const profileId = ctx.db.normalizeId("driver_profiles", args.driverProfileId);
@@ -365,13 +367,17 @@ export const updateDriverLocation = mutation({
     const geohash = encodeGeohash(args.lat, args.lng, 5);
     const now = Date.now();
 
-    await ctx.db.patch(profileId, {
+    const patchPayload: Record<string, unknown> = {
       currentLat: args.lat,
       currentLng: args.lng,
       currentGeohash: geohash,
       lastLocationUpdate: now,
       updatedAt: now,
-    });
+    };
+    if (args.heading !== undefined) patchPayload.heading = args.heading;
+    if (args.speed !== undefined) patchPayload.speed = args.speed;
+
+    await ctx.db.patch(profileId, patchPayload);
     return true;
   },
 });
@@ -611,11 +617,16 @@ export const getDriverTrips = query({
   handler: async (ctx, args) => {
     const driverProfileId = ctx.db.normalizeId("driver_profiles", args.driverId);
     if (!driverProfileId) return [];
-    return await ctx.db
+    const trips = await ctx.db
       .query("trips_deliveries")
       .withIndex("by_driver", (q) => q.eq("driverId", driverProfileId))
       .order("desc")
       .take(args.limit ?? 20);
+
+    return trips.map((t) => {
+      const { verificationPin, pickupPin, ...safe } = t;
+      return safe;
+    });
   },
 });
 
@@ -680,8 +691,10 @@ export const getAvailableDispatches = query({
       if (distKm <= radius) {
         // Fetch passenger user info
         const passenger = await ctx.db.get(trip.passengerId);
+        // Security: driver MUST NOT see passenger's verification/pickup PIN
+        const { verificationPin, pickupPin, ...driverSafeTrip } = trip;
         eligible.push({
-          ...trip,
+          ...driverSafeTrip,
           _id: trip._id as string,
           passengerName: passenger?.name ?? "Passenger",
           passengerPhone: passenger?.phone ?? "",
@@ -738,22 +751,34 @@ export const acceptTripDispatch = mutation({
       if (autoVehicle) vehicleProfileId = autoVehicle._id;
     }
 
+    // Cryptographically random 4-digit pickup PIN generated upon ACCEPTED state
+    const randomBuffer = new Uint32Array(1);
+    crypto.getRandomValues(randomBuffer);
+    const pickupPin = String(1000 + (randomBuffer[0] % 9000));
+
     const now = Date.now();
     await ctx.db.patch(tripConvexId, {
       driverId: driverProfileId,
       vehicleId: vehicleProfileId,
       status: "accepted",
+      verificationPin: pickupPin,
+      pickupPin: pickupPin,
       updatedAt: now,
     });
 
-    // Mark driver unavailable
+    // Mark driver unavailable & busy
     await ctx.db.patch(driverProfileId, {
       isAvailable: false,
+      driver_status: "busy",
       updatedAt: now,
     });
 
     const updatedTrip = await ctx.db.get(tripConvexId);
-    return updatedTrip;
+    if (!updatedTrip) return null;
+
+    // Security: Driver payload must NEVER include passenger pickup PIN
+    const { verificationPin, pickupPin: _pPin, ...driverSafeTrip } = updatedTrip;
+    return driverSafeTrip;
   },
 });
 
@@ -818,8 +843,10 @@ export const verifyPinAndStartTrip = mutation({
     const trip = await ctx.db.get(tripConvexId);
     if (!trip) throw new Error("Trip not found");
 
+    const driverProfileId = ctx.db.normalizeId("driver_profiles", args.driverProfileId);
+
     // Verify 4-digit PIN (allows standard demo master PIN '1234' or '0000' or matching pin)
-    const expectedPin = trip.verificationPin;
+    const expectedPin = trip.pickupPin ?? trip.verificationPin;
     const enteredPin = args.pin.trim();
     if (
       expectedPin &&
@@ -827,7 +854,7 @@ export const verifyPinAndStartTrip = mutation({
       enteredPin !== "1234" &&
       enteredPin !== "0000"
     ) {
-      throw new Error("Incorrect passenger verification PIN. Please verify with passenger.");
+      throw new Error("Incorrect passenger verification PIN. Please verify code with passenger.");
     }
 
     const now = Date.now();
@@ -837,7 +864,20 @@ export const verifyPinAndStartTrip = mutation({
       updatedAt: now,
     });
 
-    return true;
+    if (driverProfileId) {
+      await ctx.db.patch(driverProfileId, {
+        isAvailable: false,
+        driver_status: "busy",
+        updatedAt: now,
+      });
+    }
+
+    return {
+      success: true,
+      tripId: args.tripId,
+      status: "in_progress",
+      startedAt: now,
+    };
   },
 });
 
@@ -902,9 +942,10 @@ export const completeTripAndReleasePayment = mutation({
       });
     }
 
-    // 3. Mark driver available again
+    // 3. Mark driver available and online again
     await ctx.db.patch(driverProfileId, {
       isAvailable: true,
+      driver_status: "online",
       updatedAt: now,
     });
 

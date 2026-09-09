@@ -24,6 +24,8 @@ import '../../domain/entities/trip_delivery_entity.dart';
 import '../../domain/entities/driver_vehicle_entity.dart';
 import '../widgets/isometric_vehicle_3d_render.dart';
 import 'driver_vehicle_registration_screen.dart';
+import '../../../auth/presentation/bloc/auth_bloc.dart';
+import '../../../auth/presentation/bloc/auth_event.dart';
 
 class DriverPortalScreen extends StatelessWidget {
   final String currentUserId;
@@ -634,6 +636,13 @@ class _DriverPortalScreenViewState extends State<_DriverPortalScreenView> {
                   showRoute: state.hasActiveTrip,
                   nearbyVehicles: const [],
                   onDemandDrivers: const [],
+                  assignedDriverLat: state.currentLat,
+                  assignedDriverLng: state.currentLng,
+                  tripStatus: state.hasActiveTrip
+                      ? (state.lifecycleStep == DriverTripLifecycleStep.inProgress
+                          ? 'in_progress'
+                          : 'accepted')
+                      : null,
                 ),
               ),
 
@@ -651,7 +660,12 @@ class _DriverPortalScreenViewState extends State<_DriverPortalScreenView> {
                       completedTripsCount: state.completedTripsCount,
                       rating: state.rating,
                       onToggleOnline: (val) => _handleToggleOnline(context, val),
-                      onBackToPassengerMode: () => Navigator.of(context).pop(),
+                      onBackToPassengerMode: () {
+                        context.read<AuthBloc>().add(const SwitchUserModeEvent('passenger'));
+                        if (Navigator.of(context).canPop()) {
+                          Navigator.of(context).pop();
+                        }
+                      },
                     ),
                     _buildVehicleStatusBanner(state.isOnline),
                   ],

@@ -26,6 +26,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<LogoutEvent>(_onLogout);
     on<UpdateUserProfileEvent>(_onUpdateUserProfile);
     on<UserRoleUpdatedEvent>(_onUserRoleUpdated);
+    on<SwitchUserModeEvent>(_onSwitchUserMode);
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -222,6 +223,33 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       );
       emit(state.copyWith(user: updatedUser));
       _log.i('User role updated in state: ${event.newRole.displayName}');
+    }
+  }
+
+  Future<void> _onSwitchUserMode(
+    SwitchUserModeEvent event,
+    Emitter<AuthState> emit,
+  ) async {
+    final currentUser = state.user;
+    if (currentUser == null) return;
+
+    try {
+      final updatedUser = await _repository.switchUserMode(
+        userId: currentUser.id,
+        targetMode: event.targetMode,
+      );
+
+      final modeLabel = event.targetMode == 'driver' ? 'Driver Workspace' : 'Passenger Mode';
+      emit(state.copyWith(
+        user: updatedUser,
+        successMessage: 'Switched to $modeLabel',
+      ));
+      _log.i('User mode switched to ${event.targetMode}');
+    } catch (e) {
+      _log.e('Failed to switch mode: $e');
+      emit(state.copyWith(
+        errorMessage: 'Failed to switch mode: $e',
+      ));
     }
   }
 

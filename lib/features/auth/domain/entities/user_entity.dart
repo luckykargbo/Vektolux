@@ -67,6 +67,9 @@ class UserEntity extends Equatable {
   final String? sessionToken;
   final String verificationStatus; // 'unverified', 'pending', 'verified', 'rejected'
   final String verificationBadge;  // 'NONE', 'GREEN_TICK'
+  final String activeMode;         // 'passenger' | 'driver'
+  final bool isDriverVerified;
+  final String driverStatus;       // 'offline' | 'online' | 'busy'
 
   const UserEntity({
     required this.id,
@@ -80,7 +83,13 @@ class UserEntity extends Equatable {
     this.sessionToken,
     this.verificationStatus = 'unverified',
     this.verificationBadge = 'NONE',
+    this.activeMode = 'passenger',
+    this.isDriverVerified = false,
+    this.driverStatus = 'offline',
   });
+
+  bool get isDriverMode => activeMode == 'driver';
+  bool get canSwitchToDriver => isDriverVerified || role == UserRole.driver;
 
   UserEntity copyWith({
     String? id,
@@ -94,6 +103,9 @@ class UserEntity extends Equatable {
     String? sessionToken,
     String? verificationStatus,
     String? verificationBadge,
+    String? activeMode,
+    bool? isDriverVerified,
+    String? driverStatus,
   }) {
     return UserEntity(
       id: id ?? this.id,
@@ -107,6 +119,9 @@ class UserEntity extends Equatable {
       sessionToken: sessionToken ?? this.sessionToken,
       verificationStatus: verificationStatus ?? this.verificationStatus,
       verificationBadge: verificationBadge ?? this.verificationBadge,
+      activeMode: activeMode ?? this.activeMode,
+      isDriverVerified: isDriverVerified ?? this.isDriverVerified,
+      driverStatus: driverStatus ?? this.driverStatus,
     );
   }
 
@@ -123,5 +138,8 @@ class UserEntity extends Equatable {
         sessionToken,
         verificationStatus,
         verificationBadge,
+        activeMode,
+        isDriverVerified,
+        driverStatus,
       ];
 }

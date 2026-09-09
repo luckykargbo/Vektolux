@@ -291,61 +291,124 @@ class ActiveRideOverlay extends StatelessWidget {
           const SizedBox(height: 12),
 
           // ── Passenger 4-Digit Boarding Verification PIN ───────────
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: AppColors.gray50,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.emerald.withValues(alpha: 0.5), width: 1.5),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: const BoxDecoration(
-                    color: AppColors.emeraldSurface,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.pin_outlined, color: AppColors.emeraldDark, size: 18),
-                ),
-                const SizedBox(width: 10),
-                const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'YOUR PICKUP PIN',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.6,
-                        color: AppColors.emeraldDark,
+          Builder(
+            builder: (context) {
+              final isDriverArrived = ride.status == RideStatus.arrived;
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isDriverArrived)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AppColors.emeraldSurface,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppColors.emerald, width: 1.2),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.check_circle_rounded, color: AppColors.emeraldDark, size: 16),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Driver has arrived at pickup! Share your PIN below.',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.emeraldDark,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    Text(
-                      'Share with driver upon arrival to start trip',
-                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: isDriverArrived ? const Color(0xFFF0FDF4) : AppColors.gray50,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: isDriverArrived ? AppColors.emerald : AppColors.emerald.withValues(alpha: 0.5),
+                        width: isDriverArrived ? 2.0 : 1.5,
+                      ),
+                      boxShadow: isDriverArrived
+                          ? [
+                              BoxShadow(
+                                color: AppColors.emerald.withValues(alpha: 0.25),
+                                blurRadius: 10,
+                                offset: const Offset(0, 3),
+                              ),
+                            ]
+                          : null,
                     ),
-                  ],
-                ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppColors.obsidian,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    ride.verificationPin ?? '4821',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 3,
-                      color: AppColors.emerald,
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: isDriverArrived ? AppColors.emerald : AppColors.emeraldSurface,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.pin_outlined,
+                            color: isDriverArrived ? AppColors.white : AppColors.emeraldDark,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'YOUR PICKUP PIN',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.8,
+                                  color: AppColors.emeraldDark,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Share this PIN with your driver upon arrival to begin your trip.',
+                                style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: AppColors.obsidian,
+                            borderRadius: BorderRadius.circular(10),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.2),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Text(
+                            ride.verificationPin ?? '4821',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 3,
+                              color: AppColors.emerald,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 12),
 

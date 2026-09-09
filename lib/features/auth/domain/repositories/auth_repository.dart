@@ -48,4 +48,10 @@ abstract class AuthRepository {
     String? phone,
     String? avatarUrl,
   });
+
+  /// Switch user active mode ('passenger' vs 'driver') and update backend & cache.
+  Future<UserEntity> switchUserMode({
+    required String userId,
+    required String targetMode,
+  });
 }

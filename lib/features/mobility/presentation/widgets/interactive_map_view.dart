@@ -35,6 +35,8 @@ class InteractiveMapView extends StatefulWidget {
   final String? assignedDriverName;
   final String? assignedDriverPlate;
   final String? selectedCategory;
+  final String? tripStatus;
+  final String? activePhase;
   final VoidCallback? onMapTap;
   final ValueChanged<RouteDetails>? onRouteCalculated;
   final ValueChanged<NearbyDriverEntity>? onDriverTap;
@@ -64,6 +66,8 @@ class InteractiveMapView extends StatefulWidget {
     this.assignedDriverName,
     this.assignedDriverPlate,
     this.selectedCategory,
+    this.tripStatus,
+    this.activePhase,
     this.onMapTap,
     this.onRouteCalculated,
     this.onDriverTap,
@@ -87,7 +91,27 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
   late final AnimationController _driverInterpolationController;
 
   RouteDetails _currentRoute = RouteDetails.empty();
+  RouteDetails _approachRoute = RouteDetails.empty(); // Phase 1: Driver -> Pickup
+  RouteDetails _tripRoute = RouteDetails.empty();     // Phase 2: Pickup -> Dropoff
   bool _isLoadingRoute = false;
+
+  bool get _isEnRouteToPickup {
+    final s = widget.tripStatus?.toLowerCase() ?? '';
+    return s == 'accepted' ||
+        s == 'driverarriving' ||
+        s == 'driver_arriving' ||
+        s == 'arrived' ||
+        widget.activePhase == 'phase1';
+  }
+
+  bool get _isTripInProgress {
+    final s = widget.tripStatus?.toLowerCase() ?? '';
+    return s == 'intransit' ||
+        s == 'in_transit' ||
+        s == 'in_progress' ||
+        s == 'inprogress' ||
+        widget.activePhase == 'phase2';
+  }
 
   // Smooth driver marker interpolation state
   LatLng? _currentDriverPosition;
@@ -175,7 +199,9 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
         oldWidget.pickupLng != widget.pickupLng ||
         oldWidget.dropoffLat != widget.dropoffLat ||
         oldWidget.dropoffLng != widget.dropoffLng ||
-        oldWidget.showRoute != widget.showRoute) {
+        oldWidget.showRoute != widget.showRoute ||
+        oldWidget.tripStatus != widget.tripStatus ||
+        oldWidget.activePhase != widget.activePhase) {
       _calculateAndFitRoute();
     }
 
@@ -219,39 +245,122 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
     setState(() => _isLoadingRoute = true);
 
     try {
-      final route = await _routingService.getDirections(_pickup, _dropoff);
-      if (mounted) {
-        setState(() {
-          _currentRoute = route;
-          _isLoadingRoute = false;
-        });
+      if (_isEnRouteToPickup && widget.assignedDriverLat != null && widget.assignedDriverLng != null) {
+        // ── Phase 1: Driver approaching pickup ──
+        final driverPos = LatLng(widget.assignedDriverLat!, widget.assignedDriverLng!);
+        final approach = await _routingService.getDirections(driverPos, _pickup);
+        final trip = await _routingService.getDirections(_pickup, _dropoff);
 
-        widget.onRouteCalculated?.call(route);
+        if (mounted) {
+          setState(() {
+            _approachRoute = approach;
+            _tripRoute = trip;
+            _currentRoute = approach;
+            _isLoadingRoute = false;
+          });
 
-        // Auto-fit bounds
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          try {
-            final boundPoints = [
-              _pickup,
-              _dropoff,
-              if (_currentDriverPosition != null) _currentDriverPosition!,
-              ...route.points,
-            ];
-            final bounds = LatLngBounds.fromPoints(boundPoints);
-            _mapController.fitCamera(
-              CameraFit.bounds(
-                bounds: bounds,
-                padding: const EdgeInsets.only(
-                  top: 90,
-                  bottom: 260,
-                  left: 40,
-                  right: 40,
+          widget.onRouteCalculated?.call(approach);
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            try {
+              final boundPoints = [
+                driverPos,
+                _pickup,
+                ...approach.points,
+              ];
+              final bounds = LatLngBounds.fromPoints(boundPoints);
+              _mapController.fitCamera(
+                CameraFit.bounds(
+                  bounds: bounds,
+                  padding: const EdgeInsets.only(
+                    top: 90,
+                    bottom: 260,
+                    left: 40,
+                    right: 40,
+                  ),
                 ),
-              ),
-            );
-          } catch (_) {}
-        });
+              );
+            } catch (_) {}
+          });
+        }
+      } else if (_isTripInProgress) {
+        // ── Phase 2: In transit to dropoff ──
+        final origin = _currentDriverPosition ??
+            LatLng(widget.assignedDriverLat ?? widget.pickupLat,
+                widget.assignedDriverLng ?? widget.pickupLng);
+        final trip = await _routingService.getDirections(origin, _dropoff);
+
+        if (mounted) {
+          setState(() {
+            _approachRoute = RouteDetails.empty();
+            _tripRoute = trip;
+            _currentRoute = trip;
+            _isLoadingRoute = false;
+          });
+
+          widget.onRouteCalculated?.call(trip);
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            try {
+              final boundPoints = [
+                origin,
+                _dropoff,
+                ...trip.points,
+              ];
+              final bounds = LatLngBounds.fromPoints(boundPoints);
+              _mapController.fitCamera(
+                CameraFit.bounds(
+                  bounds: bounds,
+                  padding: const EdgeInsets.only(
+                    top: 90,
+                    bottom: 260,
+                    left: 40,
+                    right: 40,
+                  ),
+                ),
+              );
+            } catch (_) {}
+          });
+        }
+      } else {
+        // ── Default: Pickup -> Dropoff ──
+        final route = await _routingService.getDirections(_pickup, _dropoff);
+        if (mounted) {
+          setState(() {
+            _tripRoute = route;
+            _currentRoute = route;
+            _isLoadingRoute = false;
+          });
+
+          widget.onRouteCalculated?.call(route);
+
+          // Auto-fit bounds
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            try {
+              final boundPoints = [
+                _pickup,
+                _dropoff,
+                if (_currentDriverPosition != null) _currentDriverPosition!,
+                ...route.points,
+              ];
+              final bounds = LatLngBounds.fromPoints(boundPoints);
+              _mapController.fitCamera(
+                CameraFit.bounds(
+                  bounds: bounds,
+                  padding: const EdgeInsets.only(
+                    top: 90,
+                    bottom: 260,
+                    left: 40,
+                    right: 40,
+                  ),
+                ),
+              );
+            } catch (_) {}
+          });
+        }
       }
     } catch (_) {
       if (mounted) setState(() => _isLoadingRoute = false);
@@ -306,28 +415,63 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
               maxZoom: 19,
             ),
 
-            // Dynamic Road Polyline Layer
-            if (widget.showRoute && _currentRoute.points.isNotEmpty) ...[
-              // Outer glow / outline
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: _currentRoute.points,
-                    color: AppColors.obsidian.withValues(alpha: 0.35),
-                    strokeWidth: 7.0,
+            // Dynamic Dual-Phase Road Polyline Layer
+            if (widget.showRoute) ...[
+              // Phase 1: Driver approaching passenger pickup
+              if (_isEnRouteToPickup && _approachRoute.points.isNotEmpty) ...[
+                // Outer glow for approach
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _approachRoute.points,
+                      color: AppColors.obsidian.withValues(alpha: 0.35),
+                      strokeWidth: 7.5,
+                    ),
+                  ],
+                ),
+                // Main active road path for approach
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _approachRoute.points,
+                      color: AppColors.emerald,
+                      strokeWidth: 5.0,
+                    ),
+                  ],
+                ),
+                // Forward trip preview to destination (Pickup -> Dropoff)
+                if (_tripRoute.points.isNotEmpty)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: _tripRoute.points,
+                        color: AppColors.obsidian.withValues(alpha: 0.35),
+                        strokeWidth: 3.5,
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              // Main road path
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: _currentRoute.points,
-                    color: AppColors.emerald,
-                    strokeWidth: 4.5,
-                  ),
-                ],
-              ),
+              ] else if (_currentRoute.points.isNotEmpty) ...[
+                // Outer glow / outline
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _currentRoute.points,
+                      color: AppColors.obsidian.withValues(alpha: 0.35),
+                      strokeWidth: 7.0,
+                    ),
+                  ],
+                ),
+                // Main road path
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _currentRoute.points,
+                      color: AppColors.emerald,
+                      strokeWidth: 4.5,
+                    ),
+                  ],
+                ),
+              ],
             ],
 
             // Markers: Pickup, Dropoff, Nearby Fleet Drivers

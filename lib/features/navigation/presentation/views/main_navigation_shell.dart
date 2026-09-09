@@ -15,6 +15,7 @@ import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../home/presentation/views/client_home_screen.dart';
 import '../../../mobility/presentation/views/auto_marketplace_screen.dart';
+import '../../../mobility/presentation/views/driver_portal_screen.dart';
 import '../../../mobility/presentation/views/mobility_home_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
 import '../../../real_estate/presentation/views/real_estate_marketplace_screen.dart';
@@ -60,6 +61,16 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     return BlocBuilder<AuthBloc, AuthState>(
       builder: (context, authState) {
         final currentUserId = authState.user?.id ?? '';
+        final isDriverMode = authState.user?.isDriverMode ?? false;
+
+        // ── Strict View Isolation: Exclusively display Driver Portal when active_mode is 'driver' ──
+        if (isDriverMode) {
+          return DriverPortalScreen(
+            currentUserId: currentUserId,
+            initialLat: 8.484,
+            initialLng: -13.229,
+          );
+        }
 
         final pages = [
           // 0: Home Super App Discovery

@@ -208,6 +208,9 @@ export const loginWithPhoneOrEmail = mutation({
     isVerified: v.optional(v.boolean()),
     avatarUrl: v.optional(v.string()),
     walletAddress: v.optional(v.string()),
+    active_mode: v.optional(v.string()),
+    is_driver_verified: v.optional(v.boolean()),
+    driver_status: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
     // Try email first, then phone
@@ -256,6 +259,12 @@ export const loginWithPhoneOrEmail = mutation({
       updatedAt: Date.now(),
     });
 
+    const isDriverVerified = Boolean(
+      user.is_driver_verified ?? user.isVerifiedDriver ?? (user.role === "driver")
+    );
+    const activeMode = user.active_mode ?? (user.activeRole === "driver" ? "driver" : "passenger");
+    const driverStatus = user.driver_status ?? (user.role === "driver" ? "online" : "offline");
+
     return {
       success: true,
       userId: user._id as string,
@@ -267,6 +276,9 @@ export const loginWithPhoneOrEmail = mutation({
       isVerified: user.isVerified,
       avatarUrl: user.avatarUrl,
       walletAddress: user.walletAddress,
+      active_mode: activeMode,
+      is_driver_verified: isDriverVerified,
+      driver_status: driverStatus,
     };
   },
 });
@@ -291,6 +303,9 @@ export const getUserSession = query({
       isActive: v.boolean(),
       avatarUrl: v.optional(v.string()),
       walletAddress: v.optional(v.string()),
+      active_mode: v.optional(v.string()),
+      is_driver_verified: v.optional(v.boolean()),
+      driver_status: v.optional(v.string()),
     }),
     v.null()
   ),
@@ -311,6 +326,12 @@ export const getUserSession = query({
         return null;
       }
 
+      const isDriverVerified = Boolean(
+        user.is_driver_verified ?? user.isVerifiedDriver ?? (user.role === "driver")
+      );
+      const activeMode = user.active_mode ?? (user.activeRole === "driver" ? "driver" : "passenger");
+      const driverStatus = user.driver_status ?? (user.role === "driver" ? "online" : "offline");
+
       return {
         userId: user._id as string,
         name: user.name,
@@ -321,6 +342,9 @@ export const getUserSession = query({
         isActive: user.isActive,
         avatarUrl: user.avatarUrl,
         walletAddress: user.walletAddress,
+        active_mode: activeMode,
+        is_driver_verified: isDriverVerified,
+        driver_status: driverStatus,
       };
     } catch {
       return null;

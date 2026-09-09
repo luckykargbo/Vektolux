@@ -118,6 +118,9 @@ class AuthRepositoryImpl implements AuthRepository {
       avatarUrl: data['avatarUrl'] as String?,
       walletAddress: data['walletAddress'] as String?,
       sessionToken: data['sessionToken']?.toString(),
+      activeMode: data['active_mode']?.toString() ?? 'passenger',
+      isDriverVerified: data['is_driver_verified'] as bool? ?? (data['role'] == 'driver'),
+      driverStatus: data['driver_status']?.toString() ?? 'offline',
     );
 
     await _cacheUser(user);
@@ -145,6 +148,9 @@ class AuthRepositoryImpl implements AuthRepository {
         avatarUrl: cached.avatarUrl,
         walletAddress: cached.walletAddress,
         sessionToken: cached.sessionToken,
+        activeMode: cached.role == 'driver' ? 'driver' : 'passenger',
+        isDriverVerified: cached.role == 'driver',
+        driverStatus: cached.role == 'driver' ? 'online' : 'offline',
       );
     } catch (e) {
       _log.e('Failed to read cached session: $e');
@@ -179,6 +185,9 @@ class AuthRepositoryImpl implements AuthRepository {
         avatarUrl: data['avatarUrl'] as String?,
         walletAddress: data['walletAddress'] as String?,
         sessionToken: sessionToken,
+        activeMode: data['active_mode']?.toString() ?? 'passenger',
+        isDriverVerified: data['is_driver_verified'] as bool? ?? (data['role'] == 'driver'),
+        driverStatus: data['driver_status']?.toString() ?? 'offline',
       );
 
       // Refresh local cache with latest data
@@ -246,6 +255,48 @@ class AuthRepositoryImpl implements AuthRepository {
 
     await _cacheUser(updated);
     _log.i('Profile updated and cached: ${updated.name}');
+    return updated;
+  }
+
+  @override
+  Future<UserEntity> switchUserMode({
+    required String userId,
+    required String targetMode,
+  }) async {
+    final result = await _convexClient.mutation(
+      'users:switchUserMode',
+      args: {
+        'userId': userId,
+        'targetMode': targetMode,
+      },
+    );
+
+    if (!result.success || result.value == null) {
+      throw Exception(result.errorMessage ?? 'Failed to switch mode');
+    }
+
+    final data = result.value as Map<String, dynamic>;
+    if (data['success'] == false) {
+      throw Exception(data['message']?.toString() ?? 'Mode switch rejected');
+    }
+
+    final current = await getActiveSession();
+    final updated = (current ??
+            UserEntity(
+              id: userId,
+              name: '',
+              email: '',
+              phone: '',
+              role: targetMode == 'driver' ? UserRole.driver : UserRole.client,
+            ))
+        .copyWith(
+      activeMode: targetMode,
+      role: targetMode == 'driver' ? UserRole.driver : UserRole.client,
+      driverStatus: targetMode == 'driver' ? 'online' : 'offline',
+    );
+
+    await _cacheUser(updated);
+    _log.i('User switched mode to $targetMode');
     return updated;
   }
 

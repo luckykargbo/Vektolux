@@ -27,7 +27,10 @@ export const getUserById = query({
       walletAddress: v.optional(v.string()),
       createdAt: v.number(),
       activeRole: v.optional(v.string()),
+      active_mode: v.optional(v.string()),
       isVerifiedDriver: v.optional(v.boolean()),
+      is_driver_verified: v.optional(v.boolean()),
+      driver_status: v.optional(v.string()),
       isVerifiedAgent: v.optional(v.boolean()),
       isVerifiedMerchant: v.optional(v.boolean()),
     }),
@@ -41,6 +44,12 @@ export const getUserById = query({
       const user = await ctx.db.get(userId);
       if (!user) return null;
 
+      const isDriverVerified = Boolean(
+        user.is_driver_verified ?? user.isVerifiedDriver ?? (user.role === "driver")
+      );
+      const activeMode = user.active_mode ?? (user.activeRole === "driver" ? "driver" : "passenger");
+      const driverStatus = user.driver_status ?? (user.role === "driver" ? "online" : "offline");
+
       return {
         id: user._id as string,
         name: user.name,
@@ -52,8 +61,11 @@ export const getUserById = query({
         avatarUrl: user.avatarUrl,
         walletAddress: user.walletAddress,
         createdAt: user._creationTime,
-        activeRole: user.activeRole ?? (user.role === "driver" || user.role === "agent" || user.role === "merchant" ? user.role : "client"),
-        isVerifiedDriver: user.isVerifiedDriver ?? (user.role === "driver"),
+        activeRole: user.activeRole ?? (activeMode === "driver" ? "driver" : "client"),
+        active_mode: activeMode,
+        isVerifiedDriver: isDriverVerified,
+        is_driver_verified: isDriverVerified,
+        driver_status: driverStatus,
         isVerifiedAgent: user.isVerifiedAgent ?? (user.role === "agent"),
         isVerifiedMerchant: user.isVerifiedMerchant ?? (user.role === "merchant"),
       };
@@ -180,6 +192,91 @@ export const switchActiveRole = mutation({
       success: true,
       activeRole: args.targetRole,
       message: `Switched to ${args.targetRole} mode`,
+    };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                 SWITCH USER MODE (DRIVER VS PASSENGER)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const switchUserMode = mutation({
+  args: {
+    userId: v.string(),
+    targetMode: v.union(v.literal("passenger"), v.literal("driver")),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    activeMode: v.string(),
+    message: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const userId = ctx.db.normalizeId("users", args.userId);
+    if (!userId) {
+      return { success: false, activeMode: "passenger", message: "User not found" };
+    }
+    const user = await ctx.db.get(userId);
+    if (!user) {
+      return { success: false, activeMode: "passenger", message: "User not found" };
+    }
+
+    const isDriverVerified = Boolean(
+      user.is_driver_verified ?? user.isVerifiedDriver ?? (user.role === "driver")
+    );
+
+    if (args.targetMode === "driver" && !isDriverVerified) {
+      return {
+        success: false,
+        activeMode: user.active_mode ?? "passenger",
+        message: "Driver verification required. Complete registration and vehicle approval.",
+      };
+    }
+
+    const activeRole = args.targetMode === "driver" ? "driver" : "client";
+    const driverStatus = args.targetMode === "driver" ? (user.driver_status ?? "online") : "offline";
+
+    await ctx.db.patch(userId, {
+      active_mode: args.targetMode,
+      activeRole,
+      driver_status: driverStatus,
+      updatedAt: Date.now(),
+    });
+
+    return {
+      success: true,
+      activeMode: args.targetMode,
+      message: `Switched to ${args.targetMode === "driver" ? "Driver Workspace" : "Passenger Mode"}`,
+    };
+  },
+});
+
+export const getUserMode = query({
+  args: {
+    userId: v.string(),
+  },
+  returns: v.union(
+    v.object({
+      userId: v.string(),
+      activeMode: v.string(),
+      isDriverVerified: v.boolean(),
+      driverStatus: v.string(),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, args) => {
+    const userId = ctx.db.normalizeId("users", args.userId);
+    if (!userId) return null;
+    const user = await ctx.db.get(userId);
+    if (!user) return null;
+
+    const isDriverVerified = Boolean(
+      user.is_driver_verified ?? user.isVerifiedDriver ?? (user.role === "driver")
+    );
+    return {
+      userId: user._id as string,
+      activeMode: user.active_mode ?? (user.activeRole === "driver" ? "driver" : "passenger"),
+      isDriverVerified,
+      driverStatus: user.driver_status ?? "offline",
     };
   },
 });

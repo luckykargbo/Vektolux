@@ -394,6 +394,7 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
             assignedDriverName: state.activeRide?.driverName,
             assignedDriverPlate: state.activeRide?.vehiclePlate,
             selectedCategory: state.selectedBookingCategory.id,
+            tripStatus: state.activeRide?.status.name,
             onPickupPositionChanged: (newPoint) {
               final readable = LocationManager().reverseGeocode(newPoint.latitude, newPoint.longitude);
               context.read<MobilityBloc>().add(

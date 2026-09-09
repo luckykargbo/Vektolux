@@ -702,4 +702,53 @@ http.route({
   }),
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+//          POST /api/trips/verify-pin — Verify Pickup PIN & Start Trip
+// ═══════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/trips/verify-pin",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const { tripId, driverProfileId, pin } = body;
+
+      if (!tripId || !pin) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "tripId and pin are required parameters",
+          }),
+          { status: 400, headers: corsHeaders() }
+        );
+      }
+
+      await ctx.runMutation(api.mobility.verifyPinAndStartTrip, {
+        tripId,
+        driverProfileId: driverProfileId ?? "system_api",
+        pin: String(pin).trim(),
+      });
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          tripId,
+          status: "in_progress",
+          message: "PIN verified successfully. Trip started.",
+        }),
+        { status: 200, headers: corsHeaders() }
+      );
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: err.message ?? "PIN verification failed",
+        }),
+        { status: 400, headers: corsHeaders() }
+      );
+    }
+  }),
+});
+
 export default http;

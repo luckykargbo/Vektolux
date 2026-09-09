@@ -809,6 +809,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                 const SizedBox(height: 18),
 
+                // ── 1B. Dual-Role Mode Switcher (Driver vs. Passenger) ──
+                _buildSectionHeader('WORKSPACE & ACCOUNT MODE'),
+                _buildModeSwitcherCard(context, user),
+
+                const SizedBox(height: 18),
+
                 // ── 2. Operator Workspace Card (If vendor role) ──────
                 if (isVendor) ...[
                   _buildSectionHeader('OPERATOR WORKSPACE'),
@@ -1359,6 +1365,309 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildModeSwitcherCard(BuildContext context, UserEntity? user) {
+    final isDriverMode = user?.isDriverMode ?? false;
+    final canDrive = user?.canSwitchToDriver ?? false;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isDriverMode ? AppColors.emerald : AppColors.border,
+          width: isDriverMode ? 1.8 : 1.0,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isDriverMode
+                ? AppColors.emerald.withValues(alpha: 0.12)
+                : Colors.black.withValues(alpha: 0.03),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: isDriverMode
+                      ? AppColors.emeraldSurface
+                      : AppColors.obsidian.withValues(alpha: 0.08),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  isDriverMode ? Icons.local_taxi_rounded : Icons.person_rounded,
+                  color: isDriverMode ? AppColors.emeraldDark : AppColors.obsidian,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isDriverMode ? 'Driver Workspace Active' : 'Passenger Mode Active',
+                      style: const TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.obsidian,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      isDriverMode
+                          ? 'Receiving trip dispatches & telemetry'
+                          : 'Browsing super-app verticals & hailing rides',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textSecondary,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isDriverMode ? AppColors.emerald : AppColors.obsidian,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  isDriverMode ? 'DRIVER' : 'CLIENT',
+                  style: const TextStyle(
+                    color: AppColors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          if (canDrive) ...[
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.gray100,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              padding: const EdgeInsets.all(4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap: () {
+                        if (isDriverMode) {
+                          context.read<AuthBloc>().add(const SwitchUserModeEvent('passenger'));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Switched to Passenger Mode'),
+                              backgroundColor: AppColors.obsidian,
+                              behavior: SnackBarBehavior.floating,
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(10),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: !isDriverMode ? AppColors.white : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                          boxShadow: !isDriverMode
+                              ? [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.08),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 1),
+                                  ),
+                                ]
+                              : null,
+                        ),
+                        child: Center(
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.person_rounded,
+                                size: 16,
+                                color: !isDriverMode ? AppColors.obsidian : AppColors.gray500,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Passenger Mode',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: !isDriverMode ? FontWeight.w800 : FontWeight.w600,
+                                  color: !isDriverMode ? AppColors.obsidian : AppColors.gray500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: InkWell(
+                      onTap: () {
+                        if (!isDriverMode) {
+                          context.read<AuthBloc>().add(const SwitchUserModeEvent('driver'));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Switched to Driver Workspace'),
+                              backgroundColor: AppColors.emerald,
+                              behavior: SnackBarBehavior.floating,
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(10),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: isDriverMode ? AppColors.emerald : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                          boxShadow: isDriverMode
+                              ? [
+                                  BoxShadow(
+                                    color: AppColors.emerald.withValues(alpha: 0.3),
+                                    blurRadius: 6,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ]
+                              : null,
+                        ),
+                        child: Center(
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.local_taxi_rounded,
+                                size: 16,
+                                color: isDriverMode ? AppColors.white : AppColors.gray500,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Driver Workspace',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: isDriverMode ? FontWeight.w800 : FontWeight.w600,
+                                  color: isDriverMode ? AppColors.white : AppColors.gray500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ] else ...[
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.obsidian,
+                      foregroundColor: AppColors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                    icon: const Icon(Icons.app_registration_rounded, size: 16),
+                    label: const Text(
+                      'Register Vehicle to Drive',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                    onPressed: () async {
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => DriverVehicleRegistrationScreen(
+                            driverId: user?.id ?? '',
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    backgroundColor: AppColors.emeraldSurface,
+                    foregroundColor: AppColors.emeraldDark,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: const BorderSide(color: AppColors.emerald, width: 1),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  ),
+                  icon: const Icon(Icons.bolt_rounded, size: 16),
+                  label: const Text(
+                    'Demo Unlock',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+                  ),
+                  onPressed: () async {
+                    if (user == null) return;
+                    try {
+                      final client = context.read<ConvexClientWrapper>();
+                      await client.mutation(
+                        'users:mockApproveRoleUpgrade',
+                        args: {
+                          'userId': user.id,
+                          'targetRole': 'driver',
+                        },
+                      );
+                      if (context.mounted) {
+                        context.read<AuthBloc>().add(const SwitchUserModeEvent('driver'));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Driver Workspace Unlocked! (Demo Verification)'),
+                            backgroundColor: AppColors.emerald,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Unlock error: $e'),
+                            backgroundColor: AppColors.error,
+                          ),
+                        );
+                      }
+                    }
+                  },
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
     );
   }
 
