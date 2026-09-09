@@ -72,6 +72,7 @@ class MobilityState extends Equatable {
   final bool isPinDragMode;
   final bool isVpnMismatch;
   final bool showLocationPermissionModal;
+  final bool hasDismissedLocationModal;
   final List<NearbyDriverEntity> onDemandDrivers;
   final List<NearbySellerEntity> nearbySellers;
 
@@ -109,6 +110,7 @@ class MobilityState extends Equatable {
     this.isPinDragMode = false,
     this.isVpnMismatch = false,
     this.showLocationPermissionModal = false,
+    this.hasDismissedLocationModal = false,
     this.onDemandDrivers = const [],
     this.nearbySellers = const [],
   });
@@ -147,6 +149,7 @@ class MobilityState extends Equatable {
     bool? isPinDragMode,
     bool? isVpnMismatch,
     bool? showLocationPermissionModal,
+    bool? hasDismissedLocationModal,
     List<NearbyDriverEntity>? onDemandDrivers,
     List<NearbySellerEntity>? nearbySellers,
     TripDeliveryEntity? activeTripDelivery,
@@ -195,6 +198,8 @@ class MobilityState extends Equatable {
       isVpnMismatch: isVpnMismatch ?? this.isVpnMismatch,
       showLocationPermissionModal:
           showLocationPermissionModal ?? this.showLocationPermissionModal,
+      hasDismissedLocationModal:
+          hasDismissedLocationModal ?? this.hasDismissedLocationModal,
       onDemandDrivers: onDemandDrivers ?? this.onDemandDrivers,
       nearbySellers: nearbySellers ?? this.nearbySellers,
     );
@@ -248,6 +253,7 @@ class MobilityState extends Equatable {
         isPinDragMode,
         isVpnMismatch,
         showLocationPermissionModal,
+        hasDismissedLocationModal,
         onDemandDrivers,
         nearbySellers,
       ];

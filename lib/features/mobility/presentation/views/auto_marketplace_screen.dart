@@ -12,6 +12,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/widgets/vx_network_image.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/vehicle_detail_screen.dart';
@@ -406,17 +407,13 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                 ClipRRect(
                   borderRadius:
                       const BorderRadius.vertical(top: Radius.circular(17)),
-                  child: Image.network(
-                    imageUrl,
+                  child: VxNetworkImage(
+                    imageUrl: imageUrl,
                     height: 180,
                     width: double.infinity,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      height: 180,
-                      color: AppColors.gray200,
-                      child: const Icon(Icons.directions_car,
-                          size: 40, color: AppColors.gray400),
-                    ),
+                    fallbackIcon: Icons.directions_car_rounded,
+                    fallbackLabel: 'VEKTOLUX FLEET',
                   ),
                 ),
                 // Price Chip

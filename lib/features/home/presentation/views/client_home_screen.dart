@@ -13,6 +13,7 @@ import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/vektolux_avatar.dart';
+import '../../../../core/widgets/vx_network_image.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
@@ -1050,29 +1051,37 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text(
-                      'Verified Properties in Sierra Leone',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.obsidian,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Text(
+                        'Verified Properties in Sierra Leone',
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.obsidian,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      'Houses, furnished flats & guest houses',
-                      style: TextStyle(fontSize: 12, color: AppColors.gray500),
-                    ),
-                  ],
+                      SizedBox(height: 2),
+                      Text(
+                        'Houses, furnished flats & guest houses',
+                        style: TextStyle(fontSize: 12, color: AppColors.gray500),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
+                const SizedBox(width: 8),
                 TextButton(
                   onPressed: () => MainNavigationShell.switchToTab(context, 2),
                   child: const Text(
@@ -1170,16 +1179,13 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               children: [
                 ClipRRect(
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-                  child: Image.network(
-                    imageUrl,
+                  child: VxNetworkImage(
+                    imageUrl: imageUrl,
                     height: 125,
                     width: double.infinity,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      height: 125,
-                      color: AppColors.gray200,
-                      child: const Icon(Icons.home, color: AppColors.gray400),
-                    ),
+                    fallbackIcon: Icons.home_work_rounded,
+                    fallbackLabel: 'VEKTOLUX RESIDENCE',
                   ),
                 ),
                 Positioned(
@@ -1265,29 +1271,37 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text(
-                      'Featured Vehicles for Sale & Hire',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.obsidian,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Text(
+                        'Featured Vehicles for Sale & Hire',
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.obsidian,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      'Cars, kekes & vans from verified Sierra Leone dealers',
-                      style: TextStyle(fontSize: 12, color: AppColors.gray500),
-                    ),
-                  ],
+                      SizedBox(height: 2),
+                      Text(
+                        'Cars, kekes & vans from verified Sierra Leone dealers',
+                        style: TextStyle(fontSize: 12, color: AppColors.gray500),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
+                const SizedBox(width: 8),
                 TextButton(
                   onPressed: () => MainNavigationShell.switchToTab(context, 3),
                   child: const Text(
@@ -1379,16 +1393,13 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               children: [
                 ClipRRect(
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-                  child: Image.network(
-                    imageUrl,
+                  child: VxNetworkImage(
+                    imageUrl: imageUrl,
                     height: 120,
                     width: double.infinity,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      height: 120,
-                      color: AppColors.gray200,
-                      child: const Icon(Icons.directions_car, color: AppColors.gray400),
-                    ),
+                    fallbackIcon: Icons.directions_car_rounded,
+                    fallbackLabel: 'VEKTOLUX FLEET',
                   ),
                 ),
                 Positioned(

@@ -15,6 +15,8 @@ enum LocationPermissionState {
   granted,
   prompt,
   denied,
+  deniedForever,
+  serviceDisabled,
   unsupported,
 }
 
@@ -233,7 +235,7 @@ class LocationManager {
     return lat >= slMinLat && lat <= slMaxLat && lng >= slMinLng && lng <= slMaxLng;
   }
 
-  /// Query navigator.permissions.query({ name: 'geolocation' })
+  /// Query navigator.permissions.query({ name: 'geolocation' }) or Geolocator state
   Future<LocationPermissionState> queryPermissionState() async {
     try {
       final stateStr = await PlatformLocationDelegate.queryPermissionState();
@@ -241,6 +243,8 @@ class LocationManager {
         'granted' => LocationPermissionState.granted,
         'prompt' => LocationPermissionState.prompt,
         'denied' => LocationPermissionState.denied,
+        'deniedforever' => LocationPermissionState.deniedForever,
+        'servicedisabled' => LocationPermissionState.serviceDisabled,
         _ => LocationPermissionState.prompt,
       };
     } catch (e) {
@@ -249,20 +253,55 @@ class LocationManager {
     }
   }
 
+  /// Strict check: returns true if GPS is enabled and permission is granted.
+  Future<bool> hasLocationPermissionAndService() async {
+    final state = await queryPermissionState();
+    return state == LocationPermissionState.granted;
+  }
+
+  /// Handles "Enable Device Location" tap from modal:
+  /// - Directs to OS location settings if GPS is turned off.
+  /// - Directs to App Settings if permission is permanently denied.
+  /// - Requests native OS permission if requestable.
+  Future<bool> handleEnableLocationAction() async {
+    final state = await queryPermissionState();
+    if (state == LocationPermissionState.granted) {
+      return true;
+    }
+    if (state == LocationPermissionState.serviceDisabled) {
+      await PlatformLocationDelegate.openLocationSettings();
+      return false;
+    }
+    if (state == LocationPermissionState.deniedForever) {
+      await PlatformLocationDelegate.openAppSettings();
+      return false;
+    }
+    final result = await PlatformLocationDelegate.requestPermission();
+    if (result == 'granted') {
+      return true;
+    }
+    if (result == 'deniedForever') {
+      await PlatformLocationDelegate.openAppSettings();
+    }
+    return false;
+  }
+
   /// Attempt to fetch user's live GPS position with fallback handling.
   Future<UserLocationResult> requestDevicePosition({
     int timeoutMs = 10000,
   }) async {
     final permissionState = await queryPermissionState();
 
-    if (permissionState == LocationPermissionState.denied) {
-      return const UserLocationResult(
+    if (permissionState == LocationPermissionState.denied ||
+        permissionState == LocationPermissionState.deniedForever ||
+        permissionState == LocationPermissionState.serviceDisabled) {
+      return UserLocationResult(
         latitude: defaultLat,
         longitude: defaultLng,
         addressText: defaultAddress,
         isGpsActive: false,
         isVpnMismatch: false,
-        permissionState: LocationPermissionState.denied,
+        permissionState: permissionState,
       );
     }
 

@@ -11,18 +11,61 @@ class PlatformLocationDelegate {
   static Future<String> queryPermissionState() async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return 'denied';
+      if (!serviceEnabled) return 'serviceDisabled';
 
       final permission = await Geolocator.checkPermission();
       return switch (permission) {
         LocationPermission.always => 'granted',
         LocationPermission.whileInUse => 'granted',
         LocationPermission.denied => 'prompt',
-        LocationPermission.deniedForever => 'denied',
+        LocationPermission.deniedForever => 'deniedForever',
         _ => 'prompt',
       };
     } catch (_) {
       return 'prompt';
+    }
+  }
+
+  /// Check whether OS level location services are enabled.
+  static Future<bool> isLocationServiceEnabled() async {
+    try {
+      return await Geolocator.isLocationServiceEnabled();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Prompt native OS permission request.
+  static Future<String> requestPermission() async {
+    try {
+      final perm = await Geolocator.requestPermission();
+      return switch (perm) {
+        LocationPermission.always => 'granted',
+        LocationPermission.whileInUse => 'granted',
+        LocationPermission.denied => 'denied',
+        LocationPermission.deniedForever => 'deniedForever',
+        _ => 'denied',
+      };
+    } catch (_) {
+      return 'denied';
+    }
+  }
+
+  /// Open OS-level location settings (GPS toggle).
+  static Future<bool> openLocationSettings() async {
+    try {
+      return await Geolocator.openLocationSettings();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Open app-specific settings in OS settings.
+  static Future<bool> openAppSettings() async {
+    try {
+      return await Geolocator.openAppSettings();
+    } catch (_) {
+      return false;
     }
   }
 

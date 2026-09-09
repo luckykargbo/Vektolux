@@ -21,6 +21,17 @@ class PlatformLocationDelegate {
     return 'prompt';
   }
 
+  static Future<bool> isLocationServiceEnabled() async => true;
+
+  static Future<String> requestPermission() async {
+    final pos = await getCurrentPosition(timeoutMs: 5000);
+    return pos != null ? 'granted' : 'denied';
+  }
+
+  static Future<bool> openLocationSettings() async => false;
+
+  static Future<bool> openAppSettings() async => false;
+
   /// Trigger navigator.geolocation.getCurrentPosition with enableHighAccuracy: true, timeout: 10000
   static Future<Map<String, double>?> getCurrentPosition({int timeoutMs = 10000}) async {
     try {

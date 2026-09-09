@@ -536,10 +536,13 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
     DetectUserLocationEvent event,
     Emitter<MobilityState> emit,
   ) async {
-    final permission = await _locationManager.queryPermissionState();
+    final isReady = await _locationManager.hasLocationPermissionAndService();
 
-    if (permission == LocationPermissionState.prompt || permission == LocationPermissionState.denied) {
-      emit(state.copyWith(showLocationPermissionModal: true));
+    if (!isReady) {
+      // If permission is not granted and user hasn't dismissed before, show modal
+      if (!state.hasDismissedLocationModal) {
+        emit(state.copyWith(showLocationPermissionModal: true));
+      }
       return;
     }
 
@@ -612,7 +615,10 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
     DismissLocationPermissionModalEvent event,
     Emitter<MobilityState> emit,
   ) {
-    emit(state.copyWith(showLocationPermissionModal: false));
+    emit(state.copyWith(
+      showLocationPermissionModal: false,
+      hasDismissedLocationModal: true,
+    ));
   }
 
   Future<void> _onFetchNearbyDriversDebounced(

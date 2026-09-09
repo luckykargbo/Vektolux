@@ -11,11 +11,13 @@ import '../../../../core/theme/components/vx_button.dart';
 class LocationPermissionModal extends StatelessWidget {
   final VoidCallback onEnableLocation;
   final VoidCallback onManualInput;
+  final VoidCallback? onDismiss;
 
   const LocationPermissionModal({
     super.key,
     required this.onEnableLocation,
     required this.onManualInput,
+    this.onDismiss,
   });
 
   /// Static helper to display the modal bottom sheet smoothly.
@@ -23,6 +25,7 @@ class LocationPermissionModal extends StatelessWidget {
     BuildContext context, {
     required VoidCallback onEnableLocation,
     required VoidCallback onManualInput,
+    VoidCallback? onDismiss,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -36,6 +39,10 @@ class LocationPermissionModal extends StatelessWidget {
         onManualInput: () {
           Navigator.of(ctx).pop();
           onManualInput();
+        },
+        onDismiss: () {
+          Navigator.of(ctx).pop();
+          onDismiss?.call();
         },
       ),
     );
@@ -142,7 +149,7 @@ class LocationPermissionModal extends StatelessWidget {
 
           // Dismiss
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: onDismiss ?? () => Navigator.of(context).pop(),
             child: const Text(
               'Not now',
               style: TextStyle(

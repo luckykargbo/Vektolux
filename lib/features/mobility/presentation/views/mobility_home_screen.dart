@@ -291,19 +291,32 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
       listener: (context, state) {
         if (state.showLocationPermissionModal && !_isPermissionModalShowing) {
           _isPermissionModalShowing = true;
+          final mobilityBloc = context.read<MobilityBloc>();
           LocationPermissionModal.show(
             context,
-            onEnableLocation: () {
+            onEnableLocation: () async {
               _isPermissionModalShowing = false;
-              context.read<MobilityBloc>().add(const DetectUserLocationEvent());
+              final granted = await LocationManager().handleEnableLocationAction();
+              if (granted) {
+                mobilityBloc.add(const DetectUserLocationEvent());
+              } else {
+                mobilityBloc.add(const DismissLocationPermissionModalEvent());
+              }
             },
             onManualInput: () {
               _isPermissionModalShowing = false;
-              context.read<MobilityBloc>().add(const DismissLocationPermissionModalEvent());
-              _openLandmarkSheet(context, isPickup: true);
+              mobilityBloc.add(const DismissLocationPermissionModalEvent());
+              if (mounted) {
+                _openLandmarkSheet(context, isPickup: true);
+              }
+            },
+            onDismiss: () {
+              _isPermissionModalShowing = false;
+              mobilityBloc.add(const DismissLocationPermissionModalEvent());
             },
           ).then((_) {
             _isPermissionModalShowing = false;
+            mobilityBloc.add(const DismissLocationPermissionModalEvent());
           });
         }
         if (state.successMessage != null) {
