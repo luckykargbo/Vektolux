@@ -198,6 +198,8 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
   @override
   Widget build(BuildContext context) {
     final filtered = _getFilteredVehicles();
+    final user = context.watch<AuthBloc>().state.user;
+    final canPost = user != null && user.canPostVehicle;
 
     return Scaffold(
       backgroundColor: AppColors.gray50,
@@ -246,16 +248,18 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
           ),
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: const Color(0xFF92400E),
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add_circle_outline_rounded),
-        label: const Text(
-          'List Vehicle',
-          style: TextStyle(fontWeight: FontWeight.w700),
-        ),
-        onPressed: _openCreateListing,
-      ),
+      floatingActionButton: canPost
+          ? FloatingActionButton.extended(
+              backgroundColor: const Color(0xFF92400E),
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add_circle_outline_rounded),
+              label: const Text(
+                'List Vehicle',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              onPressed: _openCreateListing,
+            )
+          : null,
       body: Column(
         children: [
           // ── Search & Filter Bar ───────────────────────────────────

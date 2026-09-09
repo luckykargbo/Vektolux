@@ -809,11 +809,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                 const SizedBox(height: 18),
 
-                // ── 1B. Dual-Role Mode Switcher (Driver vs. Passenger) ──
-                _buildSectionHeader('WORKSPACE & ACCOUNT MODE'),
-                _buildModeSwitcherCard(context, user),
-
-                const SizedBox(height: 18),
+                // ── 1B. Dual-Role Mode Switcher (Only if driver verified/registered) ──
+                if (user?.canSwitchToDriver == true) ...[
+                  _buildSectionHeader('WORKSPACE & ACCOUNT MODE'),
+                  _buildModeSwitcherCard(context, user),
+                  const SizedBox(height: 18),
+                ],
 
                 // ── 2. Operator Workspace Card (If vendor role) ──────
                 if (isVendor) ...[
@@ -1262,11 +1263,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       _buildSettingsTile(
                         icon: Icons.support_agent_outlined,
                         title: 'Customer Support',
-                        subtitle: 'Direct WhatsApp & telephone assistance in Freetown',
+                        subtitle: 'Direct WhatsApp & telephone: +232 73 623 761',
                         onTap: () {
+                          Clipboard.setData(
+                            const ClipboardData(text: '+23273623761'),
+                          );
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                              content: Text('Support line: +232 76 000 111 (Mon-Sun 8am-10pm)'),
+                              content: Text(
+                                'Support line copied: +23273623761 (+232 73 623 761) - 24/7 Assistance',
+                              ),
+                              backgroundColor: AppColors.emerald,
                               behavior: SnackBarBehavior.floating,
                             ),
                           );

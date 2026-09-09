@@ -229,11 +229,10 @@ class MobilityRepositoryImpl implements MobilityRepository {
     await _syncEngine.writeAndQueue(
       entityType: 'rideRequests',
       entityId: rideId,
-      mutationPath: 'rides:updateRideStatus',
+      mutationPath: 'rides:cancelRide',
       payload: {
         'rideId': rideId,
-        'newStatus': 'cancelled',
-        'cancelReason': reason,
+        'reason': reason,
       },
       localWrite: () async {},
       priority: 1,

@@ -341,41 +341,36 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               }).toList()
             : <Map<String, dynamic>>[];
 
+        final canPost = user != null && user.canPostAnyListing;
+
         return Scaffold(
           backgroundColor: AppColors.gray50,
-          floatingActionButton: FloatingActionButton.extended(
-            backgroundColor: AppColors.emeraldDark,
-            foregroundColor: Colors.white,
-            elevation: 4,
-            icon: const Icon(Icons.add_circle_outline_rounded, size: 20),
-            label: const Text(
-              'List House / Car',
-              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-            ),
-            onPressed: () async {
-              if (user == null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Please log in to publish listings.'),
-                    backgroundColor: AppColors.obsidian,
+          floatingActionButton: canPost
+              ? FloatingActionButton.extended(
+                  backgroundColor: AppColors.emeraldDark,
+                  foregroundColor: Colors.white,
+                  elevation: 4,
+                  icon: const Icon(Icons.add_circle_outline_rounded, size: 20),
+                  label: const Text(
+                    'List House / Car',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
                   ),
-                );
-                return;
-              }
-              final res = await Navigator.of(context).push<bool>(
-                MaterialPageRoute(
-                  builder: (_) => CreateListingScreen(
-                    database: widget.database,
-                    convexClient: widget.convexClient,
-                    currentUser: user,
-                  ),
-                ),
-              );
-              if (res == true) {
-                _loadDiscoveryData();
-              }
-            },
-          ),
+                  onPressed: () async {
+                    final res = await Navigator.of(context).push<bool>(
+                      MaterialPageRoute(
+                        builder: (_) => CreateListingScreen(
+                          database: widget.database,
+                          convexClient: widget.convexClient,
+                          currentUser: user,
+                        ),
+                      ),
+                    );
+                    if (res == true) {
+                      _loadDiscoveryData();
+                    }
+                  },
+                )
+              : null,
           body: SafeArea(
             bottom: false,
             child: RefreshIndicator(

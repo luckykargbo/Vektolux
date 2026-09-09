@@ -255,19 +255,26 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
     CancelRideEvent event,
     Emitter<MobilityState> emit,
   ) async {
-    if (state.activeRide == null) return;
+    final rideToCancel = state.activeRide;
+    _searchSimulationTimer?.cancel();
 
-    try {
-      await _repository.cancelRide(
-        rideId: state.activeRide!.id,
-        reason: event.reason,
-      );
-      emit(state.copyWith(
-        clearActiveRide: true,
-        successMessage: 'Ride has been cancelled.',
-      ));
-    } catch (e) {
-      _log.e('Cancel ride error: $e');
+    // Immediately reset UI active state so the passenger is never stuck
+    emit(state.copyWith(
+      clearActiveRide: true,
+      clearActiveTripDelivery: true,
+      isSearchingDriver: false,
+      successMessage: 'Ride has been cancelled.',
+    ));
+
+    if (rideToCancel != null) {
+      try {
+        await _repository.cancelRide(
+          rideId: rideToCancel.id,
+          reason: event.reason,
+        );
+      } catch (e) {
+        _log.w('Cancel ride network error: $e');
+      }
     }
   }
 
@@ -786,10 +793,25 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
     Emitter<MobilityState> emit,
   ) {
     _searchSimulationTimer?.cancel();
+    final tripId = state.activeTripDelivery?.id ?? state.activeRide?.id;
+
     emit(state.copyWith(
       isSearchingDriver: false,
+      clearActiveRide: true,
+      clearActiveTripDelivery: true,
       successMessage: 'Booking request cancelled.',
     ));
+
+    if (tripId != null) {
+      _repository
+          .cancelRide(
+            rideId: tripId,
+            reason: 'Cancelled by passenger while finding driver',
+          )
+          .catchError((e) {
+        _log.w('Cancel searching backend error: $e');
+      });
+    }
   }
 
   void _onDriverAcceptedTrip(

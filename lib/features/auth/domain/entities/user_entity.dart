@@ -91,6 +91,12 @@ class UserEntity extends Equatable {
   bool get isDriverMode => activeMode == 'driver';
   bool get canSwitchToDriver => isDriverVerified || role == UserRole.driver;
 
+  /// Role permission helpers for client isolation
+  bool get isNormalClient => role == UserRole.client;
+  bool get canPostRealEstate => role == UserRole.agent || role == UserRole.admin;
+  bool get canPostVehicle => role == UserRole.merchant || role == UserRole.admin;
+  bool get canPostAnyListing => canPostRealEstate || canPostVehicle;
+
   UserEntity copyWith({
     String? id,
     String? name,

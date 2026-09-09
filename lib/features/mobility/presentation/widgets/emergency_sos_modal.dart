@@ -208,14 +208,14 @@ class _EmergencySosModalState extends State<EmergencySosModal> {
               _buildEmergencyContactTile(
                 title: 'Vektolux 24/7 Rapid Response',
                 subtitle: 'Dedicated Control Room & Escort Ops',
-                number: '+232 76 000 999',
+                number: '+232 73 623 761',
                 icon: Icons.shield_rounded,
                 color: AppColors.emeraldDark,
                 onTap: () {
-                  Clipboard.setData(const ClipboardData(text: '+23276000999'));
+                  Clipboard.setData(const ClipboardData(text: '+23273623761'));
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Contacting Vektolux Rapid Response (+232 76 000 999)...'),
+                      content: Text('Contacting Vektolux Rapid Response (+232 73 623 761)...'),
                       backgroundColor: AppColors.emerald,
                       behavior: SnackBarBehavior.floating,
                     ),

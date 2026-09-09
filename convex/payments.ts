@@ -561,16 +561,25 @@ export const confirmPayment = mutation({
  */
 export const getWalletBalance = query({
   args: {
-    userId: v.id("users"),
+    userId: v.string(),
     currency: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const currency = args.currency ?? "SLE";
+    const userConvexId = ctx.db.normalizeId("users", args.userId);
+    if (!userConvexId) {
+      return {
+        availableBalance: 0,
+        pendingBalance: 0,
+        currency,
+        exists: false,
+      };
+    }
 
     const wallet = await ctx.db
       .query("walletBalances")
       .withIndex("by_user_currency", (q) =>
-        q.eq("userId", args.userId).eq("currency", currency)
+        q.eq("userId", userConvexId).eq("currency", currency)
       )
       .first();
 
@@ -599,7 +608,7 @@ export const getWalletBalance = query({
  */
 export const getTransactionHistory = query({
   args: {
-    userId: v.id("users"),
+    userId: v.string(),
     limit: v.optional(v.number()),
     type: v.optional(
       v.union(
@@ -616,6 +625,10 @@ export const getTransactionHistory = query({
   },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 50;
+    const userConvexId = ctx.db.normalizeId("users", args.userId);
+    if (!userConvexId) {
+      return { transactions: [], count: 0 };
+    }
 
     let transactionsQuery;
 
@@ -623,17 +636,153 @@ export const getTransactionHistory = query({
       transactionsQuery = ctx.db
         .query("transactions")
         .withIndex("by_user_type", (q) =>
-          q.eq("userId", args.userId).eq("type", args.type!)
+          q.eq("userId", userConvexId).eq("type", args.type!)
         );
     } else {
       transactionsQuery = ctx.db
         .query("transactions")
-        .withIndex("by_user", (q) => q.eq("userId", args.userId));
+        .withIndex("by_user", (q) => q.eq("userId", userConvexId));
     }
 
     const transactions = await transactionsQuery.order("desc").take(limit);
 
     return { transactions, count: transactions.length };
+  },
+});
+
+/**
+ * Top up user wallet balance via Mobile Money (Orange Money, Africell Money) or Card.
+ * Atomically creates or updates the user's wallet and inserts a ledger record.
+ */
+export const topUpWallet = mutation({
+  args: {
+    userId: v.string(),
+    amount: v.number(),
+    currency: v.optional(v.string()),
+    provider: v.optional(v.string()),
+    reference: v.optional(v.string()),
+    agentNumber: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.amount <= 0) throw new Error("Top up amount must be positive");
+    const userNorm = ctx.db.normalizeId("users", args.userId);
+    if (!userNorm) throw new Error("User not found");
+
+    const currency = args.currency ?? "SLE";
+    const now = Date.now();
+
+    let wallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user_currency", (q) =>
+        q.eq("userId", userNorm).eq("currency", currency)
+      )
+      .first();
+
+    let walletId: Id<"walletBalances">;
+    if (wallet) {
+      walletId = wallet._id;
+      await ctx.db.patch(wallet._id, {
+        availableBalance: wallet.availableBalance + args.amount,
+        updatedAt: now,
+      });
+    } else {
+      walletId = await ctx.db.insert("walletBalances", {
+        userId: userNorm,
+        availableBalance: args.amount,
+        pendingBalance: 0,
+        currency,
+        updatedAt: now,
+      });
+    }
+
+    const provider = args.provider ?? "mobile_money";
+    const ref =
+      args.reference ??
+      `TOPUP_${now}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+    await ctx.db.insert("transactions", {
+      walletId,
+      userId: userNorm,
+      type: "top_up",
+      amount: args.amount,
+      currency,
+      gatewayProvider: provider,
+      gatewayReference: ref,
+      agentNumber: args.agentNumber,
+      status: "completed",
+      description: `Wallet top up of ${args.amount} ${currency} via ${provider}`,
+      updatedAt: now,
+    });
+
+    const updated = await ctx.db.get(walletId);
+    return {
+      success: true,
+      availableBalance: updated?.availableBalance ?? args.amount,
+      currency,
+    };
+  },
+});
+
+/**
+ * Atomically deduct from user's available wallet balance.
+ * Returns failure if balance is insufficient.
+ */
+export const deductWalletBalance = mutation({
+  args: {
+    userId: v.string(),
+    amount: v.number(),
+    currency: v.optional(v.string()),
+    description: v.optional(v.string()),
+    referenceType: v.optional(v.string()),
+    referenceId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.amount <= 0) throw new Error("Deduction amount must be positive");
+    const userNorm = ctx.db.normalizeId("users", args.userId);
+    if (!userNorm) throw new Error("User not found");
+
+    const currency = args.currency ?? "SLE";
+    const now = Date.now();
+
+    const wallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user_currency", (q) =>
+        q.eq("userId", userNorm).eq("currency", currency)
+      )
+      .first();
+
+    if (!wallet || wallet.availableBalance < args.amount) {
+      throw new Error(
+        `Insufficient wallet balance. Available: ${wallet?.availableBalance ?? 0} ${currency}, required: ${args.amount} ${currency}`
+      );
+    }
+
+    const newBalance = wallet.availableBalance - args.amount;
+    await ctx.db.patch(wallet._id, {
+      availableBalance: newBalance,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("transactions", {
+      walletId: wallet._id,
+      userId: userNorm,
+      type: "payment",
+      amount: args.amount,
+      currency,
+      referenceType: args.referenceType,
+      referenceId: args.referenceId,
+      gatewayProvider: "wallet",
+      status: "completed",
+      description:
+        args.description ?? `Wallet payment of ${args.amount} ${currency}`,
+      updatedAt: now,
+    });
+
+    return {
+      success: true,
+      remainingBalance: newBalance,
+      currency,
+    };
   },
 });
 

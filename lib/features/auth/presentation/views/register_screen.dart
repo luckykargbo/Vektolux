@@ -67,7 +67,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (_selectedRole == null) return;
 
     final rawPhone = _phoneController.text.trim().replaceAll(RegExp(r'[\s-]'), '');
-    final fullPhone = '$_countryCode$rawPhone';
+    final cleanDigits = rawPhone.startsWith('0') ? rawPhone.substring(1) : rawPhone;
+    final fullPhone = '$_countryCode$cleanDigits';
 
     context.read<AuthBloc>().add(RegisterSubmittedEvent(
       name: _nameController.text.trim(),
@@ -323,12 +324,32 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           child: Text('SL +232', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
                         ),
                         DropdownMenuItem(
-                          value: '+234',
-                          child: Text('NG +234', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
+                          value: '+224',
+                          child: Text('GN +224', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
+                        ),
+                        DropdownMenuItem(
+                          value: '+231',
+                          child: Text('LR +231', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
                         ),
                         DropdownMenuItem(
                           value: '+233',
                           child: Text('GH +233', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
+                        ),
+                        DropdownMenuItem(
+                          value: '+234',
+                          child: Text('NG +234', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
+                        ),
+                        DropdownMenuItem(
+                          value: '+225',
+                          child: Text('CI +225', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
+                        ),
+                        DropdownMenuItem(
+                          value: '+220',
+                          child: Text('GM +220', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
+                        ),
+                        DropdownMenuItem(
+                          value: '+221',
+                          child: Text('SN +221', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
                         ),
                         DropdownMenuItem(
                           value: '+1',

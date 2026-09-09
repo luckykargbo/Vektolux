@@ -914,3 +914,66 @@ export const getPassengerRideHistory = query({
     return rides;
   },
 });
+
+/**
+ * Passenger or driver cancels a ride request.
+ * Transitions ride to "cancelled", releases vehicle if locked, and frees driver if assigned.
+ */
+export const cancelRide = mutation({
+  args: {
+    rideId: v.string(),
+    reason: v.optional(v.string()),
+    userId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    let rideConvexId = ctx.db.normalizeId("rideRequests", args.rideId);
+    let ride = rideConvexId ? await ctx.db.get(rideConvexId) : null;
+
+    if (!ride) {
+      // Fallback check trips_deliveries table
+      const tripConvexId = ctx.db.normalizeId("trips_deliveries", args.rideId);
+      if (tripConvexId) {
+        const trip = await ctx.db.get(tripConvexId);
+        if (trip) {
+          const now = Date.now();
+          await ctx.db.patch(tripConvexId, {
+            status: "cancelled",
+            updatedAt: now,
+          });
+          if (trip.driverId) {
+            const driverProfile = await ctx.db.get(trip.driverId);
+            if (driverProfile) {
+              await ctx.db.patch(trip.driverId, {
+                isAvailable: true,
+                updatedAt: now,
+              });
+            }
+          }
+          return { success: true, cancelledAt: now };
+        }
+      }
+      throw new Error("Ride not found");
+    }
+
+    if (ride.status === "completed") {
+      throw new Error("Cannot cancel an already completed ride");
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(ride._id, {
+      status: "cancelled",
+      cancelledAt: now,
+      cancelReason: args.reason ?? "Cancelled by user",
+      updatedAt: now,
+    });
+
+    if (ride.vehicleId) {
+      await ctx.db.patch(ride.vehicleId, {
+        availabilityStatus: "available",
+        updatedAt: now,
+      });
+    }
+
+    return { success: true, cancelledAt: now };
+  },
+});

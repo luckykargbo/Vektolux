@@ -299,6 +299,8 @@ class _RealEstateMarketplaceScreenState
   @override
   Widget build(BuildContext context) {
     final filtered = _getFilteredListings();
+    final user = context.watch<AuthBloc>().state.user;
+    final canPost = user != null && user.canPostRealEstate;
 
     return Scaffold(
       backgroundColor: AppColors.gray50,
@@ -312,20 +314,24 @@ class _RealEstateMarketplaceScreenState
             fontFamily: 'Poppins',
             fontWeight: FontWeight.w700,
             fontSize: 17,
-            color: Colors.white,
           ),
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.tune_rounded),
+            tooltip: 'Filter Region',
+            onPressed: _showRegionPicker,
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh_rounded),
-            tooltip: 'Refresh Listings',
+            tooltip: 'Refresh',
             onPressed: _fetchProperties,
           ),
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(48),
           child: Container(
-            color: AppColors.obsidian,
+            color: Colors.white,
             child: TabBar(
               controller: _tabController,
               isScrollable: true,
@@ -347,16 +353,18 @@ class _RealEstateMarketplaceScreenState
           ),
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: AppColors.emeraldDark,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add_home_work_rounded),
-        label: const Text(
-          'List Property',
-          style: TextStyle(fontWeight: FontWeight.w700),
-        ),
-        onPressed: _openCreateListing,
-      ),
+      floatingActionButton: canPost
+          ? FloatingActionButton.extended(
+              backgroundColor: AppColors.emeraldDark,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add_home_work_rounded),
+              label: const Text(
+                'List Property',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              onPressed: _openCreateListing,
+            )
+          : null,
       body: Column(
         children: [
           // ── Search & Location Filter Bar ──────────────────────────

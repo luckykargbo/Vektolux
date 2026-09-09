@@ -567,8 +567,9 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                     ),
                   ),
 
-                // ── C. Nearby Fleet Drivers ───────────────────────────
-                ...widget.nearbyVehicles.map((vehicle) {
+                // ── C. Nearby Fleet Drivers (Hidden during active trip for clarity) ──
+                if (!_isEnRouteToPickup && !_isTripInProgress)
+                  ...widget.nearbyVehicles.map((vehicle) {
                   return Marker(
                     point: LatLng(vehicle.latitude, vehicle.longitude),
                     width: 44,
@@ -604,8 +605,9 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                 }),
 
                 // ── D. On-Demand Live Drivers (Uber-Style Top-Down Vector Silhouettes) ──
-                ...(() {
-                  final filteredDrivers = widget.onDemandDrivers.where((driver) {
+                if (!_isEnRouteToPickup && !_isTripInProgress)
+                  ...(() {
+                    final filteredDrivers = widget.onDemandDrivers.where((driver) {
                     if (widget.selectedCategory == null ||
                         widget.selectedCategory!.isEmpty ||
                         widget.selectedCategory!.toLowerCase() == 'all') {
@@ -779,7 +781,8 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
               })(),
 
                 // ── E. Nearby Verified Sellers (Vendors & Merchants) ──
-                ...widget.nearbySellers.map((seller) {
+                if (!_isEnRouteToPickup && !_isTripInProgress)
+                  ...widget.nearbySellers.map((seller) {
                   return Marker(
                     point: LatLng(seller.latitude, seller.longitude),
                     width: 72,
@@ -910,7 +913,7 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
         ),
 
         // ── Proximity Arrival Check-In Banner ───────────────────────
-        if (_distanceToPickupMeters <= 60 && widget.assignedDriverLat != null)
+        if ((_distanceToPickupMeters <= 80 || widget.tripStatus?.toLowerCase() == 'arrived') && widget.assignedDriverLat != null)
           Positioned(
             top: 75,
             left: 16,
@@ -954,7 +957,7 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                           ),
                         ),
                         Text(
-                          '${widget.assignedDriverName ?? "Driver"} is waiting (${_distanceToPickupMeters.round()}m away)',
+                          '${widget.assignedDriverName ?? "Driver"} is waiting${_distanceToPickupMeters.isFinite ? " (${_distanceToPickupMeters.round()}m away)" : ""}',
                           style: const TextStyle(
                             color: Colors.white70,
                             fontSize: 11,
@@ -963,19 +966,35 @@ class _InteractiveMapViewState extends State<InteractiveMapView>
                       ],
                     ),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppColors.emerald,
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () {
+                        widget.onDriverArrived?.call();
+                      },
                       borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Text(
-                      'CHECK-IN',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 10,
-                        letterSpacing: 0.5,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: AppColors.emerald,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.touch_app_rounded, color: Colors.white, size: 14),
+                            SizedBox(width: 4),
+                            Text(
+                              'CHECK-IN',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 11,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
