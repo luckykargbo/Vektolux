@@ -655,6 +655,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           body: SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // ── 1. User Profile Header Card ─────────────────────
                 Container(
@@ -812,6 +813,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 if (isVendor) ...[
                   _buildSectionHeader('OPERATOR WORKSPACE'),
                   Container(
+                    width: double.infinity,
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
@@ -829,9 +831,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ],
                     ),
                     child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Container(
-                          padding: const EdgeInsets.all(10),
+                          width: 44,
+                          height: 44,
+                          alignment: Alignment.center,
                           decoration: BoxDecoration(
                             color: AppColors.emerald.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(12),
@@ -839,10 +844,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           child: const Icon(Icons.storefront_rounded,
                               color: AppColors.emerald, size: 24),
                         ),
-                        const SizedBox(width: 14),
+                        const SizedBox(width: 12),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               const Text(
                                 'Operator Portal',
@@ -851,22 +857,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   fontSize: 15,
                                   fontWeight: FontWeight.w700,
                                 ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                              const SizedBox(height: 2),
+                              const SizedBox(height: 3),
                               Text(
                                 'Launch ${role.displayName} Portal',
                                 style: TextStyle(
                                   color: Colors.white.withValues(alpha: 0.8),
                                   fontSize: 12,
                                 ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ],
                           ),
                         ),
+                        const SizedBox(width: 10),
                         ElevatedButton(
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.emerald,
                             foregroundColor: AppColors.obsidian,
+                            elevation: 0,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10),
                             ),
