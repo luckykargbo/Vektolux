@@ -105,9 +105,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Vektolux Latest Mobile Release (v1.0.4)"
+          name: "Vektolux Latest Mobile Release (v1.0.5)"
           body: |
-            ## Vektolux Mobile App Builds (v1.0.4) — Multi-Vertical Super App
+            ## Vektolux Mobile App Builds (v1.0.5) — Multi-Vertical Super App
 
             ### Direct Downloads:
             - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
@@ -115,22 +115,20 @@ jobs:
             - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
               * Direct sideload / install on any Android device.
 
-            ### What's New in this Build (v1.0.4):
-            - **Multi-Vertical Super App Architecture**:
-              * **5-Tab Persistent Navigation Shell**: 🏠 Home (Discovery Feed), 🚗 Rides (Live Radar & Hailing), 🏢 Real Estate (Marketplace), 🚘 Auto Market (Showroom & Rentals), 👤 Account (Profile & Operator Mode).
-              * **Curated Discovery Home Feed**: Header with dynamic greetings, user avatar, location chip (📍 Freetown Central, Aberdeen, Lumley, Waterloo, Bo, Kenema, Makeni), search bar, 4 service quick-launch cards, snap-scroll carousels for verified real estate & auto showroom, and quick ride hailing shortcuts.
-              * **Dedicated Vertical Marketplaces**:
-                - *Real Estate Marketplace*: Filter by Category (All, Houses, Apartments, Hourly Guest Houses, Land, Commercial), Intent (Rent, Buy, Hourly Stay), and City.
-                - *Auto Market & Rentals*: Filter by Listing Intent (Buy/Sale vs Daily Rental) and Vehicle Type (Keke, Sedan, SUV, Van/Pickup), complete with specs and instant contact.
-              * **Dynamic Role Switching & Operator Workspaces**:
-                - Seamless toggle between "Client Mode" and "Operator Mode" directly from the Account tab.
-                - Dynamic vendor upgrade cards to apply as Driver/Keke Operator, Real Estate Agent, or Auto Dealer.
-                - Integrated Operator Dashboard granting certified operators instant access to their dispatch radar, property listings, and auto showroom.
-            - **Convex Multi-Role Schema & Authentic Sierra Leone Data Seed**:
-              * Extended user schema with `activeRole`, `isVerifiedDriver`, `isVerifiedAgent`, `isVerifiedMerchant`, and `role_applications`.
-              * Seeded rich discovery data with verified listings across Freetown, Waterloo, and Bo.
-            - **Resilient Offline Caching & Zero Static Errors**:
-              * Optimized SQLite DAOs and seamless fallbacks between Convex Cloud and local Drift cache.
+            ### What's New in this Build (v1.0.5):
+            - **Hardened Online Sync & Resilient Data Ingestion**:
+              * Zero-wait instantaneous initial render in `MobilityBloc` with background concurrent `Future.wait` hydration.
+              * Per-item streaming sync (`mapConvexList`) and null-safe dynamic parsers preventing batch abortions on malformed rows.
+              * Convex storage URL resolution with safe fallback defaults for missing images, titles, prices, and locations.
+            - **Eliminated Blank Grey Screens & Collapsed Layouts**:
+              * CustomScrollView sliver hierarchy (`SliverToBoxAdapter`, `SliverFillRemaining`, `SliverList`) resolving nested scroll conflicts.
+              * Unified dark branded media fallback (`#1E293B` with emerald icon badges and banners) across all property, rental, and showroom cards.
+            - **Client Role Isolation & Account Security**:
+              * Standard client accounts are strictly isolated from vendor creation tools and operator dashboards.
+              * Dedicated passenger ride cancellation mutation (`rides:cancelRide`) with vehicle release.
+            - **Full-Stack Wallet Accuracy & West Africa Dialing**:
+              * Atomic wallet balance top-ups and deductions with ledger history.
+              * Expanded West African dialing codes with E.164 phone sanitization.
           files: |
             release-assets/Vektolux.ipa
             release-assets/app-release.apk
