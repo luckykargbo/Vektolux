@@ -5,6 +5,7 @@
 
 import 'package:equatable/equatable.dart';
 import 'package:flutter/material.dart';
+import '../../../../core/utils/safe_parser.dart';
 
 /// Supported vehicle categories in Vektolux.
 enum MobilityVehicleType {
@@ -127,6 +128,32 @@ class VehicleListingEntity extends Equatable {
     this.ownerName,
     this.ownerPhone,
   });
+
+  factory VehicleListingEntity.fromConvex(Map<String, dynamic> m) {
+    return VehicleListingEntity(
+      id: asString(m['_id'] ?? m['id']),
+      ownerId: asString(m['ownerId']),
+      vehicleType: MobilityVehicleType.fromString(
+        asString(m['vehicleType'], 'taxi'),
+      ),
+      listingIntent: asString(m['listingIntent'], 'rental'),
+      make: asString(m['make'], 'Vehicle'),
+      model: asString(m['model'], 'Listing'),
+      year: asInt(m['year'], 2022),
+      color: m['color']?.toString(),
+      licensePlate: m['licensePlate']?.toString(),
+      imageUrls: asStringList(m['imageUrls']),
+      pricePerKm: m['pricePerKm'] != null ? asDouble(m['pricePerKm']) : null,
+      pricePerDay: m['pricePerDay'] != null ? asDouble(m['pricePerDay']) : null,
+      salePrice: m['salePrice'] != null ? asDouble(m['salePrice']) : null,
+      currency: asString(m['currency'], 'SLE'),
+      latitude: asDouble(m['latitude'], 8.484),
+      longitude: asDouble(m['longitude'], -13.229),
+      availabilityStatus: asString(m['availabilityStatus'], 'available'),
+      ownerName: m['ownerName']?.toString(),
+      ownerPhone: m['ownerPhone']?.toString(),
+    );
+  }
 
   String get fullTitle => '$year $make $model';
 

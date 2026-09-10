@@ -3,6 +3,7 @@
 // VEKTOLUX — Vehicle Listing Model (Rentals & Sales)
 // ═══════════════════════════════════════════════════════════════════════
 
+import '../../../../core/utils/safe_parser.dart';
 import '../../domain/entities/mobility_vehicle_entity.dart';
 
 class VehicleListingModel extends VehicleListingEntity {
@@ -28,33 +29,31 @@ class VehicleListingModel extends VehicleListingEntity {
     super.ownerPhone,
   });
 
-  factory VehicleListingModel.fromJson(Map<String, dynamic> json) {
-    List<String> images = [];
-    if (json['imageUrls'] is List) {
-      images = (json['imageUrls'] as List).map((e) => e.toString()).toList();
-    }
+  factory VehicleListingModel.fromJson(Map<String, dynamic> rawJson) {
+    final json = asStringKeyedMap(rawJson);
+    final images = asStringList(json['imageUrls']);
 
     return VehicleListingModel(
-      id: json['_id']?.toString() ?? json['id']?.toString() ?? '',
-      ownerId: json['ownerId']?.toString() ?? '',
+      id: asString(json['_id'] ?? json['id']),
+      ownerId: asString(json['ownerId']),
       vehicleType: MobilityVehicleType.fromString(
-        json['vehicleType']?.toString() ?? 'taxi',
+        asString(json['vehicleType'], 'taxi'),
       ),
-      listingIntent: json['listingIntent']?.toString() ?? 'rental',
-      make: json['make']?.toString() ?? 'Vehicle',
-      model: json['model']?.toString() ?? 'Model',
-      year: (json['year'] as num?)?.toInt() ?? 2022,
+      listingIntent: asString(json['listingIntent'], 'rental'),
+      make: asString(json['make'], 'Vehicle'),
+      model: asString(json['model'], 'Listing'),
+      year: asInt(json['year'], 2022),
       color: json['color']?.toString(),
       licensePlate: json['licensePlate']?.toString(),
       imageUrls: images,
-      pricePerKm: (json['pricePerKm'] as num?)?.toDouble(),
-      pricePerDay: (json['pricePerDay'] as num?)?.toDouble() ?? 250.0,
-      salePrice: (json['salePrice'] as num?)?.toDouble(),
-      currency: json['currency']?.toString() ?? 'SLE',
-      latitude: (json['latitude'] as num?)?.toDouble() ?? 8.484,
-      longitude: (json['longitude'] as num?)?.toDouble() ?? -13.229,
-      availabilityStatus: json['availabilityStatus']?.toString() ?? 'available',
-      ownerName: json['ownerName']?.toString() ?? 'Vektolux Mobility Fleet',
+      pricePerKm: json['pricePerKm'] != null ? asDouble(json['pricePerKm']) : null,
+      pricePerDay: asDouble(json['pricePerDay'], 250.0),
+      salePrice: json['salePrice'] != null ? asDouble(json['salePrice']) : null,
+      currency: asString(json['currency'], 'SLE'),
+      latitude: asDouble(json['latitude'], 8.484),
+      longitude: asDouble(json['longitude'], -13.229),
+      availabilityStatus: asString(json['availabilityStatus'], 'available'),
+      ownerName: asString(json['ownerName'], 'Vektolux Mobility Fleet'),
       ownerPhone: json['ownerPhone']?.toString(),
     );
   }

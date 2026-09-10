@@ -14,6 +14,7 @@ import '../../data/services/location_manager.dart';
 import '../../domain/entities/mobility_vehicle_entity.dart';
 import '../../domain/entities/ride_entity.dart';
 import '../../domain/entities/trip_delivery_entity.dart';
+import '../../domain/entities/nearby_seller_entity.dart';
 import '../../domain/entities/vehicle_category_catalog.dart';
 import '../../domain/services/fare_calculation_service.dart';
 import '../../domain/repositories/mobility_repository.dart';
@@ -66,36 +67,17 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
     LoadMobilityHomeEvent event,
     Emitter<MobilityState> emit,
   ) async {
-    emit(state.copyWith(
-      isLoading: true,
-      currentLat: event.currentLat,
-      currentLng: event.currentLng,
-      pickupLat: event.currentLat,
-      pickupLng: event.currentLng,
-    ));
-
     // 1. Subscribe to active ride from local SQLite
     await _activeRideSubscription?.cancel();
     _activeRideSubscription = _repository.watchActiveRide(event.userId).listen((ride) {
       add(_ActiveRideUpdatedInternalEvent(ride));
     });
 
-    // 2. Fetch nearby vehicles for map markers
-    final nearby = await _repository.getNearbyVehicles(
-      lat: event.currentLat,
-      lng: event.currentLng,
-      radiusKm: 5.0,
-    );
+    // 2. Generate baseline mock data for instantaneous zero-wait first render
+    final baselineRentals = _generateRentalVehicles(event.currentLat, event.currentLng);
+    final baselineSales = _generateSalesVehicles(event.currentLat, event.currentLng);
+    final baselineProperties = _generateRealEstateProperties(event.currentLat, event.currentLng);
 
-    // 3. Compute initial fare options for all vehicle types
-    final options = await _computeAllFareOptions(
-      event.currentLat,
-      event.currentLng,
-      state.dropoffLat,
-      state.dropoffLng,
-    );
-
-    // 4. Upfront Fare & ETA Calculation for Categorized Booking Tiers
     final distKm = _computeHaversine(
       event.currentLat,
       event.currentLng,
@@ -110,28 +92,69 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
       serviceType: state.bookingServiceType,
     );
 
-    // 5. Generate catalog vehicles for Rental & Sales & Real Estate listings
-    final rentalVehicles = _generateRentalVehicles(event.currentLat, event.currentLng);
-    final salesVehicles = _generateSalesVehicles(event.currentLat, event.currentLng);
-    final properties = _generateRealEstateProperties(event.currentLat, event.currentLng);
-    final sellers = await _repository.getNearbySellers(
-      lat: event.currentLat,
-      lng: event.currentLng,
-      radiusKm: 10.0,
-    );
-
+    // 3. Emit baseline state immediately — UI renders with ZERO blank screen or loading block
     emit(state.copyWith(
       isLoading: false,
-      nearbyVehicles: nearby,
-      nearbySellers: sellers,
-      vehicleOptions: options,
+      currentLat: event.currentLat,
+      currentLng: event.currentLng,
+      pickupLat: event.currentLat,
+      pickupLng: event.currentLng,
       estimatedDistanceKm: distKm,
       estimatedDurationMin: durationMins,
       calculatedTierEstimates: tierEstimates,
-      availableRentalVehicles: rentalVehicles,
-      catalogSalesVehicles: salesVehicles,
-      realEstateListings: properties,
+      availableRentalVehicles: state.availableRentalVehicles.isNotEmpty
+          ? state.availableRentalVehicles
+          : baselineRentals,
+      catalogSalesVehicles: state.catalogSalesVehicles.isNotEmpty
+          ? state.catalogSalesVehicles
+          : baselineSales,
+      realEstateListings: state.realEstateListings.isNotEmpty
+          ? state.realEstateListings
+          : baselineProperties,
     ));
+
+    // 4. Concurrently fetch live vehicles, properties, nearby drivers, and fare options in background
+    try {
+      final results = await Future.wait([
+        _repository.getNearbyVehicles(
+          lat: event.currentLat,
+          lng: event.currentLng,
+          radiusKm: 5.0,
+        ),
+        _computeAllFareOptions(
+          event.currentLat,
+          event.currentLng,
+          state.dropoffLat,
+          state.dropoffLng,
+        ),
+        _repository.getNearbySellers(
+          lat: event.currentLat,
+          lng: event.currentLng,
+          radiusKm: 10.0,
+        ),
+        _repository.listVehicles(listingIntent: 'rental'),
+        _repository.listVehicles(listingIntent: 'sale'),
+        _repository.listProperties(),
+      ]);
+
+      final nearby = results[0] as List<VehicleListingEntity>;
+      final options = results[1] as Map<MobilityVehicleType, VehicleCategoryOption>;
+      final sellers = results[2] as List<NearbySellerEntity>;
+      final liveRentals = results[3] as List<VehicleListingEntity>;
+      final liveSales = results[4] as List<VehicleListingEntity>;
+      final liveProperties = results[5] as List<PropertyListingEntity>;
+
+      emit(state.copyWith(
+        nearbyVehicles: nearby,
+        vehicleOptions: options,
+        nearbySellers: sellers,
+        availableRentalVehicles: liveRentals.isNotEmpty ? liveRentals : null,
+        catalogSalesVehicles: liveSales.isNotEmpty ? liveSales : null,
+        realEstateListings: liveProperties.isNotEmpty ? liveProperties : null,
+      ));
+    } catch (e) {
+      _log.w('Background catalog sync in _onLoadMobilityHome encountered error: $e');
+    }
   }
 
   void _onSwitchMobilityMode(

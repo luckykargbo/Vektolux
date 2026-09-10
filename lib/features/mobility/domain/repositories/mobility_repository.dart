@@ -8,6 +8,7 @@ import '../entities/mobility_vehicle_entity.dart';
 import '../entities/nearby_driver_entity.dart';
 import '../entities/nearby_seller_entity.dart';
 import '../entities/trip_delivery_entity.dart';
+import '../../../real_estate/domain/entities/property_listing_entity.dart';
 
 abstract class MobilityRepository {
   /// Reactive stream watching active ride from local SQLite & Convex sync.
@@ -95,5 +96,17 @@ abstract class MobilityRepository {
     required double lat,
     required double lng,
     double radiusKm = 10.0,
+  });
+
+  /// Query live vehicle catalog from Convex backend.
+  Future<List<VehicleListingEntity>> listVehicles({
+    String? listingIntent,
+    MobilityVehicleType? vehicleType,
+  });
+
+  /// Query live real estate property catalog from Convex backend.
+  Future<List<PropertyListingEntity>> listProperties({
+    String? category,
+    String? intent,
   });
 }

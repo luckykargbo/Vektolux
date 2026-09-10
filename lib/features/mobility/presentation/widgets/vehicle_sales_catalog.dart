@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
 import '../../../../core/theme/components/vx_status_badge.dart';
+import '../../../../core/widgets/branded_media_fallback.dart';
 import '../../domain/entities/mobility_vehicle_entity.dart';
 import 'escrow_milestone_modal.dart';
 import 'in_app_chat_modal.dart';
@@ -124,22 +125,23 @@ class VehicleSalesCatalog extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Photo Showcase / Thumbnail
-                  if (images.isNotEmpty)
-                    Container(
-                      height: 150,
-                      width: double.infinity,
-                      decoration: const BoxDecoration(
-                        color: AppColors.gray100,
-                        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: Image.network(
-                        images.first,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _buildFallbackThumbnail(vehicle),
-                      ),
+                  // Photo Showcase / Thumbnail (Always 160px with branded fallback)
+                  Container(
+                    height: 160,
+                    width: double.infinity,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF1E293B),
+                      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
                     ),
+                    clipBehavior: Clip.antiAlias,
+                    child: images.isNotEmpty && images.first.isNotEmpty
+                        ? Image.network(
+                            images.first,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => _buildFallbackThumbnail(vehicle),
+                          )
+                        : _buildFallbackThumbnail(vehicle),
+                  ),
 
                   // Top info strip
                   Padding(
@@ -147,22 +149,6 @@ class VehicleSalesCatalog extends StatelessWidget {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (images.isEmpty) ...[
-                          Container(
-                            width: 52,
-                            height: 52,
-                            decoration: BoxDecoration(
-                              color: AppColors.gray100,
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Icon(
-                              vehicle.vehicleType.iconData,
-                              size: 28,
-                              color: AppColors.obsidian,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                        ],
                         // Vehicle Details Column — Explicitly wrapped in Expanded
                         Expanded(
                           child: Column(
@@ -292,15 +278,11 @@ class VehicleSalesCatalog extends StatelessWidget {
   }
 
   Widget _buildFallbackThumbnail(VehicleListingEntity vehicle) {
-    return Container(
-      color: const Color(0xFF1E293B),
-      child: Center(
-        child: Icon(
-          vehicle.vehicleType.iconData,
-          size: 40,
-          color: AppColors.emerald,
-        ),
-      ),
+    return brandedMediaFallback(
+      icon: vehicle.vehicleType.iconData,
+      banner: '${vehicle.year} ${vehicle.make}',
+      height: 160,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
     );
   }
 }

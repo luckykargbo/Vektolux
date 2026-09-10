@@ -12,6 +12,8 @@ import 'package:drift/drift.dart' show Value;
 import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/utils/safe_parser.dart';
+import '../../../../core/widgets/branded_media_fallback.dart';
 import '../../../auth/domain/entities/user_entity.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
@@ -77,30 +79,35 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
         args: {},
       );
 
-      if (propertiesResult.success && propertiesResult.value is List) {
-        final rawList = propertiesResult.value as List;
-        final companions = rawList.map((item) {
-          final m = item as Map<String, dynamic>;
-          final images = (m['imageUrls'] as List?)?.cast<String>() ?? [];
-          return CachedPropertyListingsTableCompanion.insert(
-            id: m['_id'] as String,
-            ownerId: m['ownerId'] as String,
-            title: m['title'] as String,
-            description: m['description'] as String,
-            category: m['category'] as String,
-            price: (m['price'] as num).toDouble(),
-            hourlyRate: Value(m['hourlyRate'] != null
-                ? (m['hourlyRate'] as num).toDouble()
-                : null),
-            address: m['address'] as String,
-            latitude: (m['latitude'] as num).toDouble(),
-            longitude: (m['longitude'] as num).toDouble(),
-            primaryImageUrl: Value(images.isNotEmpty ? images.first : null),
-            cachedAt: DateTime.now().millisecondsSinceEpoch,
-          );
-        }).toList();
+      if (propertiesResult.success && propertiesResult.value != null) {
+        final companions = mapConvexList<CachedPropertyListingsTableCompanion>(
+          propertiesResult.value,
+          (m) {
+            final id = asString(m['_id'] ?? m['id']);
+            if (id.isEmpty) return null;
+            final images = asStringList(m['imageUrls']);
+            return CachedPropertyListingsTableCompanion.insert(
+              id: id,
+              ownerId: asString(m['ownerId']),
+              title: asString(m['title'], 'Untitled Property'),
+              description: asString(m['description']),
+              category: asString(m['category'], 'sale'),
+              price: asDouble(m['price'], 0.0),
+              hourlyRate: Value(m['hourlyRate'] != null
+                  ? asDouble(m['hourlyRate'])
+                  : null),
+              address: asString(m['address'], 'Location Unavailable'),
+              latitude: asDouble(m['latitude'], 0.0),
+              longitude: asDouble(m['longitude'], 0.0),
+              primaryImageUrl: Value(images.isNotEmpty ? images.first : null),
+              cachedAt: DateTime.now().millisecondsSinceEpoch,
+            );
+          },
+        );
 
-        await widget.database.cachedPropertyListingsDao.insertAll(companions);
+        if (companions.isNotEmpty) {
+          await widget.database.cachedPropertyListingsDao.insertAll(companions);
+        }
       }
 
       // 2. Fetch Vehicle listings
@@ -109,34 +116,39 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
         args: {},
       );
 
-      if (vehiclesResult.success && vehiclesResult.value is List) {
-        final rawList = vehiclesResult.value as List;
-        final companions = rawList.map((item) {
-          final m = item as Map<String, dynamic>;
-          final images = (m['imageUrls'] as List?)?.cast<String>() ?? [];
-          return CachedVehicleListingsTableCompanion.insert(
-            id: m['_id'] as String,
-            ownerId: m['ownerId'] as String,
-            vehicleType: m['vehicleType'] as String,
-            listingIntent: m['listingIntent'] as String,
-            make: m['make'] as String,
-            model: m['model'] as String,
-            year: (m['year'] as num).toInt(),
-            pricePerKm: Value(m['pricePerKm'] != null
-                ? (m['pricePerKm'] as num).toDouble()
-                : null),
-            pricePerDay: Value(m['pricePerDay'] != null
-                ? (m['pricePerDay'] as num).toDouble()
-                : null),
-            salePrice: Value(m['salePrice'] != null
-                ? (m['salePrice'] as num).toDouble()
-                : null),
-            primaryImageUrl: Value(images.isNotEmpty ? images.first : null),
-            cachedAt: DateTime.now().millisecondsSinceEpoch,
-          );
-        }).toList();
+      if (vehiclesResult.success && vehiclesResult.value != null) {
+        final companions = mapConvexList<CachedVehicleListingsTableCompanion>(
+          vehiclesResult.value,
+          (m) {
+            final id = asString(m['_id'] ?? m['id']);
+            if (id.isEmpty) return null;
+            final images = asStringList(m['imageUrls']);
+            return CachedVehicleListingsTableCompanion.insert(
+              id: id,
+              ownerId: asString(m['ownerId']),
+              vehicleType: asString(m['vehicleType'], 'taxi'),
+              listingIntent: asString(m['listingIntent'], 'rental'),
+              make: asString(m['make'], 'Vehicle'),
+              model: asString(m['model'], 'Listing'),
+              year: asInt(m['year'], 2022),
+              pricePerKm: Value(m['pricePerKm'] != null
+                  ? asDouble(m['pricePerKm'])
+                  : null),
+              pricePerDay: Value(m['pricePerDay'] != null
+                  ? asDouble(m['pricePerDay'])
+                  : null),
+              salePrice: Value(m['salePrice'] != null
+                  ? asDouble(m['salePrice'])
+                  : null),
+              primaryImageUrl: Value(images.isNotEmpty ? images.first : null),
+              cachedAt: DateTime.now().millisecondsSinceEpoch,
+            );
+          },
+        );
 
-        await widget.database.cachedVehicleListingsDao.insertAll(companions);
+        if (companions.isNotEmpty) {
+          await widget.database.cachedVehicleListingsDao.insertAll(companions);
+        }
       }
     } catch (_) {
       // Offline fallback: SQLite already holds cached items
@@ -349,91 +361,98 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
       {'label': 'Hourly Guest House', 'value': 'hourly_guesthouse'},
     ];
 
-    return Column(
-      children: [
-        // Category Filter Chips
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: categories.map((cat) {
-              final isSelected = _selectedPropertyCategory == cat['value'];
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: FilterChip(
-                  selected: isSelected,
-                  label: Text(cat['label']!),
-                  labelStyle: TextStyle(
-                    fontSize: 12,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                    color: isSelected ? AppColors.white : AppColors.obsidian,
+    return StreamBuilder<List<CachedPropertyListing>>(
+      stream: _selectedPropertyCategory == 'all'
+          ? widget.database.cachedPropertyListingsDao.watchAll()
+          : widget.database.cachedPropertyListingsDao
+              .watchByCategory(_selectedPropertyCategory),
+      builder: (context, snapshot) {
+        final listings = snapshot.data ?? [];
+
+        return RefreshIndicator(
+          onRefresh: _syncFromConvex,
+          color: AppColors.emerald,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              // Category Filter Chips
+              SliverToBoxAdapter(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    children: categories.map((cat) {
+                      final isSelected = _selectedPropertyCategory == cat['value'];
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: FilterChip(
+                          selected: isSelected,
+                          label: Text(cat['label']!),
+                          labelStyle: TextStyle(
+                            fontSize: 12,
+                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                            color: isSelected ? AppColors.white : AppColors.obsidian,
+                          ),
+                          selectedColor: AppColors.emerald,
+                          backgroundColor: AppColors.white,
+                          checkmarkColor: AppColors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            side: BorderSide(
+                              color: isSelected ? AppColors.emerald : AppColors.border,
+                            ),
+                          ),
+                          onSelected: (selected) {
+                            setState(() {
+                              _selectedPropertyCategory = cat['value']!;
+                            });
+                          },
+                        ),
+                      );
+                    }).toList(),
                   ),
-                  selectedColor: AppColors.emerald,
-                  backgroundColor: AppColors.white,
-                  checkmarkColor: AppColors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                    side: BorderSide(
-                      color: isSelected ? AppColors.emerald : AppColors.border,
+                ),
+              ),
+
+              if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData)
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(
+                    child: CircularProgressIndicator(color: AppColors.emerald),
+                  ),
+                )
+              else if (listings.isEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _buildEmptyState(
+                    icon: Icons.home_work_outlined,
+                    title: 'No properties found',
+                    subtitle: _isSyncing
+                        ? 'Fetching from cloud...'
+                        : 'Check back soon or adjust filters.',
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        return _PropertyListingCard(
+                          listing: listings[index],
+                          currencyFormat: _currencyFormat,
+                          database: widget.database,
+                          convexClient: widget.convexClient,
+                        );
+                      },
+                      childCount: listings.length,
                     ),
                   ),
-                  onSelected: (selected) {
-                    setState(() {
-                      _selectedPropertyCategory = cat['value']!;
-                    });
-                  },
                 ),
-              );
-            }).toList(),
+            ],
           ),
-        ),
-
-        // Reactive SQLite Stream
-        Expanded(
-          child: StreamBuilder<List<CachedPropertyListing>>(
-            stream: _selectedPropertyCategory == 'all'
-                ? widget.database.cachedPropertyListingsDao.watchAll()
-                : widget.database.cachedPropertyListingsDao
-                    .watchByCategory(_selectedPropertyCategory),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting &&
-                  !snapshot.hasData) {
-                return const Center(
-                  child: CircularProgressIndicator(color: AppColors.emerald),
-                );
-              }
-
-              final listings = snapshot.data ?? [];
-              if (listings.isEmpty) {
-                return _buildEmptyState(
-                  icon: Icons.home_work_outlined,
-                  title: 'No properties found',
-                  subtitle: _isSyncing
-                      ? 'Fetching from cloud...'
-                      : 'Check back soon or adjust filters.',
-                );
-              }
-
-              return RefreshIndicator(
-                onRefresh: _syncFromConvex,
-                color: AppColors.emerald,
-                child: ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: listings.length,
-                  itemBuilder: (context, index) {
-                    return _PropertyListingCard(
-                      listing: listings[index],
-                      currencyFormat: _currencyFormat,
-                      database: widget.database,
-                      convexClient: widget.convexClient,
-                    );
-                  },
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 
@@ -449,91 +468,98 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
       {'label': 'Vehicles for Sale', 'value': 'sale'},
     ];
 
-    return Column(
-      children: [
-        // Intent Filter Chips
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: intents.map((intent) {
-              final isSelected = _selectedMobilityIntent == intent['value'];
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: FilterChip(
-                  selected: isSelected,
-                  label: Text(intent['label']!),
-                  labelStyle: TextStyle(
-                    fontSize: 12,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                    color: isSelected ? AppColors.white : AppColors.obsidian,
+    return StreamBuilder<List<CachedVehicleListing>>(
+      stream: _selectedMobilityIntent == 'all'
+          ? widget.database.cachedVehicleListingsDao.watchAll()
+          : widget.database.cachedVehicleListingsDao
+              .watchByIntent(_selectedMobilityIntent),
+      builder: (context, snapshot) {
+        final vehicles = snapshot.data ?? [];
+
+        return RefreshIndicator(
+          onRefresh: _syncFromConvex,
+          color: AppColors.emerald,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              // Intent Filter Chips
+              SliverToBoxAdapter(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    children: intents.map((intent) {
+                      final isSelected = _selectedMobilityIntent == intent['value'];
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: FilterChip(
+                          selected: isSelected,
+                          label: Text(intent['label']!),
+                          labelStyle: TextStyle(
+                            fontSize: 12,
+                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                            color: isSelected ? AppColors.white : AppColors.obsidian,
+                          ),
+                          selectedColor: AppColors.emerald,
+                          backgroundColor: AppColors.white,
+                          checkmarkColor: AppColors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            side: BorderSide(
+                              color: isSelected ? AppColors.emerald : AppColors.border,
+                            ),
+                          ),
+                          onSelected: (selected) {
+                            setState(() {
+                              _selectedMobilityIntent = intent['value']!;
+                            });
+                          },
+                        ),
+                      );
+                    }).toList(),
                   ),
-                  selectedColor: AppColors.emerald,
-                  backgroundColor: AppColors.white,
-                  checkmarkColor: AppColors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                    side: BorderSide(
-                      color: isSelected ? AppColors.emerald : AppColors.border,
+                ),
+              ),
+
+              if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData)
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(
+                    child: CircularProgressIndicator(color: AppColors.emerald),
+                  ),
+                )
+              else if (vehicles.isEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _buildEmptyState(
+                    icon: Icons.directions_car_outlined,
+                    title: 'No vehicles found',
+                    subtitle: _isSyncing
+                        ? 'Fetching from cloud...'
+                        : 'Check back soon or adjust filters.',
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        return _VehicleListingCard(
+                          vehicle: vehicles[index],
+                          currencyFormat: _currencyFormat,
+                          database: widget.database,
+                          convexClient: widget.convexClient,
+                        );
+                      },
+                      childCount: vehicles.length,
                     ),
                   ),
-                  onSelected: (selected) {
-                    setState(() {
-                      _selectedMobilityIntent = intent['value']!;
-                    });
-                  },
                 ),
-              );
-            }).toList(),
+            ],
           ),
-        ),
-
-        // Reactive SQLite Stream
-        Expanded(
-          child: StreamBuilder<List<CachedVehicleListing>>(
-            stream: _selectedMobilityIntent == 'all'
-                ? widget.database.cachedVehicleListingsDao.watchAll()
-                : widget.database.cachedVehicleListingsDao
-                    .watchByIntent(_selectedMobilityIntent),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting &&
-                  !snapshot.hasData) {
-                return const Center(
-                  child: CircularProgressIndicator(color: AppColors.emerald),
-                );
-              }
-
-              final vehicles = snapshot.data ?? [];
-              if (vehicles.isEmpty) {
-                return _buildEmptyState(
-                  icon: Icons.directions_car_outlined,
-                  title: 'No vehicles found',
-                  subtitle: _isSyncing
-                      ? 'Fetching from cloud...'
-                      : 'Check back soon or adjust filters.',
-                );
-              }
-
-              return RefreshIndicator(
-                onRefresh: _syncFromConvex,
-                color: AppColors.emerald,
-                child: ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: vehicles.length,
-                  itemBuilder: (context, index) {
-                    return _VehicleListingCard(
-                      vehicle: vehicles[index],
-                      currencyFormat: _currencyFormat,
-                      database: widget.database,
-                      convexClient: widget.convexClient,
-                    );
-                  },
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 
@@ -817,15 +843,10 @@ class _PropertyListingCard extends StatelessWidget {
   }
 
   Widget _buildFallbackImage() {
-    return Container(
-      color: const Color(0xFF1E293B),
-      child: const Center(
-        child: Icon(
-          Icons.apartment_outlined,
-          size: 48,
-          color: AppColors.emerald,
-        ),
-      ),
+    return brandedMediaFallback(
+      icon: Icons.apartment_rounded,
+      banner: _categoryBadgeText,
+      height: 160,
     );
   }
 }
@@ -1113,15 +1134,10 @@ class _VehicleListingCard extends StatelessWidget {
   }
 
   Widget _buildFallbackImage() {
-    return Container(
-      color: const Color(0xFF1E293B),
-      child: Center(
-        child: Icon(
-          _vehicleIcon,
-          size: 48,
-          color: AppColors.emerald,
-        ),
-      ),
+    return brandedMediaFallback(
+      icon: _vehicleIcon,
+      banner: _intentBadgeText,
+      height: 160,
     );
   }
 }

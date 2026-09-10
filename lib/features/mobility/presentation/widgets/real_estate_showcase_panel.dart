@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
 import '../../../../core/theme/components/vx_status_badge.dart';
+import '../../../../core/widgets/branded_media_fallback.dart';
 import '../../../real_estate/domain/entities/property_listing_entity.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
 
@@ -189,23 +190,24 @@ class _RealEstateShowcasePanelState extends State<RealEstateShowcasePanel> {
           // ── Image Header & Badges ─────────────────────────────────
           Stack(
             children: [
-              Container(
-                height: 170,
+              SizedBox(
+                height: 160,
                 width: double.infinity,
-                decoration: BoxDecoration(
-                  color: AppColors.gray200,
-                  image: prop.imageUrls.isNotEmpty
-                      ? DecorationImage(
-                          image: NetworkImage(prop.imageUrls.first),
-                          fit: BoxFit.cover,
-                        )
-                      : null,
-                ),
-                child: prop.imageUrls.isEmpty
-                    ? const Center(
-                        child: Icon(Icons.home_rounded, size: 48, color: AppColors.gray400),
+                child: prop.imageUrls.isNotEmpty && prop.imageUrls.first.isNotEmpty
+                    ? Image.network(
+                        prop.imageUrls.first,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => brandedMediaFallback(
+                          icon: Icons.apartment_rounded,
+                          banner: prop.category.name,
+                          height: 160,
+                        ),
                       )
-                    : null,
+                    : brandedMediaFallback(
+                        icon: Icons.apartment_rounded,
+                        banner: prop.category.name,
+                        height: 160,
+                      ),
               ),
 
               // Category Badge

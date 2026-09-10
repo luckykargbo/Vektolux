@@ -154,26 +154,36 @@ export const listVehicles = query({
       filtered = filtered.filter((v) => v.vehicleType === args.vehicleType);
     }
 
-    // Resolve any remaining storage IDs
+    // Resolve any remaining storage IDs and provide resilient defaults
     const resolvedVehicles = await Promise.all(
       filtered.map(async (vehicle) => {
-        const resolvedUrls = await Promise.all(
-          vehicle.imageUrls.map(async (url) => {
-            if (url.startsWith("http://") || url.startsWith("https://")) {
-              return url;
-            }
-            try {
-              const publicUrl = await ctx.storage.getUrl(url as Id<"_storage">);
-              return publicUrl ?? url;
-            } catch {
-              return url;
-            }
-          })
-        );
+        const rawImages = Array.isArray(vehicle.imageUrls) ? vehicle.imageUrls : [];
+        const resolvedUrls = (
+          await Promise.all(
+            rawImages.map(async (url) => {
+              if (typeof url !== "string") return null;
+              if (url.startsWith("http://") || url.startsWith("https://")) {
+                return url;
+              }
+              try {
+                const publicUrl = await ctx.storage.getUrl(url as Id<"_storage">);
+                return publicUrl ?? url;
+              } catch {
+                return url;
+              }
+            })
+          )
+        ).filter((u): u is string => Boolean(u));
 
         return {
           ...vehicle,
           _id: vehicle._id as string,
+          ownerId: String(vehicle.ownerId ?? ""),
+          make: vehicle.make || "Untitled Vehicle",
+          model: vehicle.model || "Listing",
+          year: vehicle.year ?? 0,
+          currency: vehicle.currency ?? "SLE",
+          availabilityStatus: vehicle.availabilityStatus ?? "available",
           imageUrls: resolvedUrls,
         };
       })

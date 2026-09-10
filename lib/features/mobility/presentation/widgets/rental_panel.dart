@@ -241,17 +241,32 @@ class _RentalPanelState extends State<RentalPanel> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           // Vehicle Icon or Thumbnail
-                          Container(
-                            width: 52,
-                            height: 52,
-                            decoration: BoxDecoration(
-                              color: AppColors.gray100,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Icon(
-                              vehicle.vehicleType.iconData,
-                              color: AppColors.obsidian,
-                              size: 28,
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: SizedBox(
+                              width: 52,
+                              height: 52,
+                              child: vehicle.imageUrls.isNotEmpty && vehicle.imageUrls.first.isNotEmpty
+                                  ? Image.network(
+                                      vehicle.imageUrls.first,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Container(
+                                        color: const Color(0xFF1E293B),
+                                        child: Icon(
+                                          vehicle.vehicleType.iconData,
+                                          color: AppColors.emerald,
+                                          size: 26,
+                                        ),
+                                      ),
+                                    )
+                                  : Container(
+                                      color: const Color(0xFF1E293B),
+                                      child: Icon(
+                                        vehicle.vehicleType.iconData,
+                                        color: AppColors.emerald,
+                                        size: 26,
+                                      ),
+                                    ),
                             ),
                           ),
                           const SizedBox(width: 12),

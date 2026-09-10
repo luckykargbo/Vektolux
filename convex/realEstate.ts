@@ -149,30 +149,40 @@ export const listProperties = query({
     }
     if (args.city !== undefined && args.city.length > 0) {
       filtered = filtered.filter(
-        (l) => l.city.toLowerCase() === args.city!.toLowerCase()
+        (l) => l.city && l.city.toLowerCase() === args.city!.toLowerCase()
       );
     }
 
-    // Resolve any remaining storage IDs in imageUrls
+    // Resolve any remaining storage IDs in imageUrls and provide resilient defaults
     const resolvedListings = await Promise.all(
       filtered.map(async (listing) => {
-        const resolvedUrls = await Promise.all(
-          listing.imageUrls.map(async (url) => {
-            if (url.startsWith("http://") || url.startsWith("https://")) {
-              return url;
-            }
-            try {
-              const publicUrl = await ctx.storage.getUrl(url as Id<"_storage">);
-              return publicUrl ?? url;
-            } catch {
-              return url;
-            }
-          })
-        );
+        const rawImages = Array.isArray(listing.imageUrls) ? listing.imageUrls : [];
+        const resolvedUrls = (
+          await Promise.all(
+            rawImages.map(async (url) => {
+              if (typeof url !== "string") return null;
+              if (url.startsWith("http://") || url.startsWith("https://")) {
+                return url;
+              }
+              try {
+                const publicUrl = await ctx.storage.getUrl(url as Id<"_storage">);
+                return publicUrl ?? url;
+              } catch {
+                return url;
+              }
+            })
+          )
+        ).filter((u): u is string => Boolean(u));
 
         return {
           ...listing,
           _id: listing._id as string,
+          ownerId: String(listing.ownerId ?? ""),
+          title: listing.title || "Untitled Property",
+          address: listing.address || "Location Unavailable",
+          city: listing.city || "Freetown",
+          price: listing.price ?? 0,
+          currency: listing.currency ?? "SLE",
           imageUrls: resolvedUrls,
         };
       })

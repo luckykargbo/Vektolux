@@ -14,6 +14,9 @@ import '../../../../core/database/daos/cached_entities_dao.dart';
 import '../../../../core/database/tables/cached_entities_table.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/sync/offline_sync_engine.dart';
+import '../../../../core/utils/safe_parser.dart';
+import '../../../real_estate/domain/entities/property_listing_entity.dart';
+import '../../../real_estate/data/models/property_listing_model.dart';
 import '../../domain/entities/mobility_vehicle_entity.dart';
 import '../../domain/entities/ride_entity.dart';
 import '../../domain/entities/nearby_driver_entity.dart';
@@ -21,6 +24,7 @@ import '../../domain/entities/nearby_seller_entity.dart';
 import '../../domain/entities/trip_delivery_entity.dart';
 import '../../domain/repositories/mobility_repository.dart';
 import '../models/ride_model.dart';
+import '../models/vehicle_listing_model.dart';
 
 class MobilityRepositoryImpl implements MobilityRepository {
   final CachedRidesDao _ridesDao;
@@ -648,5 +652,60 @@ class MobilityRepositoryImpl implements MobilityRepository {
         etaMinutes: 9,
       ),
     ];
+  }
+
+  @override
+  Future<List<VehicleListingEntity>> listVehicles({
+    String? listingIntent,
+    MobilityVehicleType? vehicleType,
+  }) async {
+    try {
+      final Map<String, dynamic> args = {};
+      if (listingIntent != null) args['listingIntent'] = listingIntent;
+      if (vehicleType != null) args['vehicleType'] = vehicleType.backendKey;
+
+      final result = await _convexClient.query(
+        'mobility:listVehicles',
+        args: args,
+      );
+
+      if (result.success && result.value != null) {
+        return mapConvexList<VehicleListingEntity>(
+          result.value,
+          (m) => VehicleListingModel.fromJson(m),
+        );
+      }
+      return [];
+    } catch (e) {
+      _log.w('listVehicles failed to fetch from backend: $e');
+      return [];
+    }
+  }
+
+  @override
+  Future<List<PropertyListingEntity>> listProperties({
+    String? category,
+    String? intent,
+  }) async {
+    try {
+      final Map<String, dynamic> args = {};
+      if (category != null) args['category'] = category;
+
+      final result = await _convexClient.query(
+        'realEstate:listProperties',
+        args: args,
+      );
+
+      if (result.success && result.value != null) {
+        return mapConvexList<PropertyListingEntity>(
+          result.value,
+          (m) => PropertyListingModel.fromJson(m),
+        );
+      }
+      return [];
+    } catch (e) {
+      _log.w('listProperties failed to fetch from backend: $e');
+      return [];
+    }
   }
 }

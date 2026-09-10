@@ -7,6 +7,7 @@
 import 'dart:convert';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/database/tables/cached_entities_table.dart';
+import '../../../../core/utils/safe_parser.dart';
 import '../../domain/entities/property_listing_entity.dart';
 
 class PropertyListingModel extends PropertyListingEntity {
@@ -73,42 +74,38 @@ class PropertyListingModel extends PropertyListingEntity {
   }
 
   /// Convert from Convex Document JSON Map.
-  factory PropertyListingModel.fromJson(Map<String, dynamic> json) {
-    List<String> images = [];
-    if (json['imageUrls'] is List) {
-      images = (json['imageUrls'] as List).map((e) => e.toString()).toList();
-    }
-
-    List<String> amenities = [];
-    if (json['amenities'] is List) {
-      amenities = (json['amenities'] as List).map((e) => e.toString()).toList();
-    }
+  factory PropertyListingModel.fromJson(Map<String, dynamic> rawJson) {
+    final json = asStringKeyedMap(rawJson);
+    final images = asStringList(json['imageUrls']);
+    final amenities = asStringList(json['amenities']);
 
     return PropertyListingModel(
-      id: json['_id']?.toString() ?? json['id']?.toString() ?? '',
-      ownerId: json['ownerId']?.toString() ?? '',
-      title: json['title']?.toString() ?? 'Untitled Property',
-      description: json['description']?.toString() ?? '',
-      category: RealEstateCategory.fromString(json['category']?.toString() ?? 'sale'),
-      price: (json['price'] as num?)?.toDouble() ?? 0.0,
-      hourlyRate: (json['hourlyRate'] as num?)?.toDouble(),
-      currency: json['currency']?.toString() ?? 'SLE',
-      address: json['address']?.toString() ?? '',
-      city: json['city']?.toString() ?? '',
-      country: json['country']?.toString() ?? '',
-      latitude: (json['latitude'] as num?)?.toDouble() ?? 0.0,
-      longitude: (json['longitude'] as num?)?.toDouble() ?? 0.0,
-      geohash: json['geohash']?.toString() ?? '',
-      availabilityStatus: json['availabilityStatus']?.toString() ?? 'available',
+      id: asString(json['_id'] ?? json['id']),
+      ownerId: asString(json['ownerId']),
+      title: asString(json['title'], 'Untitled Property'),
+      description: asString(json['description']),
+      category: RealEstateCategory.fromString(
+        asString(json['category'], 'sale'),
+      ),
+      price: asDouble(json['price'], 0.0),
+      hourlyRate: json['hourlyRate'] != null ? asDouble(json['hourlyRate']) : null,
+      currency: asString(json['currency'], 'SLE'),
+      address: asString(json['address'], 'Location Unavailable'),
+      city: asString(json['city'], 'Freetown'),
+      country: asString(json['country'], 'Sierra Leone'),
+      latitude: asDouble(json['latitude'], 0.0),
+      longitude: asDouble(json['longitude'], 0.0),
+      geohash: asString(json['geohash']),
+      availabilityStatus: asString(json['availabilityStatus'], 'available'),
       imageUrls: images,
-      isFeatured: json['isFeatured'] == true,
+      isFeatured: asBool(json['isFeatured']),
       isVerified: json['isVerified'] != false,
-      viewCount: (json['viewCount'] as num?)?.toInt() ?? 0,
-      bedrooms: (json['bedrooms'] as num?)?.toInt(),
-      bathrooms: (json['bathrooms'] as num?)?.toInt(),
-      areaSqM: (json['areaSqM'] as num?)?.toDouble(),
+      viewCount: asInt(json['viewCount'], 0),
+      bedrooms: json['bedrooms'] != null ? asInt(json['bedrooms']) : null,
+      bathrooms: json['bathrooms'] != null ? asInt(json['bathrooms']) : null,
+      areaSqM: json['areaSqM'] != null ? asDouble(json['areaSqM']) : null,
       amenities: amenities,
-      ownerName: json['ownerName']?.toString() ?? 'Vektolux Verified Partner',
+      ownerName: asString(json['ownerName'], 'Vektolux Verified Partner'),
       ownerPhone: json['ownerPhone']?.toString(),
       ownerAvatarUrl: json['ownerAvatarUrl']?.toString(),
     );
