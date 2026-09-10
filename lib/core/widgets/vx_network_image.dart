@@ -8,7 +8,7 @@
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 
-class VxNetworkImage extends StatefulWidget {
+class VxNetworkImage extends StatelessWidget {
   final String? imageUrl;
   final double? width;
   final double? height;
@@ -33,34 +33,10 @@ class VxNetworkImage extends StatefulWidget {
   });
 
   @override
-  State<VxNetworkImage> createState() => _VxNetworkImageState();
-}
-
-class _VxNetworkImageState extends State<VxNetworkImage>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _shimmerController;
-
-  @override
-  void initState() {
-    super.initState();
-    _shimmerController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _shimmerController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final hasValidUrl = widget.imageUrl != null &&
-        widget.imageUrl!.trim().isNotEmpty &&
-        (widget.imageUrl!.startsWith('http://') ||
-            widget.imageUrl!.startsWith('https://'));
+    final hasValidUrl = imageUrl != null &&
+        imageUrl!.trim().isNotEmpty &&
+        (imageUrl!.startsWith('http://') || imageUrl!.startsWith('https://'));
 
     Widget content;
 
@@ -68,10 +44,10 @@ class _VxNetworkImageState extends State<VxNetworkImage>
       content = _buildFallbackUi();
     } else {
       content = Image.network(
-        widget.imageUrl!.trim(),
-        width: widget.width ?? double.infinity,
-        height: widget.height,
-        fit: widget.fit,
+        imageUrl!.trim(),
+        width: width ?? double.infinity,
+        height: height,
+        fit: fit,
         loadingBuilder: (context, child, loadingProgress) {
           if (loadingProgress == null) {
             return child;
@@ -82,7 +58,7 @@ class _VxNetworkImageState extends State<VxNetworkImage>
               ? (loaded / expected)
               : null;
 
-          return _buildShimmerSkeleton(progress);
+          return _buildLoadingSkeleton(progress);
         },
         errorBuilder: (context, error, stackTrace) {
           return _buildFallbackUi();
@@ -90,20 +66,20 @@ class _VxNetworkImageState extends State<VxNetworkImage>
       );
     }
 
-    if (widget.heroTag != null && widget.heroTag!.isNotEmpty) {
-      content = Hero(tag: widget.heroTag!, child: content);
+    if (heroTag != null && heroTag!.isNotEmpty) {
+      content = Hero(tag: heroTag!, child: content);
     }
 
-    if (widget.aspectRatio != null && widget.aspectRatio! > 0) {
+    if (aspectRatio != null && aspectRatio! > 0) {
       content = AspectRatio(
-        aspectRatio: widget.aspectRatio!,
+        aspectRatio: aspectRatio!,
         child: content,
       );
     }
 
-    if (widget.borderRadius != null) {
+    if (borderRadius != null) {
       content = ClipRRect(
-        borderRadius: widget.borderRadius!,
+        borderRadius: borderRadius!,
         child: content,
       );
     }
@@ -111,61 +87,47 @@ class _VxNetworkImageState extends State<VxNetworkImage>
     return content;
   }
 
-  /// Shimmer loading skeleton with an animated diagonal gradient sweep
-  Widget _buildShimmerSkeleton(double? progress) {
-    return AnimatedBuilder(
-      animation: _shimmerController,
-      builder: (context, child) {
-        return Container(
-          width: widget.width ?? double.infinity,
-          height: widget.height ?? double.infinity,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment(-1.5 + (_shimmerController.value * 3.0), -0.5),
-              end: Alignment(0.5 + (_shimmerController.value * 3.0), 1.5),
-              colors: const [
-                Color(0xFFE2E8F0),
-                Color(0xFFF8FAFC),
-                Color(0xFFE2E8F0),
-              ],
-              stops: const [0.0, 0.5, 1.0],
-            ),
+  /// Ultra-light loading skeleton without ticker leaks
+  Widget _buildLoadingSkeleton(double? progress) {
+    return Container(
+      width: width ?? double.infinity,
+      height: height ?? double.infinity,
+      decoration: const BoxDecoration(
+        color: Color(0xFFE2E8F0),
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Icon(
+            fallbackIcon,
+            color: AppColors.gray400.withValues(alpha: 0.5),
+            size: 28,
           ),
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Icon(
-                widget.fallbackIcon,
-                color: AppColors.gray300.withValues(alpha: 0.6),
-                size: 28,
-              ),
-              if (progress != null)
-                Positioned(
-                  bottom: 10,
-                  left: 20,
-                  right: 20,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: progress,
-                      backgroundColor: Colors.black12,
-                      color: AppColors.emerald,
-                      minHeight: 3,
-                    ),
-                  ),
+          if (progress != null)
+            Positioned(
+              bottom: 8,
+              left: 16,
+              right: 16,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  backgroundColor: Colors.black12,
+                  color: AppColors.emerald,
+                  minHeight: 3,
                 ),
-            ],
-          ),
-        );
-      },
+              ),
+            ),
+        ],
+      ),
     );
   }
 
   /// Styled branded fallback UI in place of unstyled blank grey boxes
   Widget _buildFallbackUi() {
     return Container(
-      width: widget.width ?? double.infinity,
-      height: widget.height ?? double.infinity,
+      width: width ?? double.infinity,
+      height: height ?? double.infinity,
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
@@ -181,7 +143,7 @@ class _VxNetworkImageState extends State<VxNetworkImage>
             right: -20,
             bottom: -20,
             child: Icon(
-              widget.fallbackIcon,
+              fallbackIcon,
               size: 90,
               color: Colors.white.withValues(alpha: 0.04),
             ),
@@ -200,14 +162,14 @@ class _VxNetworkImageState extends State<VxNetworkImage>
                   ),
                 ),
                 child: Icon(
-                  widget.fallbackIcon,
+                  fallbackIcon,
                   color: AppColors.emerald,
                   size: 24,
                 ),
               ),
               const SizedBox(height: 6),
               Text(
-                widget.fallbackLabel ?? 'VEKTOLUX VERIFIED',
+                fallbackLabel ?? 'VEKTOLUX VERIFIED',
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.85),
                   fontSize: 10,

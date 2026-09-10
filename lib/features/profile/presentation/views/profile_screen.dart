@@ -23,6 +23,7 @@ import '../../../../core/widgets/vektolux_avatar.dart';
 import '../../../operator/presentation/views/operator_dashboard_screen.dart';
 import '../../../mobility/presentation/views/driver_vehicle_registration_screen.dart';
 import '../../../admin/presentation/views/admin_dev_tools_screen.dart';
+import '../../../navigation/presentation/views/main_navigation_shell.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? currentUserId;
@@ -1221,6 +1222,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         value: _biometricAuth,
                         activeThumbColor: AppColors.emerald,
                         onChanged: (val) => setState(() => _biometricAuth = val),
+                      ),
+                      const Divider(height: 1, indent: 56),
+                      _buildSettingsTile(
+                        icon: Icons.school_outlined,
+                        title: 'Interactive App Tour',
+                        subtitle: 'Learn how to hail rides, book homes, and pay with Agent 001',
+                        trailing: const Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 14,
+                          color: AppColors.gray400,
+                        ),
+                        onTap: () => MainNavigationShell.showAppTour(context),
                       ),
                     ],
                   ),
@@ -2446,9 +2459,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                   TextField(
                     controller: codeCtrl,
+                    style: const TextStyle(
+                      color: AppColors.obsidian,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                    ),
                     decoration: const InputDecoration(
-                      labelText: 'Or enter Recipient Phone / Wallet ID',
-                      hintText: 'e.g. +232 76 123456 or VLX-SL-9821',
+                      labelText: 'Or enter Recipient Phone / Wallet ID / Agent 001',
+                      hintText: 'e.g. +232 76 123456, 001, or VLX-SL-9821',
                       prefixIcon: Icon(Icons.perm_identity_rounded),
                     ),
                   ),
@@ -2457,9 +2475,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   TextField(
                     controller: amountCtrl,
                     keyboardType: TextInputType.number,
+                    style: const TextStyle(
+                      color: AppColors.obsidian,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
                     decoration: const InputDecoration(
                       labelText: 'Amount (SLE)',
                       prefixText: 'SLE ',
+                      prefixStyle: TextStyle(
+                        color: AppColors.obsidian,
+                        fontWeight: FontWeight.w700,
+                      ),
                       prefixIcon: Icon(Icons.payments_outlined),
                     ),
                   ),

@@ -931,27 +931,28 @@ export const createEscrowPayment = mutation({
     }
 
     // Insert escrow_lock ledger record
-    const transactionId = await ctx.db.insert("transactions", {
-      walletId: buyerWallet!._id,
-      userId: buyerId!,
-      counterpartyId: vendorId ?? undefined,
-      type: "escrow_lock",
-      amount: args.amount,
-      currency,
-      referenceType: args.referenceType,
-      referenceId: args.referenceId,
-      gatewayProvider: args.momoProvider ?? "mobile_money",
-      gatewayReference: args.agentNumber ? `AGENT_${args.agentNumber}` : `MOMO_${now}`,
-      agentNumber: args.agentNumber,
-      partnerSplitPercent: splitPercent,
-      partnerAmount,
-      platformFeeAmount,
-      escrowStatus: "locked",
-      blockchainTxHash,
-      status: "completed",
-      description: `Escrow locked for ${args.referenceType} (#${args.referenceId}) with ${splitPercent}% partner split via ${args.agentNumber ? "Orange Money Agent #" + args.agentNumber : "Mobile Money"}`,
-      updatedAt: now,
-    });
+      const effectiveAgentNumber = args.agentNumber ?? (args.momoProvider ? "001" : undefined);
+      const transactionId = await ctx.db.insert("transactions", {
+        walletId: buyerWallet!._id,
+        userId: buyerId!,
+        counterpartyId: vendorId ?? undefined,
+        type: "escrow_lock",
+        amount: args.amount,
+        currency,
+        referenceType: args.referenceType,
+        referenceId: args.referenceId,
+        gatewayProvider: args.momoProvider ?? "mobile_money",
+        gatewayReference: effectiveAgentNumber ? `AGENT_${effectiveAgentNumber}` : `MOMO_${now}`,
+        agentNumber: effectiveAgentNumber,
+        partnerSplitPercent: splitPercent,
+        partnerAmount,
+        platformFeeAmount,
+        escrowStatus: "locked",
+        blockchainTxHash,
+        status: "completed",
+        description: `Escrow locked for ${args.referenceType} (#${args.referenceId}) with ${splitPercent}% partner split via ${effectiveAgentNumber ? "Mobile Money Agent #" + effectiveAgentNumber : "Mobile Money"}`,
+        updatedAt: now,
+      });
 
     // Update universal booking if applicable
     const bookingNorm = ctx.db.normalizeId("bookings", args.referenceId);

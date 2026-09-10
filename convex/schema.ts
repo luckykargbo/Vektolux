@@ -727,4 +727,16 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_role_status", ["targetRole", "status"]),
+
+  // ─── PASSWORD RESET OTPS (SMS, WHATSAPP, EMAIL) ─────────────────
+  password_resets: defineTable({
+    identifier: v.string(), // phone or email
+    deliveryChannel: v.union(v.literal("sms"), v.literal("whatsapp"), v.literal("email")),
+    otpCode: v.string(),
+    expiresAt: v.number(),
+    isUsed: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_identifier", ["identifier"])
+    .index("by_identifier_code", ["identifier", "otpCode"]),
 });

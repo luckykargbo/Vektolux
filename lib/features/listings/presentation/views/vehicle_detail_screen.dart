@@ -17,6 +17,7 @@ import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../bookings/presentation/views/checkout_screen.dart';
 import '../../../mobility/domain/entities/mobility_vehicle_entity.dart';
 import '../../../mobility/presentation/widgets/in_app_chat_modal.dart';
+import '../../../mobility/presentation/widgets/vehicle_rental_terms_sheet.dart';
 
 class VehicleDetailScreen extends StatefulWidget {
   final String id;
@@ -425,33 +426,47 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
     }
 
     final dailyRate = widget.pricePerDay ?? 350.0;
-    const days = 3;
-    final subtotal = dailyRate * days;
-    final serviceFee = (subtotal * 0.05).roundToDouble();
-    final total = subtotal + serviceFee;
-    final now = DateTime.now();
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => CheckoutScreen(
-          database: context.read<AppDatabase>(),
-          convexClient: context.read<ConvexClientWrapper>(),
-          currentUser: user,
-          listingId: widget.id,
-          listingType: 'vehicle',
-          listingTitle: _title,
-          listingSubtitle: '$days Days Daily Rental in Sierra Leone',
-          primaryImageUrl: widget.imageUrls.isNotEmpty ? widget.imageUrls.first : null,
-          vendorId: widget.ownerId ?? 'fleet_operator',
-          bookingType: 'vehicle_rental',
-          startTime: now.millisecondsSinceEpoch,
-          endTime: now.add(const Duration(days: days)).millisecondsSinceEpoch,
-          days: days,
-          subtotal: subtotal,
-          serviceFee: serviceFee,
-          totalAmount: total,
-        ),
-      ),
+    VehicleRentalTermsSheet.show(
+      context,
+      vehicleTitle: _title,
+      dailyRate: dailyRate,
+      hourlyRate: dailyRate / 10,
+      vendorName: widget.ownerName ?? 'Verified Fleet Vendor',
+      vendorPhone: widget.ownerPhone ?? '+232 76 000 001',
+      onProceedToCheckout: (days, hours, subtotal, total) {
+        final now = DateTime.now();
+        final durationText = hours != null ? '$hours Hours Rental' : '$days Days (24h) Rental';
+        final endMillis = hours != null
+            ? now.add(Duration(hours: hours)).millisecondsSinceEpoch
+            : now.add(Duration(days: days)).millisecondsSinceEpoch;
+
+        final serviceFee = (subtotal * 0.05).roundToDouble();
+
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => CheckoutScreen(
+              database: context.read<AppDatabase>(),
+              convexClient: context.read<ConvexClientWrapper>(),
+              currentUser: user,
+              listingId: widget.id,
+              listingType: 'vehicle',
+              listingTitle: _title,
+              listingSubtitle: '$durationText • Orange / Africell (Agent 001)',
+              primaryImageUrl: widget.imageUrls.isNotEmpty ? widget.imageUrls.first : null,
+              vendorId: widget.ownerId ?? 'fleet_operator',
+              bookingType: 'vehicle_rental',
+              startTime: now.millisecondsSinceEpoch,
+              endTime: endMillis,
+              days: days,
+              hours: hours,
+              subtotal: subtotal,
+              serviceFee: serviceFee,
+              totalAmount: total,
+            ),
+          ),
+        );
+      },
     );
   }
 

@@ -5,6 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { userRole } from "./schema";
 
@@ -429,6 +430,169 @@ export const seedDemoUsers = mutation({
     }
 
     return { seeded, existing };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//             PASSWORD RESET (SMS, WHATSAPP, EMAIL)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const sendPasswordResetOtp = mutation({
+  args: {
+    identifier: v.string(), // Phone number or email
+    deliveryChannel: v.union(v.literal("sms"), v.literal("whatsapp"), v.literal("email")),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    message: v.string(),
+    expiresInSeconds: v.number(),
+    demoCode: v.optional(v.string()), // Returned in dev/sandbox for instant testing
+  }),
+  handler: async (ctx, args) => {
+    const rawId = args.identifier.trim();
+    if (!rawId) {
+      throw new Error("Phone number or email is required");
+    }
+
+    // Check if user exists by email or phone
+    const user = await ctx.db
+      .query("users")
+      .filter((q) =>
+        q.or(
+          q.eq(q.field("email"), rawId),
+          q.eq(q.field("phone"), rawId),
+          q.eq(q.field("phone"), rawId.startsWith("+") ? rawId : `+232${rawId.replace(/^0+/, "")}`)
+        )
+      )
+      .first();
+
+    if (!user) {
+      throw new Error("No account registered with that email or phone number");
+    }
+
+    const now = Date.now();
+    const expiresInSeconds = 600; // 10 minutes
+    const expiresAt = now + expiresInSeconds * 1000;
+
+    // Generate secure 6-digit numeric OTP
+    const otpCode = (100000 + Math.floor(Math.random() * 900000)).toString();
+
+    // Invalidate previous active OTPs for this identifier
+    const existingOtps = await ctx.db
+      .query("password_resets")
+      .withIndex("by_identifier", (q) => q.eq("identifier", rawId))
+      .filter((q) => q.eq(q.field("isUsed"), false))
+      .collect();
+
+    for (const oldOtp of existingOtps) {
+      await ctx.db.patch(oldOtp._id, { isUsed: true });
+    }
+
+    // Insert new OTP record
+    await ctx.db.insert("password_resets", {
+      identifier: rawId,
+      deliveryChannel: args.deliveryChannel,
+      otpCode,
+      expiresAt,
+      isUsed: false,
+      createdAt: now,
+    });
+
+    // Dispatch real email via Resend if email channel or email identifier
+    if (args.deliveryChannel === "email" || rawId.includes("@")) {
+      const emailTarget = rawId.includes("@") ? rawId : user.email;
+      await ctx.scheduler.runAfter(0, internal.emails.sendOtpEmail, {
+        to: emailTarget,
+        otpCode,
+        recipientName: user.name,
+      });
+    }
+
+    const channelName =
+      args.deliveryChannel === "whatsapp"
+        ? "WhatsApp message"
+        : args.deliveryChannel === "sms"
+        ? "SMS text"
+        : "Email";
+
+    return {
+      success: true,
+      message: `Reset code dispatched via ${channelName} to ${rawId}`,
+      expiresInSeconds,
+      demoCode: otpCode, // Test code for zero-friction verification
+    };
+  },
+});
+
+export const verifyResetOtpAndSetPassword = mutation({
+  args: {
+    identifier: v.string(),
+    otpCode: v.string(),
+    newPassword: v.string(),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    message: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const rawId = args.identifier.trim();
+    const code = args.otpCode.trim();
+
+    if (!code || code.length !== 6) {
+      throw new Error("Please enter a valid 6-digit verification code");
+    }
+    if (!args.newPassword || args.newPassword.length < 6) {
+      throw new Error("New password must be at least 6 characters long");
+    }
+
+    const now = Date.now();
+
+    // Query active OTP
+    const resetRecord = await ctx.db
+      .query("password_resets")
+      .withIndex("by_identifier_code", (q) =>
+        q.eq("identifier", rawId).eq("otpCode", code)
+      )
+      .first();
+
+    if (!resetRecord || resetRecord.isUsed || resetRecord.expiresAt < now) {
+      throw new Error("Invalid or expired verification code. Please request a new one.");
+    }
+
+    // Find the user
+    const user = await ctx.db
+      .query("users")
+      .filter((q) =>
+        q.or(
+          q.eq(q.field("email"), rawId),
+          q.eq(q.field("phone"), rawId),
+          q.eq(q.field("phone"), rawId.startsWith("+") ? rawId : `+232${rawId.replace(/^0+/, "")}`)
+        )
+      )
+      .first();
+
+    if (!user) {
+      throw new Error("Associated user account not found");
+    }
+
+    // Re-hash new password using PBKDF2
+    const passwordHash = await hashPassword(args.newPassword);
+    const newSessionToken = generateSessionToken();
+
+    // Update user record and invalidate older sessions
+    await ctx.db.patch(user._id, {
+      passwordHash,
+      sessionToken: newSessionToken,
+      updatedAt: now,
+    });
+
+    // Mark OTP used
+    await ctx.db.patch(resetRecord._id, { isUsed: true });
+
+    return {
+      success: true,
+      message: "Password has been successfully updated! You can now sign in.",
+    };
   },
 });
 

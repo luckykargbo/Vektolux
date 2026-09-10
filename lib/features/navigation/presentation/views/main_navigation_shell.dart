@@ -19,6 +19,7 @@ import '../../../mobility/presentation/views/driver_portal_screen.dart';
 import '../../../mobility/presentation/views/mobility_home_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
 import '../../../real_estate/presentation/views/real_estate_marketplace_screen.dart';
+import '../widgets/client_onboarding_tour_modal.dart';
 
 class MainNavigationShell extends StatefulWidget {
   final int initialTabIndex;
@@ -34,22 +35,43 @@ class MainNavigationShell extends StatefulWidget {
     state?.setTab(index);
   }
 
+  /// Replay the first-time guided onboarding tour anytime from settings or help
+  static void showAppTour(BuildContext context) {
+    ClientOnboardingTourModal.show(context, onFinish: () {});
+  }
+
   @override
   State<MainNavigationShell> createState() => _MainNavigationShellState();
 }
 
 class _MainNavigationShellState extends State<MainNavigationShell> {
   late int _currentIndex;
+  late final Set<int> _activatedTabs;
+  static bool _hasShownTourGlobally = false;
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialTabIndex;
+    _activatedTabs = {_currentIndex};
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAndShowTour();
+    });
+  }
+
+  void _checkAndShowTour() {
+    if (_hasShownTourGlobally || !mounted) return;
+    _hasShownTourGlobally = true;
+    ClientOnboardingTourModal.show(context, onFinish: () {});
   }
 
   void setTab(int index) {
     if (index >= 0 && index < 5) {
-      setState(() => _currentIndex = index);
+      setState(() {
+        _currentIndex = index;
+        _activatedTabs.add(index);
+      });
     }
   }
 
@@ -74,34 +96,33 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
 
         final pages = [
           // 0: Home Super App Discovery
-          ClientHomeScreen(
-            database: database,
-            convexClient: convexClient,
-          ),
+          _activatedTabs.contains(0)
+              ? ClientHomeScreen(database: database, convexClient: convexClient)
+              : const SizedBox.shrink(),
 
-          // 1: Rides (Interactive Map, Keke/Okada/Taxi Hailing)
-          MobilityHomeScreen(
-            currentUserId: currentUserId,
-            initialLat: 8.484,
-            initialLng: -13.229,
-          ),
+          // 1: Rides (Interactive Map, Keke/Okada/Taxi Hailing) — lazy-loaded
+          _activatedTabs.contains(1)
+              ? MobilityHomeScreen(
+                  currentUserId: currentUserId,
+                  initialLat: 8.484,
+                  initialLng: -13.229,
+                )
+              : const SizedBox.shrink(),
 
           // 2: Real Estate Vertical Marketplace
-          RealEstateMarketplaceScreen(
-            database: database,
-            convexClient: convexClient,
-          ),
+          _activatedTabs.contains(2)
+              ? RealEstateMarketplaceScreen(database: database, convexClient: convexClient)
+              : const SizedBox.shrink(),
 
           // 3: Auto Market & Car Rentals Vertical
-          AutoMarketplaceScreen(
-            database: database,
-            convexClient: convexClient,
-          ),
+          _activatedTabs.contains(3)
+              ? AutoMarketplaceScreen(database: database, convexClient: convexClient)
+              : const SizedBox.shrink(),
 
           // 4: Account & Vendor Profile
-          ProfileScreen(
-            currentUserId: currentUserId,
-          ),
+          _activatedTabs.contains(4)
+              ? ProfileScreen(currentUserId: currentUserId)
+              : const SizedBox.shrink(),
         ];
 
         return Scaffold(

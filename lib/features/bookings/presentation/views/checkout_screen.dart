@@ -62,7 +62,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   String _paymentMethod = 'mobile_money'; // 'mobile_money' or 'card'
   String _momoProvider = 'orange_money'; // 'orange_money' or 'africell_money'
   late final TextEditingController _phoneController;
-  final _agentNumberController = TextEditingController();
+  final _agentNumberController = TextEditingController(text: '001');
   final _securityPinController = TextEditingController();
   final _cardNumberController =
       TextEditingController(text: '4111 2222 3333 4444');
@@ -334,8 +334,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   ),
                   if (txHash != null) ...[
                     const Divider(height: 14),
-                    Row(
-                      children: const [
+                    const Row(
+                      children: [
                         Icon(Icons.lock_clock_rounded, size: 12, color: AppColors.emerald),
                         SizedBox(width: 4),
                         Text('Ledger Audit Hash:', style: TextStyle(fontSize: 10, color: AppColors.gray500, fontWeight: FontWeight.w600)),
@@ -623,9 +623,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     TextFormField(
                       controller: _phoneController,
                       keyboardType: TextInputType.phone,
+                      style: const TextStyle(
+                        color: AppColors.obsidian,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
                       decoration: const InputDecoration(
                         labelText: 'Sierra Leone Phone Number',
                         prefixText: '+232 ',
+                        prefixStyle: TextStyle(
+                          color: AppColors.obsidian,
+                          fontWeight: FontWeight.w700,
+                        ),
                         prefixIcon: Icon(Icons.phone_outlined),
                       ),
                     ),
@@ -633,14 +642,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     TextFormField(
                       controller: _agentNumberController,
                       keyboardType: TextInputType.number,
+                      style: const TextStyle(
+                        color: AppColors.obsidian,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
                       decoration: InputDecoration(
                         labelText: _momoProvider == 'orange_money'
                             ? 'Orange Money Agent # / Merchant Code'
                             : 'Africell Agent Code',
-                        hintText: 'e.g. 761002 (Optional for agent pay)',
+                        hintText: 'e.g. 001',
                         prefixIcon: const Icon(Icons.store_mall_directory_outlined),
-                        helperText: 'Enter 6-digit Agent or Merchant code if paying at agent counter',
-                        helperStyle: const TextStyle(fontSize: 11, color: AppColors.gray500),
+                        helperText: 'Default Agent / Merchant Code is 001 for direct app payment',
+                        helperStyle: const TextStyle(fontSize: 11, color: AppColors.emeraldDark, fontWeight: FontWeight.w600),
                       ),
                     ),
                     const SizedBox(height: 14),
@@ -649,6 +663,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       keyboardType: TextInputType.number,
                       obscureText: true,
                       maxLength: 4,
+                      style: const TextStyle(
+                        color: AppColors.obsidian,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 18,
+                        letterSpacing: 4,
+                      ),
                       decoration: const InputDecoration(
                         labelText: '4-Digit Wallet Security PIN',
                         hintText: '••••',
@@ -783,10 +803,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     child: const Icon(Icons.verified_user_rounded, color: AppColors.emeraldDark, size: 24),
                   ),
                   const SizedBox(width: 12),
-                  Expanded(
+                  const Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
+                      children: [
                         Text(
                           '🛡️ Vektolux Escrow Protected',
                           style: TextStyle(

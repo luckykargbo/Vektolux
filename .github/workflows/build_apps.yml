@@ -105,9 +105,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Vektolux Latest Mobile Release (v1.0.5)"
+          name: "Vektolux Latest Mobile Release (v1.0.6)"
           body: |
-            ## Vektolux Mobile App Builds (v1.0.5) — Multi-Vertical Super App
+            ## Vektolux Mobile App Builds (v1.0.6) — Multi-Vertical Super App
 
             ### Direct Downloads:
             - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
@@ -115,20 +115,22 @@ jobs:
             - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
               * Direct sideload / install on any Android device.
 
-            ### What's New in this Build (v1.0.5):
-            - **Hardened Online Sync & Resilient Data Ingestion**:
-              * Zero-wait instantaneous initial render in `MobilityBloc` with background concurrent `Future.wait` hydration.
-              * Per-item streaming sync (`mapConvexList`) and null-safe dynamic parsers preventing batch abortions on malformed rows.
-              * Convex storage URL resolution with safe fallback defaults for missing images, titles, prices, and locations.
-            - **Eliminated Blank Grey Screens & Collapsed Layouts**:
-              * CustomScrollView sliver hierarchy (`SliverToBoxAdapter`, `SliverFillRemaining`, `SliverList`) resolving nested scroll conflicts.
-              * Unified dark branded media fallback (`#1E293B` with emerald icon badges and banners) across all property, rental, and showroom cards.
-            - **Client Role Isolation & Account Security**:
-              * Standard client accounts are strictly isolated from vendor creation tools and operator dashboards.
-              * Dedicated passenger ride cancellation mutation (`rides:cancelRide`) with vehicle release.
-            - **Full-Stack Wallet Accuracy & West Africa Dialing**:
-              * Atomic wallet balance top-ups and deductions with ledger history.
-              * Expanded West African dialing codes with E.164 phone sanitization.
+            ### What's New in this Build (v1.0.6):
+            - **Live Resend Email OTP & Password Recovery**:
+              * Multi-channel password reset via SMS, WhatsApp, and live transactional Email powered by Resend.
+              * 6-digit OTP verification with countdown timers and automated email dispatch.
+            - **Performance & Media Loader Overhaul**:
+              * Zero-lag image rendering and memory leak elimination in `VxNetworkImage`.
+              * Lazy tab rendering in `MainNavigationShell` preventing UI thread saturation.
+            - **Payment Visibility & Mobile Money Agent Code 001**:
+              * High-contrast obsidian black input styling on all payment screens.
+              * Official Agent Code 001 integration for Orange Money and Africell escrow checkouts.
+            - **Pristine Map Experience**:
+              * Clean idle map with simulated driver clutter removed.
+              * Active 3D perspective tracking engages exclusively upon confirmed bookings.
+            - **24-Hour Rental Conditions & Interactive Tour**:
+              * Daily 24-hour vs hourly rental terms sheet with chauffeur options and fuel policies.
+              * 4-step interactive onboarding tour modal for clients, replayable anytime from Profile.
           files: |
             release-assets/Vektolux.ipa
             release-assets/app-release.apk

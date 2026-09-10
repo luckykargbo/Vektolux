@@ -70,8 +70,8 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
       final activeUser = validatedUser ?? cachedUser;
 
-      // Ensure minimum 2.5s splash duration
-      await _ensureMinDuration(stopwatch, const Duration(milliseconds: 2500));
+      // Smooth splash transition (400ms)
+      await _ensureMinDuration(stopwatch, const Duration(milliseconds: 400));
 
       emit(state.copyWith(
         status: AuthStatus.authenticated,
@@ -79,7 +79,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       ));
     } else {
       // No session — route to onboarding / registration
-      await _ensureMinDuration(stopwatch, const Duration(milliseconds: 2500));
+      await _ensureMinDuration(stopwatch, const Duration(milliseconds: 400));
 
       emit(state.copyWith(
         status: AuthStatus.unauthenticated,

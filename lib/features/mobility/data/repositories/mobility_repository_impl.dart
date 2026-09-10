@@ -369,16 +369,14 @@ class MobilityRepositoryImpl implements MobilityRepository {
       final result = await _convexClient.query('mobility:getNearbyDrivers', args: args);
       if (result.success && result.value != null && result.value is List) {
         final list = result.value as List<dynamic>;
-        if (list.isNotEmpty) {
-          return list
-              .map((item) => NearbyDriverEntity.fromJson(item as Map<String, dynamic>))
-              .toList();
-        }
+        return list
+            .map((item) => NearbyDriverEntity.fromJson(item as Map<String, dynamic>))
+            .toList();
       }
-      return _generateSimulatedOnDemandDrivers(lat, lng, serviceFilter);
+      return [];
     } catch (e) {
-      _log.w('Falling back to local simulated on-demand drivers: $e');
-      return _generateSimulatedOnDemandDrivers(lat, lng, serviceFilter);
+      _log.w('Query for nearby drivers returned empty or failed: $e');
+      return [];
     }
   }
 
@@ -387,152 +385,17 @@ class MobilityRepositoryImpl implements MobilityRepository {
     double lng,
     String? serviceFilter,
   ) {
-    return [
-      NearbyDriverEntity(
-        driverId: 'drv_kekeh_01',
-        userId: 'usr_drv_01',
-        driverName: 'Mohamed Kamara',
-        driverPhone: '+232 76 892 104',
-        avatarUrl: null,
-        serviceType: 'ride',
-        currentLat: lat + 0.0035,
-        currentLng: lng - 0.0028,
-        distanceMeters: 450,
-        distanceKm: 0.45,
-        etaMinutes: 3,
-        vehicle: const DriverVehicleInfo(
-          id: 'veh_kekeh_01',
-          make: 'Bajaj',
-          model: 'RE 4S (Tricycle)',
-          year: 2023,
-          color: 'Yellow',
-          licensePlate: 'SL-492-KE',
-          category: DriverVehicleCategory.kekehTricycle,
-          categoryIconKey: 'kekeh_tricycle',
-          isVerified: true,
-        ),
-      ),
-      NearbyDriverEntity(
-        driverId: 'drv_kekeh_02',
-        userId: 'usr_drv_02',
-        driverName: 'Alie Sesay',
-        driverPhone: '+232 78 341 902',
-        avatarUrl: null,
-        serviceType: 'ride',
-        currentLat: lat - 0.0042,
-        currentLng: lng + 0.0031,
-        distanceMeters: 620,
-        distanceKm: 0.62,
-        etaMinutes: 4,
-        vehicle: const DriverVehicleInfo(
-          id: 'veh_kekeh_02',
-          make: 'TVS',
-          model: 'King Deluxe (Tricycle)',
-          year: 2024,
-          color: 'Green',
-          licensePlate: 'SL-118-KE',
-          category: DriverVehicleCategory.kekehTricycle,
-          categoryIconKey: 'kekeh_tricycle',
-          isVerified: true,
-        ),
-      ),
-      NearbyDriverEntity(
-        driverId: 'drv_bike_01',
-        userId: 'usr_drv_03',
-        driverName: 'Ibrahim Bangura',
-        driverPhone: '+232 77 554 219',
-        avatarUrl: null,
-        serviceType: 'both',
-        currentLat: lat + 0.0051,
-        currentLng: lng + 0.0042,
-        distanceMeters: 310,
-        distanceKm: 0.31,
-        etaMinutes: 2,
-        vehicle: const DriverVehicleInfo(
-          id: 'veh_bike_01',
-          make: 'Bajaj',
-          model: 'Boxer 150 (Okada)',
-          year: 2022,
-          color: 'Red',
-          licensePlate: 'SL-883-BK',
-          category: DriverVehicleCategory.deliveryBike,
-          categoryIconKey: 'two_wheeler_delivery',
-          isVerified: true,
-        ),
-      ),
-      NearbyDriverEntity(
-        driverId: 'drv_taxi_01',
-        userId: 'usr_drv_04',
-        driverName: 'Chernor Bah',
-        driverPhone: '+232 30 221 890',
-        avatarUrl: null,
-        serviceType: 'ride',
-        currentLat: lat - 0.0065,
-        currentLng: lng - 0.0048,
-        distanceMeters: 890,
-        distanceKm: 0.89,
-        etaMinutes: 5,
-        vehicle: const DriverVehicleInfo(
-          id: 'veh_taxi_01',
-          make: 'Toyota',
-          model: 'Corolla Sedan',
-          year: 2021,
-          color: 'Silver',
-          licensePlate: 'SL-940-BA',
-          category: DriverVehicleCategory.standard,
-          categoryIconKey: 'standard_taxi',
-          isVerified: true,
-        ),
-      ),
-      NearbyDriverEntity(
-        driverId: 'drv_taxi_02',
-        userId: 'usr_drv_05',
-        driverName: 'Fatmata Koroma',
-        driverPhone: '+232 79 112 345',
-        avatarUrl: null,
-        serviceType: 'ride',
-        currentLat: lat + 0.0022,
-        currentLng: lng + 0.0062,
-        distanceMeters: 750,
-        distanceKm: 0.75,
-        etaMinutes: 4,
-        vehicle: const DriverVehicleInfo(
-          id: 'veh_taxi_02',
-          make: 'Hyundai',
-          model: 'Elantra Comfort',
-          year: 2022,
-          color: 'Blue',
-          licensePlate: 'SL-604-TX',
-          category: DriverVehicleCategory.comfort,
-          categoryIconKey: 'sedan_premium',
-          isVerified: true,
-        ),
-      ),
-      NearbyDriverEntity(
-        driverId: 'drv_van_01',
-        userId: 'usr_drv_06',
-        driverName: 'Samuel Kamara',
-        driverPhone: '+232 76 441 230',
-        avatarUrl: null,
-        serviceType: 'delivery',
-        currentLat: lat - 0.0032,
-        currentLng: lng + 0.0045,
-        distanceMeters: 550,
-        distanceKm: 0.55,
-        etaMinutes: 6,
-        vehicle: const DriverVehicleInfo(
-          id: 'veh_van_01',
-          make: 'Toyota',
-          model: 'HiAce Cargo Van',
-          year: 2023,
-          color: 'White',
-          licensePlate: 'SL-720-VN',
-          category: DriverVehicleCategory.deliveryVan,
-          categoryIconKey: 'delivery_van',
-          isVerified: true,
-        ),
-      ),
-    ];
+    return [];
+  }
+
+  @override
+  Future<List<NearbySellerEntity>> getNearbySellers({
+    required double lat,
+    required double lng,
+    double radiusKm = 10.0,
+  }) async {
+    // Only return sellers if real registered merchants exist; do not show static mock pins on idle map
+    return [];
   }
 
   @override
@@ -594,64 +457,6 @@ class MobilityRepositoryImpl implements MobilityRepository {
       _log.e('Failed to fetch trip delivery: $e');
       return null;
     }
-  }
-
-  @override
-  Future<List<NearbySellerEntity>> getNearbySellers({
-    required double lat,
-    required double lng,
-    double radiusKm = 10.0,
-  }) async {
-    return [
-      NearbySellerEntity(
-        id: 'seller_kissy_01',
-        businessName: 'Kissy Auto & Fleet Spares',
-        ownerName: 'Alhaji Sorie Bah',
-        category: 'Auto Parts & Commercial Fleet',
-        phone: '+232 78 400 123',
-        avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
-        latitude: lat + 0.0062,
-        longitude: lng + 0.0055,
-        address: 'Kissy Bypass Road, East End, Freetown',
-        rating: 4.9,
-        totalSales: 380,
-        isVerified: true,
-        distanceKm: 0.8,
-        etaMinutes: 4,
-      ),
-      NearbySellerEntity(
-        id: 'seller_lumley_02',
-        businessName: 'Lumley Bay Fresh & Goods',
-        ownerName: 'Aminata Mansaray',
-        category: 'Provisions & Hospitality Supply',
-        phone: '+232 76 910 445',
-        avatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150',
-        latitude: lat - 0.0048,
-        longitude: lng - 0.0068,
-        address: 'Lumley Beach Road, Aberdeen Peninsula',
-        rating: 4.8,
-        totalSales: 520,
-        isVerified: true,
-        distanceKm: 1.1,
-        etaMinutes: 6,
-      ),
-      NearbySellerEntity(
-        id: 'seller_waterloo_03',
-        businessName: 'Waterloo Express Traders',
-        ownerName: 'Samuel Conteh',
-        category: 'General Hardware & Construction',
-        phone: '+232 30 882 119',
-        avatarUrl: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=150',
-        latitude: lat + 0.0085,
-        longitude: lng - 0.0034,
-        address: 'Waterloo Main Motor Road',
-        rating: 4.9,
-        totalSales: 210,
-        isVerified: true,
-        distanceKm: 1.7,
-        etaMinutes: 9,
-      ),
-    ];
   }
 
   @override
