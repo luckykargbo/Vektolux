@@ -18,6 +18,8 @@ abstract class AuthRepository {
     String? avatarUrl,
     String? businessName,
     String? tinNumber,
+    String? documentStorageId,
+    String? documentUrl,
   });
 
   /// Login with email or phone + password.

@@ -27,6 +27,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<UpdateUserProfileEvent>(_onUpdateUserProfile);
     on<UserRoleUpdatedEvent>(_onUserRoleUpdated);
     on<SwitchUserModeEvent>(_onSwitchUserMode);
+    on<RefreshUserSessionEvent>(_onRefreshUserSession);
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -122,6 +123,8 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         avatarUrl: event.avatarUrl,
         businessName: event.businessName,
         tinNumber: event.tinNumber,
+        documentStorageId: event.documentStorageId,
+        documentUrl: event.documentUrl,
       );
 
       emit(state.copyWith(
@@ -250,6 +253,32 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       emit(state.copyWith(
         errorMessage: 'Failed to switch mode: $e',
       ));
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //                    REFRESH USER SESSION
+  // ═══════════════════════════════════════════════════════════════════
+
+  Future<void> _onRefreshUserSession(
+    RefreshUserSessionEvent event,
+    Emitter<AuthState> emit,
+  ) async {
+    final currentUser = state.user;
+    if (currentUser == null || currentUser.sessionToken == null) return;
+
+    try {
+      final updatedUser = await _repository.validateSession(
+        userId: currentUser.id,
+        sessionToken: currentUser.sessionToken!,
+      );
+
+      if (updatedUser != null) {
+        emit(state.copyWith(user: updatedUser));
+        _log.i('Refreshed user session. Status: ${updatedUser.verificationStatus}');
+      }
+    } catch (e) {
+      _log.w('Could not refresh user session: $e');
     }
   }
 

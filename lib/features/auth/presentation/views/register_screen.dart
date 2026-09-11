@@ -7,6 +7,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/network/convex_client_wrapper.dart';
+import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../../domain/entities/user_entity.dart';
@@ -14,6 +16,7 @@ import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
 import 'login_screen.dart';
+import 'pending_verification_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -41,6 +44,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _obscureConfirmPassword = true;
   String _countryCode = '+232'; // Sierra Leone default
 
+  // Business Proof Document State
+  String? _documentFileName;
+  int? _documentFileSize;
+  String? _documentStorageId;
+  String? _documentUrl;
+  bool _isUploadingDoc = false;
+  String? _docError;
+
   @override
   void dispose() {
     _pageController.dispose();
@@ -63,6 +74,70 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
+  // ── File Picker & Proof Document Upload (Agents / Merchants) ───────────
+
+  Future<void> _pickProofDocument() async {
+    setState(() => _docError = null);
+    final convexClient = context.read<ConvexClientWrapper>();
+    try {
+      final file = await ImageUploadService.pickImageFromGallery();
+      if (file == null) return;
+
+      final bytes = await file.readAsBytes();
+      final size = bytes.lengthInBytes;
+
+      // 1. Strict size limit: 5MB
+      const maxSizeBytes = 5 * 1024 * 1024;
+      if (size > maxSizeBytes) {
+        setState(() {
+          _docError = 'File exceeds 5MB limit (${(size / (1024 * 1024)).toStringAsFixed(1)} MB).';
+        });
+        return;
+      }
+
+      // 2. Strict format whitelist: PDF, JPEG, PNG
+      final name = file.name.toLowerCase();
+      final isAllowed = name.endsWith('.pdf') ||
+          name.endsWith('.jpg') ||
+          name.endsWith('.jpeg') ||
+          name.endsWith('.png');
+      if (!isAllowed) {
+        setState(() {
+          _docError = 'Invalid format. Only PDF, JPEG, and PNG files are allowed.';
+        });
+        return;
+      }
+
+      setState(() {
+        _documentFileName = file.name;
+        _documentFileSize = size;
+        _isUploadingDoc = true;
+      });
+
+      // Upload directly to Convex cloud storage
+      final uploadRes = await ImageUploadService.uploadImageBinaryWithStorageId(
+        convexClient: convexClient,
+        imageBytes: bytes,
+        contentType: file.mimeType ?? (name.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
+      );
+
+      if (mounted) {
+        setState(() {
+          _documentStorageId = uploadRes.storageId;
+          _documentUrl = uploadRes.publicUrl;
+          _isUploadingDoc = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isUploadingDoc = false;
+          _docError = 'Document upload failed: $e';
+        });
+      }
+    }
+  }
+
   void _onSubmit() {
     if (_selectedRole == null) return;
 
@@ -82,6 +157,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       tinNumber: _selectedRole!.requiresBusinessInfo
           ? _tinController.text.trim()
           : null,
+      documentStorageId: _selectedRole!.requiresBusinessInfo
+          ? _documentStorageId
+          : null,
+      documentUrl: _selectedRole!.requiresBusinessInfo
+          ? _documentUrl
+          : null,
     ));
   }
 
@@ -90,12 +171,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return BlocListener<AuthBloc, AuthState>(
       listener: (context, state) {
         if (state.status == AuthStatus.authenticated && state.user != null) {
+          final user = state.user!;
+          // Business accounts (agent/merchant) with pending or rejected
+          // verification must be sandboxed until admin approves.
+          final needsVerificationGate =
+              (user.role == UserRole.agent || user.role == UserRole.merchant) &&
+              (user.verificationStatus == 'pending' ||
+                  user.verificationStatus == 'rejected');
+
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
-              builder: (_) => const MainNavigationShell(),
+              builder: (_) => needsVerificationGate
+                  ? PendingVerificationScreen(user: user)
+                  : const MainNavigationShell(),
             ),
           );
-        } else if (state.status == AuthStatus.error && state.errorMessage != null) {
+        } else if (state.status == AuthStatus.error &&
+            state.errorMessage != null) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(state.errorMessage!),
@@ -486,8 +578,120 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 decoration: const InputDecoration(
                   labelText: 'TIN / Business Registration Number',
-                  hintText: 'Optional registration code',
+                  hintText: 'e.g. 100482910-4',
                   prefixIcon: Icon(Icons.badge_outlined),
+                ),
+              ),
+              const SizedBox(height: 18),
+
+              // Proof Document Upload Component
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _docError != null
+                        ? AppColors.error
+                        : (_documentStorageId != null ? AppColors.emerald : AppColors.border),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          _documentStorageId != null
+                              ? Icons.check_circle_rounded
+                              : Icons.upload_file_rounded,
+                          color: _documentStorageId != null ? AppColors.emerald : AppColors.obsidian,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Business Registration / TIN Proof',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                            color: AppColors.obsidian,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Text(
+                          '*',
+                          style: TextStyle(color: AppColors.error, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Upload business certificate or tax clearance (PDF, JPEG, PNG - Max 5MB)',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    if (_documentStorageId != null) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: AppColors.emeraldSurface,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: AppColors.emerald.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.description_rounded, color: AppColors.emeraldDark, size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '${_documentFileName ?? "Document"} (${(_documentFileSize! / 1024).toStringAsFixed(0)} KB)',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.emeraldDark,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: _isUploadingDoc ? null : _pickProofDocument,
+                              style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(40, 28)),
+                              child: const Text('Change', style: TextStyle(fontSize: 12)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ] else ...[
+                      OutlinedButton.icon(
+                        onPressed: _isUploadingDoc ? null : _pickProofDocument,
+                        icon: _isUploadingDoc
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.emerald),
+                              )
+                            : const Icon(Icons.attach_file_rounded, size: 18),
+                        label: Text(_isUploadingDoc ? 'Uploading Document...' : 'Select Document (PDF/JPEG/PNG)'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.obsidian,
+                          side: const BorderSide(color: AppColors.border),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                    ],
+
+                    if (_docError != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _docError!,
+                        style: const TextStyle(color: AppColors.error, fontSize: 12),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ],
@@ -500,6 +704,38 @@ class _RegisterScreenState extends State<RegisterScreen> {
               child: ElevatedButton(
                 onPressed: () {
                   if (_formKey.currentState?.validate() == true) {
+                    if (requiresBusiness) {
+                      if (_businessNameController.text.trim().isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Business Name is required for Agent registration.'),
+                            backgroundColor: AppColors.error,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                        return;
+                      }
+                      if (_tinController.text.trim().isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('TIN / Business Registration Number is required.'),
+                            backgroundColor: AppColors.error,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                        return;
+                      }
+                      if (_documentStorageId == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Please upload your business registration or TIN proof document (<= 5MB).'),
+                            backgroundColor: AppColors.error,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                        return;
+                      }
+                    }
                     _goToStep(2);
                   }
                 },
@@ -570,6 +806,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     value: _tinController.text.isNotEmpty
                         ? _tinController.text
                         : 'Not provided',
+                  ),
+                  const Divider(height: 20),
+                  _SummaryRow(
+                    label: 'Proof Doc',
+                    value: _documentFileName ?? (_documentStorageId != null ? 'Attached (Ready)' : 'Not attached'),
                   ),
                 ],
               ],

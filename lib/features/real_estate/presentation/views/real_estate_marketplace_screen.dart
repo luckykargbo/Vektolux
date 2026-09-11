@@ -13,6 +13,7 @@ import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/vx_network_image.dart';
+import '../../../auth/domain/entities/user_entity.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
@@ -367,6 +368,54 @@ class _RealEstateMarketplaceScreenState
           : null,
       body: Column(
         children: [
+          // ── Agent Restricted / Pending Sandbox Notice ─────────────
+          if (user != null && user.role == UserRole.agent) ...[
+            if (user.isPendingVerification)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                color: const Color(0xFFFEF3C7),
+                child: const Row(
+                  children: [
+                    Icon(Icons.hourglass_top_rounded, size: 18, color: Color(0xFFD97706)),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Your business verification is currently under review. Listing features are restricted.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF92400E),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else if (user.isRejectedVerification)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                color: const Color(0xFFFEE2E2),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline_rounded, size: 18, color: Color(0xFFDC2626)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Verification rejected: ${user.rejectionReason ?? "Document not accepted"}. Please update and resubmit.',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF991B1B),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+
           // ── Search & Location Filter Bar ──────────────────────────
           Container(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),

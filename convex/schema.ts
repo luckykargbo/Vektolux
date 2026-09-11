@@ -24,7 +24,9 @@ export const verificationStatusEnum = v.union(
   v.literal("unverified"),
   v.literal("pending"),
   v.literal("verified"),
-  v.literal("rejected")
+  v.literal("approved"),
+  v.literal("rejected"),
+  v.literal("suspended")
 );
 
 export const idDocumentTypeEnum = v.union(
@@ -176,11 +178,16 @@ export default defineSchema({
     isVerified: v.boolean(),
     isActive: v.boolean(),
     verifiedAt: v.optional(v.number()),
+    verifiedBy: v.optional(v.id("users")),
     verificationStatus: v.optional(verificationStatusEnum),
     verificationBadge: v.optional(verificationBadgeEnum),
     idDocumentType: v.optional(idDocumentTypeEnum),
     verificationReferenceId: v.optional(v.string()),
     rejectionReason: v.optional(v.string()),
+    businessName: v.optional(v.string()),
+    tinNumber: v.optional(v.string()),
+    documentUrl: v.optional(v.string()),
+    documentStorageId: v.optional(v.id("_storage")),
 
     // Auth
     passwordHash: v.optional(v.string()),
@@ -222,6 +229,8 @@ export default defineSchema({
     .index("by_role_active", ["role", "isActive"])
     .index("by_external_auth", ["authProvider", "externalAuthId"])
     .index("by_geohash", ["currentGeohash"])
+    .index("by_verification_status", ["verificationStatus"])
+    .index("by_role_verification", ["role", "verificationStatus"])
     .searchIndex("search_name", {
       searchField: "name",
       filterFields: ["role", "isActive"],
@@ -522,7 +531,9 @@ export default defineSchema({
       v.literal("pending"),
       v.literal("submitted"),
       v.literal("verified"),
-      v.literal("rejected")
+      v.literal("approved"),
+      v.literal("rejected"),
+      v.literal("suspended")
     ),
     verifiedAt: v.optional(v.number()),
     reviewNotes: v.optional(v.string()),

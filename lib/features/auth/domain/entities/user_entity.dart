@@ -65,11 +65,16 @@ class UserEntity extends Equatable {
   final String? avatarUrl;
   final String? walletAddress;
   final String? sessionToken;
-  final String verificationStatus; // 'unverified', 'pending', 'verified', 'rejected'
+  final String verificationStatus; // 'unverified', 'pending', 'verified', 'approved', 'rejected', 'suspended'
   final String verificationBadge;  // 'NONE', 'GREEN_TICK'
   final String activeMode;         // 'passenger' | 'driver'
   final bool isDriverVerified;
   final String driverStatus;       // 'offline' | 'online' | 'busy'
+  final String? businessName;
+  final String? tinNumber;
+  final String? documentUrl;
+  final String? rejectionReason;
+  final int? verifiedAt;
 
   const UserEntity({
     required this.id,
@@ -86,15 +91,25 @@ class UserEntity extends Equatable {
     this.activeMode = 'passenger',
     this.isDriverVerified = false,
     this.driverStatus = 'offline',
+    this.businessName,
+    this.tinNumber,
+    this.documentUrl,
+    this.rejectionReason,
+    this.verifiedAt,
   });
 
   bool get isDriverMode => activeMode == 'driver';
   bool get canSwitchToDriver => isDriverVerified || role == UserRole.driver;
 
-  /// Role permission helpers for client isolation
+  /// Verification status helpers
+  bool get isPendingVerification => verificationStatus == 'pending';
+  bool get isApprovedVerification => verificationStatus == 'approved' || verificationStatus == 'verified';
+  bool get isRejectedVerification => verificationStatus == 'rejected';
+
+  /// Role permission helpers for client isolation & sandbox enforcement
   bool get isNormalClient => role == UserRole.client;
-  bool get canPostRealEstate => role == UserRole.agent || role == UserRole.admin;
-  bool get canPostVehicle => role == UserRole.merchant || role == UserRole.admin;
+  bool get canPostRealEstate => (role == UserRole.agent && isApprovedVerification) || role == UserRole.admin;
+  bool get canPostVehicle => (role == UserRole.merchant && isApprovedVerification) || role == UserRole.admin;
   bool get canPostAnyListing => canPostRealEstate || canPostVehicle;
 
   UserEntity copyWith({
@@ -112,6 +127,11 @@ class UserEntity extends Equatable {
     String? activeMode,
     bool? isDriverVerified,
     String? driverStatus,
+    String? businessName,
+    String? tinNumber,
+    String? documentUrl,
+    String? rejectionReason,
+    int? verifiedAt,
   }) {
     return UserEntity(
       id: id ?? this.id,
@@ -128,6 +148,11 @@ class UserEntity extends Equatable {
       activeMode: activeMode ?? this.activeMode,
       isDriverVerified: isDriverVerified ?? this.isDriverVerified,
       driverStatus: driverStatus ?? this.driverStatus,
+      businessName: businessName ?? this.businessName,
+      tinNumber: tinNumber ?? this.tinNumber,
+      documentUrl: documentUrl ?? this.documentUrl,
+      rejectionReason: rejectionReason ?? this.rejectionReason,
+      verifiedAt: verifiedAt ?? this.verifiedAt,
     );
   }
 
@@ -147,5 +172,10 @@ class UserEntity extends Equatable {
         activeMode,
         isDriverVerified,
         driverStatus,
+        businessName,
+        tinNumber,
+        documentUrl,
+        rejectionReason,
+        verifiedAt,
       ];
 }

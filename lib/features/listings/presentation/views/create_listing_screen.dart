@@ -89,15 +89,43 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   late bool _isUserVerified;
   String _verificationStatus = 'unverified';
 
+  // Business verification (for agents/merchants only)
+  String _businessVerificationStatus = 'unverified';
+
+  /// True when the user has all required verifications to publish listings.
+  bool get _canPublish {
+    final role = widget.currentUser.role;
+    if (role == UserRole.agent || role == UserRole.merchant) {
+      // Agents/merchants need approved business verification (identity KYC optional)
+      return _businessVerificationStatus == 'approved' ||
+          _businessVerificationStatus == 'verified';
+    }
+    // Clients only need identity KYC
+    return _isUserVerified;
+  }
+
+  /// Explanation string for the gate banner.
+  String get _verificationGateStatus {
+    final role = widget.currentUser.role;
+    if (role == UserRole.agent || role == UserRole.merchant) {
+      return _businessVerificationStatus;
+    }
+    return _verificationStatus;
+  }
+
   @override
   void initState() {
     super.initState();
     _isUserVerified = widget.currentUser.isVerified;
     _verificationStatus = widget.currentUser.verificationStatus;
+    _businessVerificationStatus = widget.currentUser.verificationStatus;
     _checkLiveVerificationStatus();
   }
 
   void _checkLiveVerificationStatus() async {
+    final role = widget.currentUser.role;
+
+    // Always check identity KYC
     final res = await widget.convexClient.query(
       'verification:getVerificationStatus',
       args: {'userId': widget.currentUser.id},
@@ -108,6 +136,25 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
         _isUserVerified = data['isVerified'] as bool? ?? false;
         _verificationStatus = data['status'] as String? ?? 'unverified';
       });
+    }
+
+    // For agents/merchants also check business verification
+    if (role == UserRole.agent || role == UserRole.merchant) {
+      final bizRes = await widget.convexClient.query(
+        'businessVerification:getMyVerificationStatus',
+        args: {
+          'userId': widget.currentUser.id,
+          if (widget.currentUser.sessionToken != null)
+            'sessionToken': widget.currentUser.sessionToken,
+        },
+      );
+      if (bizRes.success && bizRes.value != null && mounted) {
+        final bizData = bizRes.value as Map<String, dynamic>;
+        setState(() {
+          _businessVerificationStatus =
+              bizData['verificationStatus'] as String? ?? 'pending';
+        });
+      }
     }
   }
 
@@ -301,7 +348,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
 
   /// Final submit: save to Convex backend & cache directly to SQLite
   Future<void> _submitListing() async {
-    if (!_isUserVerified) {
+    if (!_canPublish) {
       _openVerificationWizard();
       return;
     }
@@ -459,7 +506,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text('New Marketplace Listing'),
-            if (_isUserVerified) ...[
+            if (_canPublish) ...[ 
               const SizedBox(width: 8),
               const VerifiedBadge(size: VerifiedBadgeSize.small, showLabel: true),
             ],
@@ -503,10 +550,10 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (!_isUserVerified) ...[
+          if (!_canPublish) ...[
             VerificationGateBanner(
               onStartVerification: _openVerificationWizard,
-              pendingStatus: _verificationStatus,
+              pendingStatus: _verificationGateStatus,
             ),
             const SizedBox(height: 24),
           ],
@@ -549,12 +596,12 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             width: double.infinity,
             height: 56,
             child: ElevatedButton(
-              onPressed: _isUserVerified ? () => _goToStep(1) : _openVerificationWizard,
+              onPressed: _canPublish ? () => _goToStep(1) : _openVerificationWizard,
               style: ElevatedButton.styleFrom(
-                backgroundColor: _isUserVerified ? AppColors.emerald : AppColors.amber,
+                backgroundColor: _canPublish ? AppColors.emerald : AppColors.amber,
               ),
               child: Text(
-                _isUserVerified ? 'Continue to Details' : 'Verify Identity to Continue',
+                _canPublish ? 'Continue to Details' : 'Verify to Continue',
               ),
             ),
           ),

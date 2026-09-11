@@ -12,6 +12,7 @@ import type * as admin from "../admin.js";
 import type * as auth from "../auth.js";
 import type * as blockchain from "../blockchain.js";
 import type * as bookings from "../bookings.js";
+import type * as businessVerification from "../businessVerification.js";
 import type * as driverVehicles from "../driverVehicles.js";
 import type * as emails from "../emails.js";
 import type * as files from "../files.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   blockchain: typeof blockchain;
   bookings: typeof bookings;
+  businessVerification: typeof businessVerification;
   driverVehicles: typeof driverVehicles;
   emails: typeof emails;
   files: typeof files;

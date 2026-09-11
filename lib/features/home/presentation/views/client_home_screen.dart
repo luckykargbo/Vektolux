@@ -12,9 +12,12 @@ import 'package:intl/intl.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/widgets/vektolux_avatar.dart';
 import '../../../../core/widgets/vx_network_image.dart';
+import '../../../auth/domain/entities/user_entity.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
+import '../../../auth/presentation/bloc/auth_event.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
 import '../../../listings/presentation/views/vehicle_detail_screen.dart';
@@ -386,6 +389,18 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     child: _buildHeader(userName, user?.avatarUrl),
                   ),
 
+                  // ── Agent Sandbox / Verification Status Banners ──
+                  if (user != null && (user.role == UserRole.agent || user.role == UserRole.merchant)) ...[
+                    if (user.isPendingVerification)
+                      SliverToBoxAdapter(
+                        child: _buildPendingVerificationBanner(user),
+                      )
+                    else if (user.isRejectedVerification)
+                      SliverToBoxAdapter(
+                        child: _buildRejectedVerificationBanner(user),
+                      ),
+                  ],
+
                   // ── 2. Global Search Bar ──────────────────────────
                   SliverToBoxAdapter(
                     child: _buildSearchBar(),
@@ -439,6 +454,441 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   // ═══════════════════════════════════════════════════════════════════
   //                         UI COMPONENTS
   // ═══════════════════════════════════════════════════════════════════
+
+  Widget _buildPendingVerificationBanner(UserEntity user) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB), // Amber 50
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFDE68A)), // Amber 200
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF3C7),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.hourglass_top_rounded, color: Color(0xFFD97706), size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      'Verification Under Review',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF92400E),
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF59E0B),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'SANDBOX MODE',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Your business verification is currently under review. Listing features are restricted.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFFB45309),
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRejectedVerificationBanner(UserEntity user) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2), // Red 50
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFECACA)), // Red 200
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEE2E2),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.error_outline_rounded, color: Color(0xFFDC2626), size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Text(
+                          'Verification Rejected',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF991B1B),
+                          ),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFDC2626),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'ACTION REQUIRED',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Verification rejected: ${user.rejectionReason ?? "Information or document did not match records"}. Please update your documents and resubmit.',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFFB91C1C),
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFDC2626),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                minimumSize: const Size(0, 32),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              icon: const Icon(Icons.replay_rounded, size: 16),
+              label: const Text('Update & Resubmit', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+              onPressed: () => _showResubmitVerificationModal(context, user),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showResubmitVerificationModal(BuildContext context, UserEntity user) {
+    final businessController = TextEditingController(text: user.businessName ?? '');
+    final tinController = TextEditingController(text: user.tinNumber ?? '');
+    String? storageId;
+    String? fileName;
+    int? fileSize;
+    bool isUploading = false;
+    String? errorMsg;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.gray300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Resubmit Business Verification',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.obsidian,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Update your business details and upload an official document (PDF, JPEG, PNG <= 5MB) for administrator review.',
+                    style: TextStyle(fontSize: 13, color: AppColors.gray500),
+                  ),
+                  const SizedBox(height: 18),
+
+                  TextField(
+                    controller: businessController,
+                    decoration: const InputDecoration(
+                      labelText: 'Business / Company Name',
+                      hintText: 'e.g. Sierra Prime Properties',
+                      prefixIcon: Icon(Icons.business_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  TextField(
+                    controller: tinController,
+                    decoration: const InputDecoration(
+                      labelText: 'TIN / Business Registration #',
+                      hintText: 'e.g. 10098234-1',
+                      prefixIcon: Icon(Icons.badge_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // File upload box
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppColors.gray50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: storageId != null ? AppColors.emerald : AppColors.border,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              storageId != null ? Icons.check_circle_rounded : Icons.upload_file_rounded,
+                              color: storageId != null ? AppColors.emerald : AppColors.gray600,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'Proof Document (PDF/JPEG/PNG <= 5MB)',
+                              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        if (storageId != null) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: AppColors.emeraldSurface,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.check, color: AppColors.emeraldDark, size: 16),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    '${fileName ?? "Document"} (${((fileSize ?? 0) / 1024).toStringAsFixed(0)} KB)',
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.emeraldDark),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ] else ...[
+                          OutlinedButton.icon(
+                            onPressed: isUploading
+                                ? null
+                                : () async {
+                                    setModalState(() => errorMsg = null);
+                                    try {
+                                      final file = await ImageUploadService.pickImageFromGallery();
+                                      if (file == null) return;
+
+                                      final bytes = await file.readAsBytes();
+                                      final size = bytes.lengthInBytes;
+
+                                      if (size > 5 * 1024 * 1024) {
+                                        setModalState(() {
+                                          errorMsg = 'File exceeds 5MB limit (${(size / (1024 * 1024)).toStringAsFixed(1)} MB).';
+                                        });
+                                        return;
+                                      }
+
+                                      final name = file.name.toLowerCase();
+                                      if (!name.endsWith('.pdf') && !name.endsWith('.jpg') && !name.endsWith('.jpeg') && !name.endsWith('.png')) {
+                                        setModalState(() {
+                                          errorMsg = 'Only PDF, JPEG, and PNG files are allowed.';
+                                        });
+                                        return;
+                                      }
+
+                                      setModalState(() {
+                                        isUploading = true;
+                                        fileName = file.name;
+                                        fileSize = size;
+                                      });
+
+                                      final uploadRes = await ImageUploadService.uploadImageBinaryWithStorageId(
+                                        convexClient: widget.convexClient,
+                                        imageBytes: bytes,
+                                        contentType: file.mimeType ?? 'image/jpeg',
+                                      );
+
+                                      setModalState(() {
+                                        storageId = uploadRes.storageId;
+                                        isUploading = false;
+                                      });
+                                    } catch (err) {
+                                      setModalState(() {
+                                        isUploading = false;
+                                        errorMsg = 'Upload failed: $err';
+                                      });
+                                    }
+                                  },
+                            icon: isUploading
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.emerald),
+                                  )
+                                : const Icon(Icons.attach_file_rounded, size: 16),
+                            label: Text(isUploading ? 'Uploading...' : 'Choose Document'),
+                          ),
+                        ],
+                        if (errorMsg != null) ...[
+                          const SizedBox(height: 6),
+                          Text(errorMsg!, style: const TextStyle(color: AppColors.error, fontSize: 12)),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.emeraldDark,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: isUploading
+                          ? null
+                          : () async {
+                              final bName = businessController.text.trim();
+                              final tNum = tinController.text.trim();
+
+                              if (bName.isEmpty) {
+                                setModalState(() => errorMsg = 'Business Name is required.');
+                                return;
+                              }
+                              if (tNum.isEmpty) {
+                                setModalState(() => errorMsg = 'TIN Number is required.');
+                                return;
+                              }
+                              if (storageId == null) {
+                                setModalState(() => errorMsg = 'Please attach a proof document.');
+                                return;
+                              }
+
+                              setModalState(() => isUploading = true);
+
+                              try {
+                                final res = await widget.convexClient.mutation(
+                                  'businessVerification:submitAgentVerification',
+                                  args: {
+                                    'userId': user.id,
+                                    'sessionToken': user.sessionToken,
+                                    'businessName': bName,
+                                    'tinNumber': tNum,
+                                    'documentStorageId': storageId,
+                                  },
+                                );
+
+                                if (res.success) {
+                                  Navigator.pop(ctx);
+                                  context.read<AuthBloc>().add(const RefreshUserSessionEvent());
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Verification submitted! Under administrative review.'),
+                                      backgroundColor: AppColors.emeraldDark,
+                                      behavior: SnackBarBehavior.floating,
+                                    ),
+                                  );
+                                } else {
+                                  setModalState(() {
+                                    isUploading = false;
+                                    errorMsg = res.errorMessage ?? 'Submission failed';
+                                  });
+                                }
+                              } catch (e) {
+                                setModalState(() {
+                                  isUploading = false;
+                                  errorMsg = 'Error: $e';
+                                });
+                              }
+                            },
+                      child: const Text('Submit Application for Review', style: TextStyle(fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   Widget _buildHeader(String firstName, String? avatarUrl) {
     final hour = DateTime.now().hour;

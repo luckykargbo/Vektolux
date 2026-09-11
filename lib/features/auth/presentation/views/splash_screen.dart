@@ -9,11 +9,13 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../auth/domain/entities/user_entity.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
 import 'login_screen.dart';
+import 'pending_verification_screen.dart';
 
 /// Custom Vektolux brand vector SVG.
 const String _kVektoluxSvg = '''
@@ -100,9 +102,19 @@ class _SplashScreenState extends State<SplashScreen>
       listenWhen: (prev, curr) => prev.status != curr.status,
       listener: (context, state) {
         if (state.status == AuthStatus.authenticated && state.user != null) {
+          final user = state.user!;
+          // Business accounts (agent/merchant) with pending or rejected
+          // verification must be sandboxed until admin approves.
+          final needsVerificationGate =
+              (user.role == UserRole.agent || user.role == UserRole.merchant) &&
+              (user.verificationStatus == 'pending' ||
+                  user.verificationStatus == 'rejected');
+
           Navigator.of(context).pushReplacement(
             _createFadeRoute(
-              const MainNavigationShell(),
+              needsVerificationGate
+                  ? PendingVerificationScreen(user: user)
+                  : const MainNavigationShell(),
             ),
           );
         } else if (state.status == AuthStatus.unauthenticated) {

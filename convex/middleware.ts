@@ -51,11 +51,11 @@ export async function requireVerifiedSeller(
     throw new Error("Session expired or invalid. Please authenticate again.");
   }
 
-  // 4. Verification Check
+  // 4. Verification Check: Agents/Sellers must be approved or verified
   const isVerified = user.isVerified === true;
   const status = user.verificationStatus ?? (isVerified ? "verified" : "unverified");
 
-  if (!isVerified || status !== "verified") {
+  if (!isVerified || (status !== "verified" && status !== "approved")) {
     throw new SellerNotVerifiedException(status);
   }
 

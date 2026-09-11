@@ -26,6 +26,7 @@ import '../../../admin/presentation/views/admin_dev_tools_screen.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/my_listings_screen.dart';
+import '../../../auth/presentation/views/pending_verification_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? currentUserId;
@@ -812,6 +813,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                 const SizedBox(height: 18),
 
+                // ── 1A. Business Verification Status Card (Agents & Merchants) ──
+                if (user != null && (user.role == UserRole.agent || user.role == UserRole.merchant)) ...[
+                  _buildBusinessVerificationCard(context, user),
+                  const SizedBox(height: 18),
+                ],
+
                 // ── 1B. Dual-Role Mode Switcher (Only if driver verified/registered) ──
                 if (user?.canSwitchToDriver == true) ...[
                   _buildSectionHeader('WORKSPACE & ACCOUNT MODE'),
@@ -1453,6 +1460,159 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildBusinessVerificationCard(BuildContext context, UserEntity user) {
+    final status = user.verificationStatus.toLowerCase();
+    final isApproved = status == 'approved' || status == 'verified' || user.isVerified;
+    final isRejected = status == 'rejected';
+    final isPending = !isApproved && !isRejected;
+
+    final Color badgeColor = isApproved
+        ? AppColors.emerald
+        : isRejected
+            ? AppColors.error
+            : const Color(0xFFD97706);
+    final Color badgeBg = isApproved
+        ? const Color(0xFFD1FAE5)
+        : isRejected
+            ? const Color(0xFFFEE2E2)
+            : const Color(0xFFFEF3C7);
+    final String badgeLabel = isApproved
+        ? 'VERIFIED BUSINESS'
+        : isRejected
+            ? 'VERIFICATION REJECTED'
+            : 'VERIFICATION PENDING';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: isPending
+              ? const Color(0xFFF59E0B).withValues(alpha: 0.5)
+              : isRejected
+                  ? AppColors.error.withValues(alpha: 0.5)
+                  : AppColors.border,
+          width: isPending || isRejected ? 1.5 : 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: badgeBg,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  isApproved
+                      ? Icons.verified_rounded
+                      : isRejected
+                          ? Icons.error_outline_rounded
+                          : Icons.pending_actions_rounded,
+                  color: badgeColor,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      user.businessName ?? (user.role == UserRole.agent ? 'Agent Business Account' : 'Merchant Business Account'),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.obsidian,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      user.tinNumber != null && user.tinNumber!.isNotEmpty
+                          ? 'TIN: ${user.tinNumber}'
+                          : 'TIN proof submitted for review',
+                      style: const TextStyle(fontSize: 12, color: AppColors.gray500),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: badgeBg,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  badgeLabel,
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    color: badgeColor,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (isRejected && user.rejectionReason != null && user.rejectionReason!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFFECACA)),
+              ),
+              child: Text(
+                'Reason: ${user.rejectionReason}',
+                style: const TextStyle(fontSize: 12, color: Color(0xFF991B1B)),
+              ),
+            ),
+          ],
+          if (!isApproved) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => PendingVerificationScreen(user: user),
+                    ),
+                  );
+                },
+                icon: Icon(
+                  isRejected ? Icons.refresh_rounded : Icons.info_outline_rounded,
+                  size: 16,
+                  color: badgeColor,
+                ),
+                label: Text(
+                  isRejected ? 'Resubmit Business Verification' : 'Check Verification Status',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: badgeColor,
+                  ),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: badgeColor.withValues(alpha: 0.5)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 

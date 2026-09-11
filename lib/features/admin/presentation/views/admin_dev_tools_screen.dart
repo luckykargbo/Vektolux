@@ -66,12 +66,18 @@ class _AdminDevToolsScreenState extends State<AdminDevToolsScreen>
   List<Map<String, dynamic>> _archivedPosts = [];
   String _archiveSearch = '';
 
+  // Agent Verification Queue State
+  bool _isLoadingVerifications = false;
+  List<Map<String, dynamic>> _verificationQueue = [];
+  String _verificationFilter = 'pending'; // 'pending', 'approved', 'rejected', 'all'
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     _loadAdminListings();
     _loadArchivedPosts();
+    _loadVerificationQueue();
   }
 
   Future<void> _loadArchivedPosts() async {
@@ -391,6 +397,7 @@ class _AdminDevToolsScreenState extends State<AdminDevToolsScreen>
           indicatorColor: const Color(0xFF059669),
           indicatorWeight: 3,
           tabs: const [
+            Tab(icon: Icon(Icons.verified_user_rounded, size: 20), text: 'Verifications'),
             Tab(icon: Icon(Icons.flash_on, size: 20), text: 'Quick Seed'),
             Tab(icon: Icon(Icons.cloud_upload, size: 20), text: 'Asset Uploader'),
             Tab(icon: Icon(Icons.view_list, size: 20), text: 'Listings'),
@@ -401,6 +408,7 @@ class _AdminDevToolsScreenState extends State<AdminDevToolsScreen>
       body: TabBarView(
         controller: _tabController,
         children: [
+          _buildVerificationQueueTab(),
           _buildQuickSeedTab(),
           _buildAssetUploaderTab(),
           _buildListingsInspectorTab(),
@@ -1486,6 +1494,641 @@ class _AdminDevToolsScreenState extends State<AdminDevToolsScreen>
       ),
     );
   }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //                 TAB: AGENT VERIFICATIONS QUEUE
+  // ═══════════════════════════════════════════════════════════════════
+
+  Future<void> _loadVerificationQueue() async {
+    setState(() => _isLoadingVerifications = true);
+    try {
+      final res = await widget.convexClient.query(
+        'businessVerification:getVerificationQueue',
+        args: {
+          'adminId': widget.currentUser.id,
+          if (widget.currentUser.sessionToken != null)
+            'sessionToken': widget.currentUser.sessionToken,
+          'statusFilter': _verificationFilter,
+        },
+      );
+
+      if (res.success && res.value != null) {
+        final list = (res.value as List)
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
+        if (mounted) {
+          setState(() {
+            _verificationQueue = list;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load verification queue: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingVerifications = false);
+    }
+  }
+
+  Future<void> _approveAgent(Map<String, dynamic> agent) async {
+    final agentId = agent['userId'] as String;
+    final agentName = agent['name'] as String? ?? 'Agent';
+
+    // Optimistic UI update
+    setState(() {
+      final idx = _verificationQueue.indexWhere((a) => a['userId'] == agentId);
+      if (idx != -1) {
+        if (_verificationFilter == 'pending') {
+          _verificationQueue.removeAt(idx);
+        } else {
+          _verificationQueue[idx]['verificationStatus'] = 'approved';
+        }
+      }
+    });
+
+    try {
+      final res = await widget.convexClient.mutation(
+        'businessVerification:approveAgent',
+        args: {
+          'adminId': widget.currentUser.id,
+          if (widget.currentUser.sessionToken != null)
+            'sessionToken': widget.currentUser.sessionToken,
+          'agentId': agentId,
+        },
+      );
+
+      if (res.success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('$agentName approved successfully!'),
+              backgroundColor: const Color(0xFF059669),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } else {
+        _loadVerificationQueue();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(res.errorMessage ?? 'Approval failed')),
+          );
+        }
+      }
+    } catch (e) {
+      _loadVerificationQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error approving agent: $e')),
+        );
+      }
+    }
+  }
+
+  void _promptRejectAgent(Map<String, dynamic> agent) {
+    final agentId = agent['userId'] as String;
+    final agentName = agent['name'] as String? ?? 'Agent';
+    final reasonController = TextEditingController();
+    String? reasonError;
+
+    final messenger = ScaffoldMessenger.of(context);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (dialogCtx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text('Reject $agentName', style: const TextStyle(fontWeight: FontWeight.bold)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Please specify the reason for rejection. This reason will be visible to the agent so they can correct their documents.',
+                style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: reasonController,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  labelText: 'Rejection Reason *',
+                  hintText: 'e.g. Expired business registration / TIN not found in official registry',
+                  errorText: reasonError,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.error,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () async {
+                final reason = reasonController.text.trim();
+                if (reason.isEmpty) {
+                  setDialogState(() => reasonError = 'Rejection reason is required.');
+                  return;
+                }
+
+                Navigator.pop(ctx);
+
+                // Optimistic UI update
+                setState(() {
+                  final idx = _verificationQueue.indexWhere((a) => a['userId'] == agentId);
+                  if (idx != -1) {
+                    if (_verificationFilter == 'pending') {
+                      _verificationQueue.removeAt(idx);
+                    } else {
+                      _verificationQueue[idx]['verificationStatus'] = 'rejected';
+                      _verificationQueue[idx]['rejectionReason'] = reason;
+                    }
+                  }
+                });
+
+                try {
+                  final res = await widget.convexClient.mutation(
+                    'businessVerification:rejectAgent',
+                    args: {
+                      'adminId': widget.currentUser.id,
+                      if (widget.currentUser.sessionToken != null)
+                        'sessionToken': widget.currentUser.sessionToken,
+                      'agentId': agentId,
+                      'reason': reason,
+                    },
+                  );
+
+                  if (res.success) {
+                    if (mounted) {
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text('$agentName rejected with reason logged.'),
+                          backgroundColor: AppColors.obsidian,
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    }
+                  } else {
+                    _loadVerificationQueue();
+                    if (mounted) {
+                      messenger.showSnackBar(
+                        SnackBar(content: Text(res.errorMessage ?? 'Rejection failed')),
+                      );
+                    }
+                  }
+                } catch (e) {
+                  _loadVerificationQueue();
+                  if (mounted) {
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('Error rejecting agent: $e')),
+                    );
+                  }
+                }
+              },
+              child: const Text('Confirm Rejection'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _previewProofDocument(Map<String, dynamic> agent) {
+    final docUrl = agent['documentUrl'] as String?;
+    final name = agent['name'] as String? ?? 'Agent';
+    final businessName = agent['businessName'] as String? ?? 'Business';
+
+    if (docUrl == null || docUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No proof document available for preview.')),
+      );
+      return;
+    }
+
+    final isImage = docUrl.contains('.jpg') ||
+        docUrl.contains('.jpeg') ||
+        docUrl.contains('.png') ||
+        docUrl.contains('image');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.verified_outlined, color: Color(0xFF059669), size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Proof: $businessName',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Agent: $name', style: const TextStyle(fontSize: 13, color: Color(0xFF64748B))),
+              const SizedBox(height: 12),
+              if (isImage)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.network(
+                    docUrl,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: Text('Failed to load image preview.'),
+                      ),
+                    ),
+                  ),
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.picture_as_pdf_rounded, color: Color(0xFFDC2626), size: 36),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('PDF Document Attached', style: TextStyle(fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 4),
+                            Text(
+                              docUrl,
+                              style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: docUrl));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Document URL copied to clipboard!')),
+              );
+            },
+            child: const Text('Copy URL'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.obsidian,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVerificationQueueTab() {
+    return Column(
+      children: [
+        // Filter Bar & Header
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          color: Colors.white,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Text(
+                    'Agent Verification Queue',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.refresh_rounded, size: 20, color: Color(0xFF059669)),
+                    tooltip: 'Refresh Queue',
+                    onPressed: _loadVerificationQueue,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _buildVerificationFilterChip('pending', 'Pending Review'),
+                    const SizedBox(width: 8),
+                    _buildVerificationFilterChip('approved', 'Approved'),
+                    const SizedBox(width: 8),
+                    _buildVerificationFilterChip('rejected', 'Rejected'),
+                    const SizedBox(width: 8),
+                    _buildVerificationFilterChip('all', 'All Applications'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+
+        // Queue List
+        Expanded(
+          child: _isLoadingVerifications
+              ? const Center(child: CircularProgressIndicator(color: Color(0xFF059669)))
+              : _verificationQueue.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.verified_user_outlined, size: 54, color: Color(0xFFCBD5E1)),
+                          const SizedBox(height: 12),
+                          Text(
+                            'No agents in $_verificationFilter queue',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF64748B),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'New agent submissions will appear here for manual verification.',
+                            style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _verificationQueue.length,
+                      itemBuilder: (context, index) {
+                        final agent = _verificationQueue[index];
+                        return _buildAgentVerificationCard(agent);
+                      },
+                    ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVerificationFilterChip(String filter, String label) {
+    final isSelected = _verificationFilter == filter;
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (_) {
+        setState(() => _verificationFilter = filter);
+        _loadVerificationQueue();
+      },
+      selectedColor: const Color(0xFF059669).withValues(alpha: 0.15),
+      labelStyle: TextStyle(
+        fontSize: 12,
+        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+        color: isSelected ? const Color(0xFF059669) : const Color(0xFF64748B),
+      ),
+    );
+  }
+
+  Widget _buildAgentVerificationCard(Map<String, dynamic> agent) {
+    final name = agent['name'] as String? ?? 'Unnamed Agent';
+    final email = agent['email'] as String? ?? 'No email';
+    final phone = agent['phone'] as String? ?? 'No phone';
+    final businessName = agent['businessName'] as String? ?? 'Not provided';
+    final tinNumber = agent['tinNumber'] as String? ?? 'Not provided';
+    final status = agent['verificationStatus'] as String? ?? 'pending';
+    final docUrl = agent['documentUrl'] as String?;
+    final rejectionReason = agent['rejectionReason'] as String?;
+    final createdAt = agent['createdAt'] as num?;
+
+    String formattedDate = '';
+    if (createdAt != null) {
+      final dt = DateTime.fromMillisecondsSinceEpoch(createdAt.toInt());
+      formattedDate = '${dt.day}/${dt.month}/${dt.year} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
+    }
+
+    final isApproved = status == 'approved' || status == 'verified';
+    final isRejected = status == 'rejected';
+
+    Color statusColor;
+    Color statusBg;
+    String statusLabel;
+
+    if (isApproved) {
+      statusColor = const Color(0xFF059669);
+      statusBg = const Color(0xFFD1FAE5);
+      statusLabel = 'APPROVED';
+    } else if (isRejected) {
+      statusColor = const Color(0xFFDC2626);
+      statusBg = const Color(0xFFFEE2E2);
+      statusLabel = 'REJECTED';
+    } else {
+      statusColor = const Color(0xFFD97706);
+      statusBg = const Color(0xFFFEF3C7);
+      statusLabel = 'PENDING REVIEW';
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 14),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: Color(0xFFE2E8F0)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Row 1: Agent Name & Status Badge
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    name,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: statusBg,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    statusLabel,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '$email • $phone',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+            ),
+            if (formattedDate.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(
+                'Submitted: $formattedDate',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+              ),
+            ],
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+
+            // Business Information & TIN
+            Row(
+              children: [
+                const Icon(Icons.business_rounded, size: 16, color: Color(0xFF64748B)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: RichText(
+                    text: TextSpan(
+                      style: const TextStyle(fontSize: 13, color: Color(0xFF334155)),
+                      children: [
+                        const TextSpan(text: 'Business: ', style: TextStyle(fontWeight: FontWeight.bold)),
+                        TextSpan(text: businessName),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Icon(Icons.badge_outlined, size: 16, color: Color(0xFF64748B)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: RichText(
+                    text: TextSpan(
+                      style: const TextStyle(fontSize: 13, color: Color(0xFF334155)),
+                      children: [
+                        const TextSpan(text: 'TIN / Reg #: ', style: TextStyle(fontWeight: FontWeight.bold)),
+                        TextSpan(text: tinNumber),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            // Rejection reason if rejected
+            if (isRejected && rejectionReason != null && rejectionReason.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFFECACA)),
+                ),
+                child: Text(
+                  'Rejection Reason: $rejectionReason',
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF991B1B)),
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 14),
+
+            // Actions Row
+            Row(
+              children: [
+                // View Proof Document Button
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF0F172A),
+                    side: const BorderSide(color: Color(0xFFCBD5E1)),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  icon: const Icon(Icons.description_outlined, size: 16),
+                  label: const Text('View Proof Doc', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                  onPressed: docUrl != null && docUrl.isNotEmpty
+                      ? () => _previewProofDocument(agent)
+                      : null,
+                ),
+                const Spacer(),
+
+                // Reject Button
+                if (!isRejected) ...[
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFDC2626),
+                      side: const BorderSide(color: Color(0xFFFECACA)),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    icon: const Icon(Icons.close_rounded, size: 16),
+                    label: const Text('Reject', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                    onPressed: () => _promptRejectAgent(agent),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+
+                // Approve Button
+                if (!isApproved) ...[
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF059669),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    icon: const Icon(Icons.check_rounded, size: 16),
+                    label: const Text('Approve', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                    onPressed: () => _approveAgent(agent),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _SeedActionCard extends StatelessWidget {
@@ -1582,3 +2225,6 @@ class _SeedActionCard extends StatelessWidget {
     );
   }
 }
+
+
+

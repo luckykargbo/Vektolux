@@ -37,6 +37,8 @@ class RegisterSubmittedEvent extends AuthEvent {
   final String? avatarUrl;
   final String? businessName;
   final String? tinNumber;
+  final String? documentStorageId;
+  final String? documentUrl;
 
   const RegisterSubmittedEvent({
     required this.name,
@@ -47,10 +49,23 @@ class RegisterSubmittedEvent extends AuthEvent {
     this.avatarUrl,
     this.businessName,
     this.tinNumber,
+    this.documentStorageId,
+    this.documentUrl,
   });
 
   @override
-  List<Object?> get props => [name, email, phone, password, role, avatarUrl, businessName, tinNumber];
+  List<Object?> get props => [
+        name,
+        email,
+        phone,
+        password,
+        role,
+        avatarUrl,
+        businessName,
+        tinNumber,
+        documentStorageId,
+        documentUrl,
+      ];
 }
 
 /// Login form submitted.
@@ -97,6 +112,12 @@ class UserRoleUpdatedEvent extends AuthEvent {
   @override
   List<Object?> get props => [newRole];
 }
+
+/// Refresh current user session and verification status from backend.
+class RefreshUserSessionEvent extends AuthEvent {
+  const RefreshUserSessionEvent();
+}
+
 
 /// User switches between passenger and driver mode.
 class SwitchUserModeEvent extends AuthEvent {

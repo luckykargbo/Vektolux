@@ -34,6 +34,8 @@ class AuthRepositoryImpl implements AuthRepository {
     String? avatarUrl,
     String? businessName,
     String? tinNumber,
+    String? documentStorageId,
+    String? documentUrl,
   }) async {
     final result = await _convexClient.mutation(
       'auth:registerUser',
@@ -46,6 +48,8 @@ class AuthRepositoryImpl implements AuthRepository {
         if (avatarUrl != null && avatarUrl.isNotEmpty) 'avatarUrl': avatarUrl,
         if (businessName != null && businessName.isNotEmpty) 'businessName': businessName,
         if (tinNumber != null && tinNumber.isNotEmpty) 'tinNumber': tinNumber,
+        if (documentStorageId != null && documentStorageId.isNotEmpty) 'documentStorageId': documentStorageId,
+        if (documentUrl != null && documentUrl.isNotEmpty) 'documentUrl': documentUrl,
       },
     );
 
@@ -62,6 +66,7 @@ class AuthRepositoryImpl implements AuthRepository {
       throw Exception(data['errorMessage']?.toString() ?? result.errorMessage ?? 'Registration failed: Missing credentials');
     }
 
+    final isRestrictedRole = role == UserRole.agent || role == UserRole.merchant;
     final user = UserEntity(
       id: data['userId']?.toString() ?? '',
       name: data['name']?.toString() ?? name,
@@ -70,6 +75,10 @@ class AuthRepositoryImpl implements AuthRepository {
       role: UserRoleX.fromConvex(data['role']?.toString() ?? role.convexValue),
       avatarUrl: data['avatarUrl']?.toString() ?? avatarUrl,
       sessionToken: data['sessionToken']?.toString(),
+      verificationStatus: isRestrictedRole ? 'pending' : 'unverified',
+      businessName: businessName,
+      tinNumber: tinNumber,
+      documentUrl: documentUrl,
     );
 
     // Cache session locally
@@ -121,6 +130,12 @@ class AuthRepositoryImpl implements AuthRepository {
       activeMode: data['active_mode']?.toString() ?? 'passenger',
       isDriverVerified: data['is_driver_verified'] as bool? ?? (data['role'] == 'driver'),
       driverStatus: data['driver_status']?.toString() ?? 'offline',
+      verificationStatus: data['verificationStatus']?.toString() ?? (data['isVerified'] == true ? 'verified' : 'unverified'),
+      businessName: data['businessName'] as String?,
+      tinNumber: data['tinNumber'] as String?,
+      documentUrl: data['documentUrl'] as String?,
+      rejectionReason: data['rejectionReason'] as String?,
+      verifiedAt: data['verifiedAt'] as int?,
     );
 
     await _cacheUser(user);
@@ -188,6 +203,12 @@ class AuthRepositoryImpl implements AuthRepository {
         activeMode: data['active_mode']?.toString() ?? 'passenger',
         isDriverVerified: data['is_driver_verified'] as bool? ?? (data['role'] == 'driver'),
         driverStatus: data['driver_status']?.toString() ?? 'offline',
+        verificationStatus: data['verificationStatus']?.toString() ?? (data['isVerified'] == true ? 'verified' : 'unverified'),
+        businessName: data['businessName'] as String?,
+        tinNumber: data['tinNumber'] as String?,
+        documentUrl: data['documentUrl'] as String?,
+        rejectionReason: data['rejectionReason'] as String?,
+        verifiedAt: data['verifiedAt'] as int?,
       );
 
       // Refresh local cache with latest data

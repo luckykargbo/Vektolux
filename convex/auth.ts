@@ -99,6 +99,8 @@ export const registerUser = mutation({
     avatarUrl: v.optional(v.string()),
     businessName: v.optional(v.string()),
     tinNumber: v.optional(v.string()),
+    documentStorageId: v.optional(v.id("_storage")),
+    documentUrl: v.optional(v.string()),
   },
   returns: v.object({
     success: v.boolean(),
@@ -141,6 +143,9 @@ export const registerUser = mutation({
     const sessionToken = generateSessionToken();
     const now = Date.now();
 
+    const isRestrictedRole = args.role === "agent" || args.role === "merchant";
+    const verificationStatus = isRestrictedRole ? "pending" : "unverified";
+
     // 4. Insert user record
     const userId = await ctx.db.insert("users", {
       name: args.name,
@@ -152,6 +157,11 @@ export const registerUser = mutation({
       sessionToken,
       isVerified: false,
       isActive: true,
+      verificationStatus,
+      businessName: args.businessName,
+      tinNumber: args.tinNumber,
+      documentStorageId: args.documentStorageId,
+      documentUrl: args.documentUrl,
       updatedAt: now,
     });
 
@@ -165,12 +175,23 @@ export const registerUser = mutation({
     });
 
     // 6. Create merchant profile if role is agent or merchant
-    if (args.role === "agent" || args.role === "merchant") {
+    if (isRestrictedRole) {
       await ctx.db.insert("merchant_profiles", {
         userId,
         businessName: args.businessName,
         tinNumber: args.tinNumber,
+        documentUrl: args.documentUrl,
         verificationStatus: "pending",
+        updatedAt: now,
+      });
+
+      await ctx.db.insert("role_applications", {
+        userId,
+        targetRole: args.role as "agent" | "merchant",
+        businessName: args.businessName,
+        tinNumber: args.tinNumber,
+        documentUrls: args.documentUrl ? [args.documentUrl] : [],
+        status: "pending",
         updatedAt: now,
       });
     }
@@ -207,6 +228,12 @@ export const loginWithPhoneOrEmail = mutation({
     phone: v.optional(v.string()),
     role: v.optional(v.string()),
     isVerified: v.optional(v.boolean()),
+    verificationStatus: v.optional(v.string()),
+    businessName: v.optional(v.string()),
+    tinNumber: v.optional(v.string()),
+    documentUrl: v.optional(v.string()),
+    rejectionReason: v.optional(v.string()),
+    verifiedAt: v.optional(v.number()),
     avatarUrl: v.optional(v.string()),
     walletAddress: v.optional(v.string()),
     active_mode: v.optional(v.string()),
@@ -230,22 +257,26 @@ export const loginWithPhoneOrEmail = mutation({
     if (!user) {
       return {
         success: false,
-        errorMessage: "No account found with this email or phone number.",
+        errorMessage: "No account found with that email or phone number.",
       };
     }
 
     if (!user.isActive) {
       return {
         success: false,
-        errorMessage: "This account has been deactivated. Contact support.",
+        errorMessage: "This account has been deactivated. Please contact support.",
+      };
+    }
+
+    if (!user.passwordHash) {
+      return {
+        success: false,
+        errorMessage: "Password not set for this account. Please use external login.",
       };
     }
 
     // Verify password
-    const isPasswordValid = await verifyPassword(
-      args.password,
-      user.passwordHash ?? ""
-    );
+    const isPasswordValid = await verifyPassword(args.password, user.passwordHash);
     if (!isPasswordValid) {
       return {
         success: false,
@@ -275,6 +306,12 @@ export const loginWithPhoneOrEmail = mutation({
       phone: user.phone,
       role: user.role,
       isVerified: user.isVerified,
+      verificationStatus: user.verificationStatus ?? (user.isVerified ? "verified" : "unverified"),
+      businessName: user.businessName,
+      tinNumber: user.tinNumber,
+      documentUrl: user.documentUrl,
+      rejectionReason: user.rejectionReason,
+      verifiedAt: user.verifiedAt,
       avatarUrl: user.avatarUrl,
       walletAddress: user.walletAddress,
       active_mode: activeMode,
@@ -307,6 +344,12 @@ export const getUserSession = query({
       active_mode: v.optional(v.string()),
       is_driver_verified: v.optional(v.boolean()),
       driver_status: v.optional(v.string()),
+      verificationStatus: v.optional(v.string()),
+      businessName: v.optional(v.string()),
+      tinNumber: v.optional(v.string()),
+      documentUrl: v.optional(v.string()),
+      rejectionReason: v.optional(v.string()),
+      verifiedAt: v.optional(v.number()),
     }),
     v.null()
   ),
@@ -346,6 +389,12 @@ export const getUserSession = query({
         active_mode: activeMode,
         is_driver_verified: isDriverVerified,
         driver_status: driverStatus,
+        verificationStatus: user.verificationStatus ?? (user.isVerified ? "verified" : "unverified"),
+        businessName: user.businessName,
+        tinNumber: user.tinNumber,
+        documentUrl: user.documentUrl,
+        rejectionReason: user.rejectionReason,
+        verifiedAt: user.verifiedAt,
       };
     } catch {
       return null;
