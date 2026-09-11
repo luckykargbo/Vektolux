@@ -10,9 +10,11 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../core/database/app_database.dart';
+import '../../../../core/database/services/sqlite_post_archive_service.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
+import '../../../auth/domain/entities/user_entity.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../bookings/presentation/views/checkout_screen.dart';
 import '../../../mobility/domain/entities/mobility_vehicle_entity.dart';
@@ -110,6 +112,16 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
   int _activeImageIndex = 0;
   final _currencyFormat = NumberFormat('#,##0', 'en_US');
 
+  double? _currentSalePrice;
+  double? _currentPricePerDay;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentSalePrice = widget.salePrice;
+    _currentPricePerDay = widget.pricePerDay;
+  }
+
   @override
   void dispose() {
     _pageController.dispose();
@@ -119,17 +131,17 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
   String get _title => '${widget.make} ${widget.model} (${widget.year})';
 
   String get _priceFormatted {
-    if (widget.listingIntent == 'sale' && widget.salePrice != null) {
-      return 'SLE ${_currencyFormat.format(widget.salePrice)}';
+    if (widget.listingIntent == 'sale' && _currentSalePrice != null) {
+      return 'SLE ${_currencyFormat.format(_currentSalePrice)}';
     }
-    if (widget.listingIntent == 'rental' && widget.pricePerDay != null) {
-      return 'SLE ${_currencyFormat.format(widget.pricePerDay)} / day';
+    if (widget.listingIntent == 'rental' && _currentPricePerDay != null) {
+      return 'SLE ${_currencyFormat.format(_currentPricePerDay)} / day';
     }
     if (widget.listingIntent == 'ride_hailing' && widget.pricePerKm != null) {
       return 'SLE ${_currencyFormat.format(widget.pricePerKm)} / km';
     }
-    if (widget.salePrice != null) {
-      return 'SLE ${_currencyFormat.format(widget.salePrice)}';
+    if (_currentSalePrice != null) {
+      return 'SLE ${_currencyFormat.format(_currentSalePrice)}';
     }
     return 'Contact for Price';
   }
@@ -473,6 +485,8 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final images = widget.imageUrls;
+    final currentUser = context.watch<AuthBloc>().state.user;
+    final isOwner = currentUser != null && widget.ownerId != null && currentUser.id == widget.ownerId;
 
     return Scaffold(
       backgroundColor: AppColors.gray50,
@@ -600,6 +614,100 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
                   ),
               ],
             ),
+
+            // ── 1B. Owner / Agent Quick Controls Banner ──────────────
+            if (isOwner)
+              Container(
+                margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F172A),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.emerald.withValues(alpha: 0.4)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.15),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppColors.emerald.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.shield_outlined, color: AppColors.emeraldLight, size: 12),
+                              SizedBox(width: 4),
+                              Text(
+                                'YOU ARE THE POST CREATOR / AGENT',
+                                style: TextStyle(
+                                  color: AppColors.emeraldLight,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          'Current: $_priceFormatted',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            icon: const Icon(Icons.price_change_outlined, size: 16),
+                            label: const Text('Update Price / Range'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.emerald,
+                              foregroundColor: AppColors.obsidian,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+                            ),
+                            onPressed: () => _openOwnerPriceModal(context, currentUser),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.delete_sweep_outlined, size: 16, color: Color(0xFFFCA5A5)),
+                            label: const Text('Sold? Delete Post', style: TextStyle(color: Color(0xFFFCA5A5))),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFFEF4444), width: 1.2),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                            ),
+                            onPressed: () => _deleteAndArchiveVehicle(context, currentUser),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
 
             // ── 2. Header & Main Info ───────────────────────────────
             Container(
@@ -847,41 +955,454 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
             ),
           ],
         ),
-        child: Row(
-          children: [
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Price', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
-                Text(
-                  _priceFormatted,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.obsidian,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: widget.listingIntent == 'rental'
-                  ? VxButton(
-                      label: 'Rent Now',
-                      icon: Icons.key_rounded,
-                      onPressed: () => _handleRentalCheckout(context),
-                    )
-                  : VxButton(
-                      label: 'Schedule Inspection',
-                      icon: Icons.calendar_today_rounded,
-                      onPressed: () => _openScheduleInspectionModal(context),
+        child: isOwner
+            ? Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.price_change_outlined, size: 18),
+                      label: const Text('Update Price / Range'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.emerald,
+                        foregroundColor: AppColors.obsidian,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                      ),
+                      onPressed: () => _openOwnerPriceModal(context, currentUser),
                     ),
-            ),
-          ],
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.delete_forever_rounded, size: 18, color: AppColors.error),
+                      label: const Text('Sold? Delete', style: TextStyle(color: AppColors.error)),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: AppColors.error, width: 1.5),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                      ),
+                      onPressed: () => _deleteAndArchiveVehicle(context, currentUser),
+                    ),
+                  ),
+                ],
+              )
+            : Row(
+                children: [
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Price', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
+                      Text(
+                        _priceFormatted,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.obsidian,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: widget.listingIntent == 'rental'
+                        ? VxButton(
+                            label: 'Rent Now',
+                            icon: Icons.key_rounded,
+                            onPressed: () => _handleRentalCheckout(context),
+                          )
+                        : VxButton(
+                            label: 'Schedule Inspection',
+                            icon: Icons.calendar_today_rounded,
+                            onPressed: () => _openScheduleInspectionModal(context),
+                          ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //              OWNER ACTIONS: UPDATE PRICE & SOLD/DELETE
+  // ═══════════════════════════════════════════════════════════════════
+
+  Widget _buildQuickAdjustChip(String label, VoidCallback onTap, {required bool isDiscount}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: isDiscount ? const Color(0xFFFEF2F2) : const Color(0xFFF0FDF4),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: isDiscount ? const Color(0xFFFCA5A5) : const Color(0xFF86EFAC)),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            color: isDiscount ? AppColors.errorDark : AppColors.emeraldDark,
+          ),
         ),
       ),
     );
+  }
+
+  void _openOwnerPriceModal(BuildContext context, UserEntity user) {
+    final isRental = widget.listingIntent == 'rental';
+    final initialPrice = isRental
+        ? (_currentPricePerDay ?? 0.0)
+        : (_currentSalePrice ?? 0.0);
+
+    final priceController = TextEditingController(
+      text: initialPrice > 0 ? initialPrice.toStringAsFixed(0) : '',
+    );
+    final colorController = TextEditingController(text: widget.color ?? '');
+    bool isUpdating = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (modalCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            void applyPercentage(double percent) {
+              final currentVal = double.tryParse(priceController.text.trim()) ?? initialPrice;
+              if (currentVal > 0) {
+                final adjusted = (currentVal * (1.0 + percent)).roundToDouble();
+                setModalState(() {
+                  priceController.text = adjusted.toStringAsFixed(0);
+                });
+              }
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 44,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.gray300,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: AppColors.emeraldSurface,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.price_change_rounded, color: AppColors.emeraldDark, size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Update Price & Vehicle Details',
+                                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                              ),
+                              Text(
+                                isRental
+                                    ? 'Set daily rental fee in SLE. Buyers see changes instantly.'
+                                    : 'Set vehicle purchase price in SLE. Buyers see changes instantly.',
+                                style: const TextStyle(fontSize: 11, color: AppColors.gray500),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(height: 1),
+                    const SizedBox(height: 16),
+
+                    // Quick percentage adjustment row
+                    Row(
+                      children: [
+                        const Text('Quick Adjust:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.gray600)),
+                        const Spacer(),
+                        _buildQuickAdjustChip('-10%', () => applyPercentage(-0.10), isDiscount: true),
+                        const SizedBox(width: 6),
+                        _buildQuickAdjustChip('-5%', () => applyPercentage(-0.05), isDiscount: true),
+                        const SizedBox(width: 6),
+                        _buildQuickAdjustChip('+5%', () => applyPercentage(0.05), isDiscount: false),
+                        const SizedBox(width: 6),
+                        _buildQuickAdjustChip('+10%', () => applyPercentage(0.10), isDiscount: false),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+
+                    TextFormField(
+                      controller: priceController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.obsidian),
+                      decoration: InputDecoration(
+                        labelText: isRental ? 'Rental Rate Per Day (SLE)' : 'Selling Price (SLE)',
+                        prefixText: 'SLE  ',
+                        prefixStyle: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.emeraldDark),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    TextFormField(
+                      controller: colorController,
+                      style: const TextStyle(fontSize: 14, color: AppColors.obsidian),
+                      decoration: InputDecoration(
+                        labelText: 'Vehicle Color',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        onPressed: isUpdating
+                            ? null
+                            : () async {
+                                final newPrice = double.tryParse(priceController.text.trim());
+                                if (newPrice == null || newPrice < 0) {
+                                  ScaffoldMessenger.of(modalCtx).showSnackBar(
+                                    const SnackBar(content: Text('Please enter a valid price amount.')),
+                                  );
+                                  return;
+                                }
+
+                                setModalState(() => isUpdating = true);
+                                try {
+                                  final convexClient = context.read<ConvexClientWrapper>();
+                                  final args = <String, dynamic>{
+                                    'listingId': widget.id,
+                                    'ownerId': user.id,
+                                    if (user.sessionToken != null) 'sessionToken': user.sessionToken,
+                                    if (colorController.text.trim().isNotEmpty) 'color': colorController.text.trim(),
+                                  };
+                                  if (isRental) {
+                                    args['pricePerDay'] = newPrice;
+                                  } else {
+                                    args['salePrice'] = newPrice;
+                                  }
+
+                                  final res = await convexClient.mutation(
+                                    'mobility:updateVehicleListing',
+                                    args: args,
+                                  );
+
+                                  if (res.success) {
+                                    setState(() {
+                                      if (isRental) {
+                                        _currentPricePerDay = newPrice;
+                                      } else {
+                                        _currentSalePrice = newPrice;
+                                      }
+                                    });
+                                    if (modalCtx.mounted) Navigator.of(modalCtx).pop();
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('✓ Vehicle price updated to SLE ${newPrice.toStringAsFixed(0)}! Buyers see this updated price.'),
+                                          backgroundColor: AppColors.emeraldDark,
+                                          behavior: SnackBarBehavior.floating,
+                                        ),
+                                      );
+                                    }
+                                  } else {
+                                    setModalState(() => isUpdating = false);
+                                    if (modalCtx.mounted) {
+                                      ScaffoldMessenger.of(modalCtx).showSnackBar(
+                                        SnackBar(
+                                          content: Text('Update failed: ${res.errorMessage ?? "Unknown error"}'),
+                                          backgroundColor: AppColors.error,
+                                        ),
+                                      );
+                                    }
+                                  }
+                                } catch (e) {
+                                  setModalState(() => isUpdating = false);
+                                  if (modalCtx.mounted) {
+                                    ScaffoldMessenger.of(modalCtx).showSnackBar(
+                                      SnackBar(content: Text('Update failed: $e'), backgroundColor: AppColors.error),
+                                    );
+                                  }
+                                }
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.emerald,
+                          foregroundColor: AppColors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: isUpdating
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                              )
+                            : const Text('Save & Publish Updated Price', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _deleteAndArchiveVehicle(BuildContext context, UserEntity user) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Row(
+          children: [
+            Icon(Icons.delete_forever_rounded, color: AppColors.error, size: 24),
+            SizedBox(width: 8),
+            Text('Delete Vehicle Post', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Did a client buy/rent "$_title" or do you want to remove it?',
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.inventory_2_outlined, color: AppColors.emeraldDark, size: 18),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'The vehicle post will immediately be removed from Convex public search and permanently archived into your local encrypted SQLite storage for future reference.',
+                      style: TextStyle(fontSize: 11, color: AppColors.obsidianSoft, height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.gray600)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Yes, Delete & Archive'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    scaffoldMessenger.showSnackBar(
+      const SnackBar(
+        content: Text('Evacuating vehicle post and archiving to local SQLite...'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+
+    try {
+      final convexClient = context.read<ConvexClientWrapper>();
+      final database = context.read<AppDatabase>();
+      final archiveService = SqlitePostArchiveService(database);
+
+      final res = await convexClient.mutation(
+        'mobility:deleteVehicleListing',
+        args: {
+          'listingId': widget.id,
+          'ownerId': user.id,
+          if (user.sessionToken != null) 'sessionToken': user.sessionToken,
+        },
+      );
+
+      if (res.success && res.value != null) {
+        final archivedMap = res.value['archivedData'] as Map<String, dynamic>?;
+        if (archivedMap != null) {
+          await archiveService.archivePost(
+            id: archivedMap['id']?.toString() ?? widget.id,
+            postType: 'vehicle',
+            ownerId: archivedMap['ownerId']?.toString() ?? user.id,
+            title: archivedMap['title']?.toString() ?? _title,
+            description: archivedMap['description']?.toString() ?? '',
+            category: archivedMap['category']?.toString() ?? widget.listingIntent,
+            price: (archivedMap['price'] as num?)?.toDouble() ?? _currentSalePrice ?? _currentPricePerDay ?? 0.0,
+            currency: archivedMap['currency']?.toString() ?? 'SLE',
+            location: archivedMap['location']?.toString() ?? (widget.location ?? 'Freetown, Sierra Leone'),
+            bedrooms: null,
+            bathrooms: null,
+            privateContactPhone: archivedMap['privateContactPhone']?.toString(),
+            imageUrls: (archivedMap['imageUrls'] as List?)?.cast<String>() ?? widget.imageUrls,
+            originalCreatedAt: (archivedMap['originalCreatedAt'] as num?)?.toInt(),
+          );
+        }
+
+        if (context.mounted) {
+          Navigator.of(context).pop();
+          scaffoldMessenger.showSnackBar(
+            const SnackBar(
+              content: Text('✓ Vehicle post successfully deleted and archived to local SQLite.'),
+              backgroundColor: AppColors.obsidian,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text('Failed to delete vehicle post: $e'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    }
   }
 
   Widget _buildFallbackHero() {

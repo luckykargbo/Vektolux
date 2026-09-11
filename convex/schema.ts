@@ -254,6 +254,10 @@ export default defineSchema({
     amenities: v.optional(v.array(v.string())),
     imageUrls: v.array(v.string()),
 
+    // Privacy & Moderation
+    privateContactPhone: v.optional(v.string()),
+    isDeleted: v.optional(v.boolean()),
+
     // Status
     availabilityStatus: availabilityStatus,
     isFeatured: v.boolean(),
@@ -340,6 +344,8 @@ export default defineSchema({
     // Status
     availabilityStatus: availabilityStatus,
     isPublished: v.optional(v.boolean()),
+    privateContactPhone: v.optional(v.string()),
+    isDeleted: v.optional(v.boolean()),
 
     // Metadata
     updatedAt: v.number(),

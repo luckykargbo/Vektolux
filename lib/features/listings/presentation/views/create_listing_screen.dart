@@ -52,6 +52,9 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   final _propAddressController =
       TextEditingController(text: '15 Wilkinson Road');
   final _propCityController = TextEditingController(text: 'Freetown');
+  final _propBedroomsController = TextEditingController(text: '3');
+  final _propBathroomsController = TextEditingController(text: '2');
+  final _contactPhoneController = TextEditingController();
   String _propCategory = 'sale';
   final double _propLat = 8.4840;
   final double _propLng = -13.2344;
@@ -331,6 +334,10 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             'latitude': _propLat,
             'longitude': _propLng,
             'imageStorageIds': _imageStorageIds,
+            'bedrooms': int.tryParse(_propBedroomsController.text.trim()) ?? 3,
+            'bathrooms': int.tryParse(_propBathroomsController.text.trim()) ?? 2,
+            if (_contactPhoneController.text.trim().isNotEmpty)
+              'privateContactPhone': _contactPhoneController.text.trim(),
           },
         );
 
@@ -387,6 +394,8 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             'latitude': _vehLat,
             'longitude': _vehLng,
             'imageStorageIds': _imageStorageIds,
+            if (_contactPhoneController.text.trim().isNotEmpty)
+              'privateContactPhone': _contactPhoneController.text.trim(),
           },
         );
 
@@ -696,6 +705,71 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                   prefixIcon: Icon(Icons.map_outlined),
                 ),
               ),
+              const SizedBox(height: 16),
+
+              // Bedrooms & Bathrooms Row
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _propBedroomsController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Bedrooms / Rooms',
+                        hintText: 'e.g. 3',
+                        prefixIcon: Icon(Icons.bed_rounded),
+                      ),
+                      validator: (v) => v == null || v.trim().isEmpty ? 'Required' : null,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _propBathroomsController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Bathrooms',
+                        hintText: 'e.g. 2',
+                        prefixIcon: Icon(Icons.bathtub_rounded),
+                      ),
+                      validator: (v) => v == null || v.trim().isEmpty ? 'Required' : null,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // Private Owner Phone Input & Privacy Banner
+              TextFormField(
+                controller: _contactPhoneController,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Owner / Agent Phone Number',
+                  hintText: 'e.g. +232 76 123 456',
+                  prefixIcon: Icon(Icons.phone_rounded),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppColors.emerald.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.emerald.withValues(alpha: 0.25)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.shield_outlined, size: 16, color: AppColors.emeraldDark),
+                    SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '🔒 Private Contact: Stored safely in our database for admin contact only. Never published or displayed to public viewers.',
+                        style: TextStyle(fontSize: 11, color: AppColors.emeraldDark, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ] else ...[
               // Vehicle Type
               DropdownButtonFormField<String>(
@@ -878,6 +952,39 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                   validator: (v) =>
                       v == null || v.trim().isEmpty ? 'Price required' : null,
                 ),
+              const SizedBox(height: 16),
+
+              // Private Owner Phone Input & Privacy Banner
+              TextFormField(
+                controller: _contactPhoneController,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Seller / Dealer Phone Number',
+                  hintText: 'e.g. +232 76 123 456',
+                  prefixIcon: Icon(Icons.phone_rounded),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppColors.emerald.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.emerald.withValues(alpha: 0.25)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.shield_outlined, size: 16, color: AppColors.emeraldDark),
+                    SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '🔒 Private Contact: Stored safely in our database for admin contact only. Never published or displayed to public viewers.',
+                        style: TextStyle(fontSize: 11, color: AppColors.emeraldDark, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
 
             const SizedBox(height: 32),

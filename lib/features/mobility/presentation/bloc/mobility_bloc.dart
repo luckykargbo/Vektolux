@@ -489,9 +489,7 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
         longitude: lng + 0.007,
         geohash: 'ebm4u',
         availabilityStatus: 'available',
-        imageUrls: const [
-          'https://images.unsplash.com/photo-1613977257363-707ba9348227?w=800',
-        ],
+        imageUrls: const [],
         isFeatured: true,
         isVerified: true,
         viewCount: 342,
@@ -500,7 +498,7 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
         areaSqM: 420.0,
         amenities: const ['Solar Power', 'Security Escort', 'Infinity Pool', 'Parking'],
         ownerName: 'Apex Sierra Real Estate',
-        ownerPhone: '+232 76 111 222',
+        ownerPhone: null,
       ),
       PropertyListingEntity(
         id: 'prop_2',
@@ -517,9 +515,7 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
         longitude: lng - 0.015,
         geohash: 'ebm4k',
         availabilityStatus: 'available',
-        imageUrls: const [
-          'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?w=800',
-        ],
+        imageUrls: const [],
         isFeatured: true,
         isVerified: true,
         viewCount: 512,
@@ -528,7 +524,7 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
         areaSqM: 140.0,
         amenities: const ['Furnished', 'Backup Generator', 'Ocean View', 'Gym'],
         ownerName: 'Coastal Living Sierra',
-        ownerPhone: '+232 78 333 444',
+        ownerPhone: null,
       ),
       PropertyListingEntity(
         id: 'prop_3',
@@ -546,9 +542,7 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
         longitude: lng - 0.020,
         geohash: 'ebm47',
         availabilityStatus: 'available',
-        imageUrls: const [
-          'https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?w=800',
-        ],
+        imageUrls: const [],
         isFeatured: false,
         isVerified: true,
         viewCount: 890,
@@ -557,7 +551,7 @@ class MobilityBloc extends Bloc<MobilityEvent, MobilityState> {
         areaSqM: 55.0,
         amenities: const ['Instant Check-in', 'Air Conditioned', 'Smart TV', 'Room Service'],
         ownerName: 'Cape Hospitality Group',
-        ownerPhone: '+232 79 555 666',
+        ownerPhone: null,
       ),
     ];
   }

@@ -9,6 +9,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/database/app_database.dart';
+import '../../../../core/database/services/sqlite_post_archive_service.dart';
+import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/theme/components/vx_button.dart';
@@ -204,6 +207,102 @@ class _RealEstateListingDetailScreenState
                       ],
                     ),
                   ),
+
+                  // ── 1B. Owner / Agent Quick Controls Banner ──────
+                  if (widget.currentUserId == listing.ownerId)
+                    SliverToBoxAdapter(
+                      child: Container(
+                        margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0F172A),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: AppColors.emerald.withValues(alpha: 0.4)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.15),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.emerald.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.shield_outlined, color: AppColors.emeraldLight, size: 12),
+                                      SizedBox(width: 4),
+                                      Text(
+                                        'YOU ARE THE POST CREATOR / AGENT',
+                                        style: TextStyle(
+                                          color: AppColors.emeraldLight,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  'Price: ${listing.currency} ${listing.price.toStringAsFixed(0)}',
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    icon: const Icon(Icons.price_change_outlined, size: 16),
+                                    label: const Text('Update Price / Range'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppColors.emerald,
+                                      foregroundColor: AppColors.obsidian,
+                                      elevation: 0,
+                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                      textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+                                    ),
+                                    onPressed: () => _openOwnerPriceUpdateModal(context, listing),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    icon: const Icon(Icons.delete_sweep_outlined, size: 16, color: Color(0xFFFCA5A5)),
+                                    label: const Text('Sold? Delete Post', style: TextStyle(color: Color(0xFFFCA5A5))),
+                                    style: OutlinedButton.styleFrom(
+                                      side: const BorderSide(color: Color(0xFFEF4444), width: 1.2),
+                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                      textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                                    ),
+                                    onPressed: () => _deleteAndArchiveProperty(context, listing),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
 
                   // ── 2. Sticky Header with Map Preview ─────────────
                   SliverToBoxAdapter(
@@ -491,6 +590,57 @@ class _RealEstateListingDetailScreenState
     RealEstateDetailState state,
     PropertyListingEntity listing,
   ) {
+    if (widget.currentUserId == listing.ownerId) {
+      return Container(
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border.all(color: AppColors.border),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.obsidian.withValues(alpha: 0.1),
+              blurRadius: 16,
+              offset: const Offset(0, -4),
+            ),
+          ],
+        ),
+        padding: EdgeInsets.fromLTRB(
+          20,
+          16,
+          20,
+          MediaQuery.of(context).padding.bottom + 16,
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 3,
+              child: VxButton.primary(
+                text: 'Update Price / Range',
+                icon: Icons.price_change_outlined,
+                onPressed: () => _openOwnerPriceUpdateModal(context, listing),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              flex: 2,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                label: const Text('Sold? Delete'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.error,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+                onPressed: () => _deleteAndArchiveProperty(context, listing),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     if (listing.isHourlyStay) {
       // ── MODE A: Hourly Guest House Instant Booking Panel ──────────
       return HourlyBookingPanel(
@@ -684,5 +834,429 @@ class _RealEstateListingDetailScreenState
         );
       },
     );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //              OWNER ACTION: UPDATE PRICE & LISTING DETAILS
+  // ═══════════════════════════════════════════════════════════════════
+
+  void _openOwnerPriceUpdateModal(
+    BuildContext context,
+    PropertyListingEntity listing,
+  ) {
+    final priceController = TextEditingController(
+      text: listing.price.toStringAsFixed(0),
+    );
+    final hourlyRateController = TextEditingController(
+      text: listing.hourlyRate != null ? listing.hourlyRate!.toStringAsFixed(0) : '',
+    );
+    final titleController = TextEditingController(text: listing.title);
+    final descController = TextEditingController(text: listing.description);
+    final bedsController = TextEditingController(
+      text: listing.bedrooms != null ? listing.bedrooms.toString() : '3',
+    );
+    final bathsController = TextEditingController(
+      text: listing.bathrooms != null ? listing.bathrooms.toString() : '2',
+    );
+
+    bool isUpdating = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (modalCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            void applyPercentage(double factor) {
+              final current = double.tryParse(priceController.text.trim()) ?? listing.price;
+              final updated = (current * factor).roundToDouble();
+              setModalState(() {
+                priceController.text = updated.toStringAsFixed(0);
+              });
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+                left: 20,
+                right: 20,
+                top: 20,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Update Price & Details',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.obsidian,
+                              ),
+                            ),
+                            Text(
+                              'Changes reflect immediately across the public marketplace',
+                              style: TextStyle(fontSize: 11, color: AppColors.gray500),
+                            ),
+                          ],
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close_rounded),
+                          onPressed: () => Navigator.of(modalCtx).pop(),
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 20),
+
+                    // Price Input
+                    TextFormField(
+                      controller: priceController,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.emeraldDark,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: 'Price (${listing.currency})',
+                        prefixText: '${listing.currency}  ',
+                        helperText: 'Current: ${listing.currency} ${listing.price.toStringAsFixed(0)}',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Quick Percentage Adjustment Buttons
+                    Row(
+                      children: [
+                        const Text(
+                          'Quick Range:',
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.gray600),
+                        ),
+                        const SizedBox(width: 8),
+                        Wrap(
+                          spacing: 6,
+                          children: [
+                            _buildQuickAdjustChip('-10%', () => applyPercentage(0.90), isDiscount: true),
+                            _buildQuickAdjustChip('-5%', () => applyPercentage(0.95), isDiscount: true),
+                            _buildQuickAdjustChip('+5%', () => applyPercentage(1.05), isDiscount: false),
+                            _buildQuickAdjustChip('+10%', () => applyPercentage(1.10), isDiscount: false),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    if (listing.isHourlyStay) ...[
+                      TextFormField(
+                        controller: hourlyRateController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: 'Hourly Rate (${listing.currency})',
+                          prefixText: '${listing.currency}  ',
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
+
+                    // Title
+                    TextFormField(
+                      controller: titleController,
+                      decoration: const InputDecoration(labelText: 'Headline / Title'),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // Beds & Baths
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: bedsController,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(labelText: 'Bedrooms / Rooms'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextFormField(
+                            controller: bathsController,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(labelText: 'Bathrooms'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+
+                    // Description
+                    TextFormField(
+                      controller: descController,
+                      maxLines: 3,
+                      decoration: const InputDecoration(labelText: 'Description'),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Save Button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: isUpdating
+                            ? null
+                            : () async {
+                                final newPrice = double.tryParse(priceController.text.trim());
+                                if (newPrice == null || newPrice <= 0) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Please enter a valid price amount.'),
+                                      backgroundColor: AppColors.error,
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                setModalState(() => isUpdating = true);
+
+                                try {
+                                  final convexClient = context.read<ConvexClientWrapper>();
+                                  final newHourly = double.tryParse(hourlyRateController.text.trim());
+                                  final newBeds = int.tryParse(bedsController.text.trim());
+                                  final newBaths = int.tryParse(bathsController.text.trim());
+
+                                  final res = await convexClient.mutation(
+                                    'realEstate:updatePropertyListing',
+                                    args: {
+                                      'listingId': listing.id,
+                                      'ownerId': widget.currentUserId,
+                                      'price': newPrice,
+                                      'title': titleController.text.trim(),
+                                      'description': descController.text.trim(),
+                                      if (newHourly != null) 'hourlyRate': newHourly,
+                                      if (newBeds != null) 'bedrooms': newBeds,
+                                      if (newBaths != null) 'bathrooms': newBaths,
+                                    },
+                                  );
+
+                                  if (res.success) {
+                                    if (modalCtx.mounted) Navigator.of(modalCtx).pop();
+                                    if (context.mounted) {
+                                      context.read<RealEstateDetailBloc>().add(LoadListingDetailEvent(widget.listingId));
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('✓ Price updated to ${listing.currency} ${newPrice.toStringAsFixed(0)}! Browsing buyers see this updated price.'),
+                                          backgroundColor: AppColors.emeraldDark,
+                                          behavior: SnackBarBehavior.floating,
+                                        ),
+                                      );
+                                    }
+                                  } else {
+                                    setModalState(() => isUpdating = false);
+                                    if (modalCtx.mounted) {
+                                      ScaffoldMessenger.of(modalCtx).showSnackBar(
+                                        SnackBar(
+                                          content: Text('Update failed: ${res.errorMessage ?? "Unknown error"}'),
+                                          backgroundColor: AppColors.error,
+                                        ),
+                                      );
+                                    }
+                                  }
+                                } catch (e) {
+                                  setModalState(() => isUpdating = false);
+                                  if (modalCtx.mounted) {
+                                    ScaffoldMessenger.of(modalCtx).showSnackBar(
+                                      SnackBar(content: Text('Update failed: $e'), backgroundColor: AppColors.error),
+                                    );
+                                  }
+                                }
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.emerald,
+                          foregroundColor: AppColors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: isUpdating
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                              )
+                            : const Text('Save & Publish Updated Price', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildQuickAdjustChip(String label, VoidCallback onTap, {required bool isDiscount}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: isDiscount ? const Color(0xFFFEF2F2) : const Color(0xFFF0FDF4),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: isDiscount ? const Color(0xFFFCA5A5) : const Color(0xFF86EFAC)),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            color: isDiscount ? AppColors.errorDark : AppColors.emeraldDark,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //              OWNER ACTION: SOLD? DELETE & ARCHIVE POST
+  // ═══════════════════════════════════════════════════════════════════
+
+  Future<void> _deleteAndArchiveProperty(
+    BuildContext context,
+    PropertyListingEntity listing,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Row(
+          children: [
+            Icon(Icons.delete_forever_rounded, color: AppColors.error, size: 24),
+            SizedBox(width: 8),
+            Text('Delete Property Post', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Did a client buy/rent "${listing.title}" or do you want to remove it?',
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.inventory_2_outlined, color: AppColors.emeraldDark, size: 18),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'The post will immediately be removed from Convex public search and permanently archived into your local encrypted SQLite storage for future reference.',
+                      style: TextStyle(fontSize: 11, color: AppColors.obsidianSoft, height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.gray600)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Yes, Delete & Archive'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    scaffoldMessenger.showSnackBar(
+      const SnackBar(
+        content: Text('Evacuating post and archiving to local SQLite...'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+
+    try {
+      final convexClient = context.read<ConvexClientWrapper>();
+      final database = context.read<AppDatabase>();
+      final archiveService = SqlitePostArchiveService(database);
+
+      final res = await convexClient.mutation(
+        'realEstate:deletePropertyListing',
+        args: {
+          'listingId': listing.id,
+          'ownerId': widget.currentUserId,
+        },
+      );
+
+      if (res.success && res.value != null) {
+        final archivedMap = res.value['archivedData'] as Map<String, dynamic>?;
+        if (archivedMap != null) {
+          await archiveService.archivePost(
+            id: archivedMap['id']?.toString() ?? listing.id,
+            postType: 'property',
+            ownerId: archivedMap['ownerId']?.toString() ?? widget.currentUserId,
+            title: archivedMap['title']?.toString() ?? listing.title,
+            description: archivedMap['description']?.toString() ?? listing.description,
+            category: archivedMap['category']?.toString() ?? listing.category.name,
+            price: (archivedMap['price'] as num?)?.toDouble() ?? listing.price,
+            currency: archivedMap['currency']?.toString() ?? listing.currency,
+            location: archivedMap['location']?.toString() ?? '${listing.address}, ${listing.city}',
+            bedrooms: archivedMap['bedrooms'] as int? ?? listing.bedrooms,
+            bathrooms: archivedMap['bathrooms'] as int? ?? listing.bathrooms,
+            privateContactPhone: archivedMap['privateContactPhone']?.toString(),
+            imageUrls: (archivedMap['imageUrls'] as List?)?.cast<String>() ?? listing.imageUrls,
+            originalCreatedAt: (archivedMap['originalCreatedAt'] as num?)?.toInt(),
+          );
+        }
+
+        if (context.mounted) {
+          Navigator.of(context).pop();
+          scaffoldMessenger.showSnackBar(
+            const SnackBar(
+              content: Text('✓ Property post successfully deleted and archived to local SQLite.'),
+              backgroundColor: AppColors.obsidian,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text('Failed to delete listing: $e'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    }
   }
 }

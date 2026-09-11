@@ -520,9 +520,7 @@ class _RealEstateMarketplaceScreenState
     final price = (item['price'] as num?)?.toDouble() ?? 5000.0;
     final address = item['address'] as String? ?? 'Wilkinson Road, Freetown';
     final images = (item['imageUrls'] as List?)?.cast<String>() ?? [];
-    final imageUrl = images.isNotEmpty
-        ? images.first
-        : 'https://images.unsplash.com/photo-1613490493576-7fde63acd811?w=800';
+    final imageUrl = images.isNotEmpty ? images.first : null;
     final beds = item['bedrooms'] as int? ?? 3;
     final baths = item['bathrooms'] as int? ?? 2;
     final area = item['areaSqM'] as int? ?? 180;

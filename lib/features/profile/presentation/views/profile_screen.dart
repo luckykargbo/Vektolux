@@ -24,6 +24,8 @@ import '../../../operator/presentation/views/operator_dashboard_screen.dart';
 import '../../../mobility/presentation/views/driver_vehicle_registration_screen.dart';
 import '../../../admin/presentation/views/admin_dev_tools_screen.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
+import '../../../listings/presentation/views/create_listing_screen.dart';
+import '../../../listings/presentation/views/my_listings_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? currentUserId;
@@ -816,6 +818,72 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   _buildModeSwitcherCard(context, user),
                   const SizedBox(height: 18),
                 ],
+
+                // ── 1C. My Posts & Marketplace Listings ─────────────
+                _buildSectionHeader('MY POSTS & MARKETPLACE LISTINGS'),
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Column(
+                    children: [
+                      _buildSettingsTile(
+                        icon: Icons.inventory_2_outlined,
+                        title: 'My Published Listings',
+                        subtitle: 'View, edit details, or delete & archive your posts',
+                        trailing: const Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 14,
+                          color: AppColors.gray400,
+                        ),
+                        onTap: () {
+                          if (user != null) {
+                            final db = context.read<AppDatabase>();
+                            final client = context.read<ConvexClientWrapper>();
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => MyListingsScreen(
+                                  database: db,
+                                  convexClient: client,
+                                  currentUser: user,
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                      const Divider(height: 1, indent: 56),
+                      _buildSettingsTile(
+                        icon: Icons.add_business_outlined,
+                        title: 'Create New Listing',
+                        subtitle: 'Post a real estate property or vehicle for sale',
+                        trailing: const Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 14,
+                          color: AppColors.gray400,
+                        ),
+                        onTap: () {
+                          if (user != null) {
+                            final db = context.read<AppDatabase>();
+                            final client = context.read<ConvexClientWrapper>();
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => CreateListingScreen(
+                                  database: db,
+                                  convexClient: client,
+                                  currentUser: user,
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
 
                 // ── 2. Operator Workspace Card (If vendor role) ──────
                 if (isVendor) ...[

@@ -31,13 +31,6 @@ class _HeroImageCarouselState extends State<HeroImageCarousel> {
   final PageController _pageController = PageController();
   int _currentIndex = 0;
 
-  // Fallback high-res real estate architectural photos if listing images are empty
-  static const List<String> _fallbackPhotos = [
-    'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80',
-    'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=1200&q=80',
-    'https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?auto=format&fit=crop&w=1200&q=80',
-  ];
-
   @override
   void dispose() {
     _pageController.dispose();
@@ -46,7 +39,47 @@ class _HeroImageCarouselState extends State<HeroImageCarousel> {
 
   @override
   Widget build(BuildContext context) {
-    final images = widget.imageUrls.isNotEmpty ? widget.imageUrls : _fallbackPhotos;
+    if (widget.imageUrls.isEmpty) {
+      return Container(
+        height: widget.height,
+        width: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppColors.emerald.withValues(alpha: 0.2),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.emerald.withValues(alpha: 0.4), width: 1.5),
+                ),
+                child: const Icon(Icons.home_work_rounded, color: AppColors.emerald, size: 36),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'VEKTOLUX VERIFIED PROPERTY',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final images = widget.imageUrls;
 
     return SizedBox(
       height: widget.height,

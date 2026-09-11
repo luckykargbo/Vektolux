@@ -362,9 +362,7 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
     final price = (item['salePrice'] as num?)?.toDouble() ?? 145000.0;
     final dailyRate = (item['pricePerDay'] as num?)?.toDouble();
     final images = (item['imageUrls'] as List?)?.cast<String>() ?? [];
-    final imageUrl = images.isNotEmpty
-        ? images.first
-        : 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=800';
+    final imageUrl = images.isNotEmpty ? images.first : null;
     final transmission = item['transmission'] as String? ?? 'Automatic';
     final fuel = item['fuelType'] as String? ?? 'Petrol';
 
@@ -382,6 +380,8 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
               salePrice: price,
               pricePerDay: dailyRate,
               imageUrls: images,
+              ownerId: item['ownerId'] as String?,
+              ownerName: item['ownerName'] as String?,
               color: item['color'] as String?,
               licensePlate: item['licensePlate'] as String?,
             ),

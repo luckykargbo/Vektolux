@@ -5,10 +5,12 @@
 // direct batch asset uploading, and draft/published visibility toggling.
 // ═══════════════════════════════════════════════════════════════════════
 
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/database/app_database.dart';
+import '../../../../core/database/services/sqlite_post_archive_service.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -59,11 +61,38 @@ class _AdminDevToolsScreenState extends State<AdminDevToolsScreen>
   List<Map<String, dynamic>> _adminListings = [];
   String _listingsFilter = 'all'; // all, draft, published, property, vehicle
 
+  // SQLite Archive State
+  bool _isLoadingArchive = false;
+  List<Map<String, dynamic>> _archivedPosts = [];
+  String _archiveSearch = '';
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _loadAdminListings();
+    _loadArchivedPosts();
+  }
+
+  Future<void> _loadArchivedPosts() async {
+    setState(() => _isLoadingArchive = true);
+    try {
+      final archiveService = SqlitePostArchiveService(widget.database);
+      final posts = await archiveService.getAllArchivedPosts();
+      if (mounted) {
+        setState(() {
+          _archivedPosts = posts;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load SQLite archives: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingArchive = false);
+    }
   }
 
   @override
@@ -365,6 +394,7 @@ class _AdminDevToolsScreenState extends State<AdminDevToolsScreen>
             Tab(icon: Icon(Icons.flash_on, size: 20), text: 'Quick Seed'),
             Tab(icon: Icon(Icons.cloud_upload, size: 20), text: 'Asset Uploader'),
             Tab(icon: Icon(Icons.view_list, size: 20), text: 'Listings'),
+            Tab(icon: Icon(Icons.archive_outlined, size: 20), text: 'SQLite Archive'),
           ],
         ),
       ),
@@ -374,6 +404,7 @@ class _AdminDevToolsScreenState extends State<AdminDevToolsScreen>
           _buildQuickSeedTab(),
           _buildAssetUploaderTab(),
           _buildListingsInspectorTab(),
+          _buildSqliteArchiveTab(),
         ],
       ),
     );
@@ -993,6 +1024,466 @@ class _AdminDevToolsScreenState extends State<AdminDevToolsScreen>
         fontWeight: FontWeight.w600,
       ),
       onSelected: (_) => setState(() => _listingsFilter = value),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //                    TAB 4: SQLITE ARCHIVE LEDGER
+  // ═══════════════════════════════════════════════════════════════════
+
+  Widget _buildSqliteArchiveTab() {
+    final filtered = _archivedPosts.where((p) {
+      if (_archiveSearch.isEmpty) return true;
+      final query = _archiveSearch.toLowerCase();
+      final title = (p['title'] ?? '').toString().toLowerCase();
+      final phone = (p['private_contact_phone'] ?? '').toString().toLowerCase();
+      final id = (p['id'] ?? '').toString().toLowerCase();
+      final owner = (p['owner_id'] ?? '').toString().toLowerCase();
+      final location = (p['location'] ?? '').toString().toLowerCase();
+      return title.contains(query) ||
+          phone.contains(query) ||
+          id.contains(query) ||
+          owner.contains(query) ||
+          location.contains(query);
+    }).toList();
+
+    return RefreshIndicator(
+      onRefresh: _loadArchivedPosts,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Explanatory Banner
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF10B981).withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.inventory_2_outlined,
+                          color: Color(0xFF34D399),
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'SQLite Archive Ledger',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                            Text(
+                              'Audit vault for user-deleted posts',
+                              style: TextStyle(
+                                color: Color(0xFF94A3B8),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.refresh, color: Colors.white),
+                        tooltip: 'Reload SQLite Archive',
+                        onPressed: _loadArchivedPosts,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'When users delete their listings, the records are wiped clean from public Convex cloud databases and permanently archived here in local SQLite storage. Administrators can retrieve seller contact phone numbers, original prices, and specifications at any time.',
+                    style: TextStyle(
+                      color: Color(0xFFCBD5E1),
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'TOTAL ARCHIVED RECORDS: ${_archivedPosts.length}',
+                      style: const TextStyle(
+                        color: Color(0xFF34D399),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Search Bar
+            TextField(
+              onChanged: (val) => setState(() => _archiveSearch = val),
+              decoration: InputDecoration(
+                hintText: 'Search by title, phone, location, owner...',
+                prefixIcon: const Icon(Icons.search, color: Color(0xFF64748B)),
+                filled: true,
+                fillColor: Colors.white,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            if (_isLoadingArchive)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(40),
+                  child: CircularProgressIndicator(),
+                ),
+              )
+            else if (filtered.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(32),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.archive_outlined,
+                      size: 48,
+                      color: Colors.grey.shade400,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _archivedPosts.isEmpty
+                          ? 'No posts currently archived in SQLite'
+                          : 'No matching archived records found',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                        color: Color(0xFF334155),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _archivedPosts.isEmpty
+                          ? 'When users delete properties or vehicles, full details and private contact numbers are permanently preserved in SQLite.'
+                          : 'Try adjusting your search query.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF64748B),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: filtered.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                itemBuilder: (ctx, idx) {
+                  final post = filtered[idx];
+                  final postType = (post['post_type'] ?? 'property').toString();
+                  final title = (post['title'] ?? 'Untitled Listing').toString();
+                  final category = (post['category'] ?? '').toString();
+                  final price = (post['price'] as num?)?.toDouble() ?? 0.0;
+                  final currency = (post['currency'] ?? 'SLE').toString();
+                  final location = (post['location'] ?? 'Sierra Leone').toString();
+                  final phone = (post['private_contact_phone'] ?? '').toString();
+                  final ownerId = (post['owner_id'] ?? '').toString();
+                  final bedrooms = post['bedrooms'] as num?;
+                  final bathrooms = post['bathrooms'] as num?;
+                  final archivedAt = (post['archived_at'] as num?)?.toInt() ?? 0;
+                  final originalCreatedAt = (post['original_created_at'] as num?)?.toInt() ?? 0;
+                  final isProperty = postType.toLowerCase() == 'property';
+
+                  return Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.02),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Post Type & Timestamp Row
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: isProperty
+                                    ? const Color(0xFF10B981).withValues(alpha: 0.15)
+                                    : const Color(0xFF3B82F6).withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    isProperty ? Icons.home_work_outlined : Icons.directions_car_outlined,
+                                    size: 13,
+                                    color: isProperty ? const Color(0xFF059669) : const Color(0xFF2563EB),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    isProperty ? 'PROPERTY' : 'VEHICLE',
+                                    style: TextStyle(
+                                      color: isProperty ? const Color(0xFF059669) : const Color(0xFF2563EB),
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            if (category.isNotEmpty)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF1F5F9),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  category.toUpperCase(),
+                                  style: const TextStyle(
+                                    color: Color(0xFF475569),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            const Spacer(),
+                            Text(
+                              archivedAt > 0
+                                  ? 'Archived ${DateTime.fromMillisecondsSinceEpoch(archivedAt).toLocal().toString().split('.').first}'
+                                  : 'Archived',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: Color(0xFF94A3B8),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+
+                        // Title & Price
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Text(
+                              '$currency ${price.toStringAsFixed(0)}',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF059669),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            const Icon(Icons.location_on_outlined, size: 14, color: Color(0xFF64748B)),
+                            const SizedBox(width: 2),
+                            Expanded(
+                              child: Text(
+                                location,
+                                style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        if (isProperty && (bedrooms != null || bathrooms != null)) ...[
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              if (bedrooms != null) ...[
+                                const Icon(Icons.bed_outlined, size: 14, color: Color(0xFF64748B)),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '$bedrooms Beds',
+                                  style: const TextStyle(fontSize: 12, color: Color(0xFF475569), fontWeight: FontWeight.w600),
+                                ),
+                                const SizedBox(width: 12),
+                              ],
+                              if (bathrooms != null) ...[
+                                const Icon(Icons.bathtub_outlined, size: 14, color: Color(0xFF64748B)),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '$bathrooms Baths',
+                                  style: const TextStyle(fontSize: 12, color: Color(0xFF475569), fontWeight: FontWeight.w600),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
+
+                        const SizedBox(height: 12),
+
+                        // ── PRIVATE SELLER CONTACT (ADMIN RETRIEVAL ONLY) ──
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0FDF4),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFF86EFAC)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.lock_outline_rounded, size: 18, color: Color(0xFF16A34A)),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'PRIVATE SELLER CONTACT (ADMIN RETRIEVAL ONLY)',
+                                      style: TextStyle(
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w800,
+                                        color: Color(0xFF15803D),
+                                        letterSpacing: 0.4,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    SelectableText(
+                                      phone.isNotEmpty ? phone : 'No private phone provided',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: phone.isNotEmpty ? const Color(0xFF14532D) : const Color(0xFF94A3B8),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (phone.isNotEmpty)
+                                IconButton(
+                                  icon: const Icon(Icons.copy_rounded, size: 16, color: Color(0xFF16A34A)),
+                                  tooltip: 'Copy Phone',
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  onPressed: () {
+                                    Clipboard.setData(ClipboardData(text: phone));
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Copied $phone to clipboard'),
+                                        backgroundColor: const Color(0xFF15803D),
+                                        behavior: SnackBarBehavior.floating,
+                                        duration: const Duration(seconds: 2),
+                                      ),
+                                    );
+                                  },
+                                ),
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        // Footer info: Owner ID, Creation Date, and Copy JSON
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                originalCreatedAt > 0
+                                    ? 'Owner: $ownerId • Posted ${DateTime.fromMillisecondsSinceEpoch(originalCreatedAt).toLocal().toString().split(' ').first}'
+                                    : 'Owner: $ownerId',
+                                style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8)),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            TextButton.icon(
+                              icon: const Icon(Icons.code_rounded, size: 14),
+                              label: const Text('Copy JSON', style: TextStyle(fontSize: 11)),
+                              style: TextButton.styleFrom(
+                                foregroundColor: const Color(0xFF475569),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              onPressed: () {
+                                Clipboard.setData(ClipboardData(text: jsonEncode(post)));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Archived post JSON copied to clipboard'),
+                                    backgroundColor: Color(0xFF0F172A),
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

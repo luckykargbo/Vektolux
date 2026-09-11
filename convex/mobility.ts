@@ -45,6 +45,7 @@ export const createVehicleListing = mutation({
     latitude: v.number(),
     longitude: v.number(),
     imageStorageIds: v.array(v.string()),
+    privateContactPhone: v.optional(v.string()),
     isPublished: v.optional(v.boolean()),
   },
   returns: v.string(), // Returns listing _id
@@ -108,6 +109,8 @@ export const createVehicleListing = mutation({
       latitude: args.latitude,
       longitude: args.longitude,
       geohash,
+      privateContactPhone: args.privateContactPhone,
+      isDeleted: false,
       availabilityStatus: "available",
       isPublished: args.isPublished ?? true,
       updatedAt: now,
@@ -146,8 +149,10 @@ export const listVehicles = query({
 
     let filtered = vehicles;
 
-    // Exclude unpublished / draft listings from public discovery
-    filtered = filtered.filter((v) => v.isPublished !== false);
+    // Exclude unpublished / draft / deleted listings from public discovery
+    filtered = filtered.filter(
+      (v) => v.isPublished !== false && v.isDeleted !== true
+    );
 
     // Apply vehicleType filter in-memory if specified
     if (args.vehicleType) {
@@ -175,8 +180,11 @@ export const listVehicles = query({
           )
         ).filter((u): u is string => Boolean(u));
 
+        // Privacy Guard: Strip privateContactPhone from public response
+        const { privateContactPhone: _strip, ...cleanVehicle } = vehicle;
+
         return {
-          ...vehicle,
+          ...cleanVehicle,
           _id: vehicle._id as string,
           ownerId: String(vehicle.ownerId ?? ""),
           make: vehicle.make || "Untitled Vehicle",
@@ -190,6 +198,129 @@ export const listVehicles = query({
     );
 
     return resolvedVehicles;
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                    MY VEHICLE LISTINGS (OWNER)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const getMyVehicleListings = query({
+  args: {
+    ownerId: v.string(),
+    sessionToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.db.normalizeId("users", args.ownerId);
+    if (!userId) return [];
+
+    const listings = await ctx.db
+      .query("vehicleListings")
+      .withIndex("by_owner", (q) => q.eq("ownerId", userId))
+      .order("desc")
+      .collect();
+
+    return listings
+      .filter((v) => v.isDeleted !== true)
+      .map((v) => ({
+        ...v,
+        _id: v._id as string,
+        ownerId: String(v.ownerId),
+      }));
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                    UPDATE VEHICLE LISTING (EDIT)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const updateVehicleListing = mutation({
+  args: {
+    listingId: v.string(),
+    ownerId: v.string(),
+    sessionToken: v.optional(v.string()),
+    make: v.optional(v.string()),
+    model: v.optional(v.string()),
+    year: v.optional(v.number()),
+    color: v.optional(v.string()),
+    pricePerDay: v.optional(v.number()),
+    salePrice: v.optional(v.number()),
+    isPublished: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("vehicleListings", args.listingId);
+    if (!id) throw new Error("Vehicle listing not found");
+
+    const listing = await ctx.db.get(id);
+    if (!listing) throw new Error("Vehicle listing not found");
+
+    const userId = ctx.db.normalizeId("users", args.ownerId);
+    if (!userId || listing.ownerId !== userId) {
+      throw new Error("You do not have permission to edit this listing");
+    }
+
+    const updates: Record<string, any> = { updatedAt: Date.now() };
+    if (args.make !== undefined) updates.make = args.make;
+    if (args.model !== undefined) updates.model = args.model;
+    if (args.year !== undefined) updates.year = args.year;
+    if (args.color !== undefined) updates.color = args.color;
+    if (args.pricePerDay !== undefined) updates.pricePerDay = args.pricePerDay;
+    if (args.salePrice !== undefined) updates.salePrice = args.salePrice;
+    if (args.isPublished !== undefined) updates.isPublished = args.isPublished;
+
+    await ctx.db.patch(id, updates);
+    return { success: true, message: "Vehicle listing updated successfully" };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                    DELETE VEHICLE LISTING (DELETE & ARCHIVE)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const deleteVehicleListing = mutation({
+  args: {
+    listingId: v.string(),
+    ownerId: v.string(),
+    sessionToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("vehicleListings", args.listingId);
+    if (!id) throw new Error("Vehicle listing not found");
+
+    const listing = await ctx.db.get(id);
+    if (!listing) throw new Error("Vehicle listing not found");
+
+    const userId = ctx.db.normalizeId("users", args.ownerId);
+    if (!userId || listing.ownerId !== userId) {
+      throw new Error("You do not have permission to delete this listing");
+    }
+
+    const archivedSnapshot = {
+      id: listing._id as string,
+      postType: "vehicle",
+      ownerId: String(listing.ownerId),
+      title: `${listing.year} ${listing.make} ${listing.model}`,
+      description: `Vehicle Type: ${listing.vehicleType}, Intent: ${listing.listingIntent}, Color: ${listing.color ?? 'N/A'}`,
+      category: listing.listingIntent,
+      price: listing.salePrice ?? listing.pricePerDay ?? listing.pricePerKm ?? 0,
+      currency: listing.currency,
+      location: `Coordinates: (${listing.latitude.toFixed(4)}, ${listing.longitude.toFixed(4)})`,
+      bedrooms: null,
+      bathrooms: null,
+      privateContactPhone: listing.privateContactPhone ?? null,
+      imageUrls: listing.imageUrls,
+      originalCreatedAt: listing.updatedAt,
+      archivedAt: Date.now(),
+    };
+
+    // Remove from Convex database completely as requested
+    await ctx.db.delete(id);
+
+    return {
+      success: true,
+      message: "Vehicle listing permanently removed from Convex and archived",
+      archivedData: archivedSnapshot,
+    };
   },
 });
 

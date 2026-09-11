@@ -375,3 +375,45 @@ export const seedDiscoveryData = mutation({
     };
   },
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+//                 PURGE STATIC MOCK LISTINGS & IMAGES
+// ═══════════════════════════════════════════════════════════════════════
+
+export const purgeStaticMockListings = mutation({
+  args: {},
+  returns: v.object({
+    propertiesPurged: v.number(),
+    vehiclesPurged: v.number(),
+    message: v.string(),
+  }),
+  handler: async (ctx) => {
+    // 1. Purge all properties with Unsplash or mock images
+    const properties = await ctx.db.query("realEstateListings").collect();
+    let propCount = 0;
+    for (const p of properties) {
+      const hasUnsplash = p.imageUrls?.some((url: string) => url.includes("unsplash.com"));
+      if (hasUnsplash) {
+        await ctx.db.delete(p._id);
+        propCount++;
+      }
+    }
+
+    // 2. Purge all vehicles with Unsplash or mock images
+    const vehicles = await ctx.db.query("vehicleListings").collect();
+    let vehCount = 0;
+    for (const v of vehicles) {
+      const hasUnsplash = v.imageUrls?.some((url: string) => url.includes("unsplash.com"));
+      if (hasUnsplash) {
+        await ctx.db.delete(v._id);
+        vehCount++;
+      }
+    }
+
+    return {
+      propertiesPurged: propCount,
+      vehiclesPurged: vehCount,
+      message: `Cleaned ${propCount} mock properties and ${vehCount} mock vehicles from Convex`,
+    };
+  },
+});

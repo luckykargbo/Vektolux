@@ -35,6 +35,7 @@ export const createPropertyListing = mutation({
     bathrooms: v.optional(v.number()),
     areaSqM: v.optional(v.number()),
     amenities: v.optional(v.array(v.string())),
+    privateContactPhone: v.optional(v.string()),
     isPublished: v.optional(v.boolean()),
   },
   returns: v.string(), // Returns listing _id
@@ -100,6 +101,8 @@ export const createPropertyListing = mutation({
       areaSqM: args.areaSqM,
       amenities: args.amenities ?? [],
       imageUrls: resolvedImageUrls,
+      privateContactPhone: args.privateContactPhone,
+      isDeleted: false,
       availabilityStatus: "available",
       isFeatured: false,
       isPublished: args.isPublished ?? true,
@@ -137,8 +140,10 @@ export const listProperties = query({
           .order("desc")
           .take(args.limit ?? 50);
 
-    // Exclude unpublished / draft listings from public discovery
-    let filtered = listings.filter((l) => l.isPublished !== false);
+    // Exclude unpublished / draft / deleted listings from public discovery
+    let filtered = listings.filter(
+      (l) => l.isPublished !== false && l.isDeleted !== true
+    );
 
     // Apply price and city filters in-memory if requested
     if (args.minPrice !== undefined) {
@@ -174,8 +179,11 @@ export const listProperties = query({
           )
         ).filter((u): u is string => Boolean(u));
 
+        // Privacy Guard: Strip privateContactPhone from public response
+        const { privateContactPhone: _strip, ...cleanListing } = listing;
+
         return {
-          ...listing,
+          ...cleanListing,
           _id: listing._id as string,
           ownerId: String(listing.ownerId ?? ""),
           title: listing.title || "Untitled Property",
@@ -189,5 +197,129 @@ export const listProperties = query({
     );
 
     return resolvedListings;
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                    MY PROPERTY LISTINGS (OWNER)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const getMyPropertyListings = query({
+  args: {
+    ownerId: v.string(),
+    sessionToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.db.normalizeId("users", args.ownerId);
+    if (!userId) return [];
+
+    const listings = await ctx.db
+      .query("realEstateListings")
+      .withIndex("by_owner", (q) => q.eq("ownerId", userId))
+      .order("desc")
+      .collect();
+
+    return listings
+      .filter((l) => l.isDeleted !== true)
+      .map((l) => ({
+        ...l,
+        _id: l._id as string,
+        ownerId: String(l.ownerId),
+      }));
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                    UPDATE PROPERTY LISTING (EDIT)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const updatePropertyListing = mutation({
+  args: {
+    listingId: v.string(),
+    ownerId: v.string(),
+    sessionToken: v.optional(v.string()),
+    title: v.optional(v.string()),
+    description: v.optional(v.string()),
+    price: v.optional(v.number()),
+    hourlyRate: v.optional(v.number()),
+    bedrooms: v.optional(v.number()),
+    bathrooms: v.optional(v.number()),
+    isPublished: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("realEstateListings", args.listingId);
+    if (!id) throw new Error("Listing not found");
+
+    const listing = await ctx.db.get(id);
+    if (!listing) throw new Error("Listing not found");
+
+    const userId = ctx.db.normalizeId("users", args.ownerId);
+    if (!userId || listing.ownerId !== userId) {
+      throw new Error("You do not have permission to edit this listing");
+    }
+
+    const updates: Record<string, any> = { updatedAt: Date.now() };
+    if (args.title !== undefined) updates.title = args.title;
+    if (args.description !== undefined) updates.description = args.description;
+    if (args.price !== undefined) updates.price = args.price;
+    if (args.hourlyRate !== undefined) updates.hourlyRate = args.hourlyRate;
+    if (args.bedrooms !== undefined) updates.bedrooms = args.bedrooms;
+    if (args.bathrooms !== undefined) updates.bathrooms = args.bathrooms;
+    if (args.isPublished !== undefined) updates.isPublished = args.isPublished;
+
+    await ctx.db.patch(id, updates);
+    return { success: true, message: "Listing updated successfully" };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                    DELETE PROPERTY LISTING (DELETE & ARCHIVE)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const deletePropertyListing = mutation({
+  args: {
+    listingId: v.string(),
+    ownerId: v.string(),
+    sessionToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("realEstateListings", args.listingId);
+    if (!id) throw new Error("Listing not found");
+
+    const listing = await ctx.db.get(id);
+    if (!listing) throw new Error("Listing not found");
+
+    const userId = ctx.db.normalizeId("users", args.ownerId);
+    if (!userId || listing.ownerId !== userId) {
+      throw new Error("You do not have permission to delete this listing");
+    }
+
+    // Capture full data payload for local SQLite archival
+    const archivedSnapshot = {
+      id: listing._id as string,
+      postType: "property",
+      ownerId: String(listing.ownerId),
+      title: listing.title,
+      description: listing.description,
+      category: listing.category,
+      price: listing.price,
+      currency: listing.currency,
+      location: `${listing.address}, ${listing.city}`,
+      bedrooms: listing.bedrooms ?? null,
+      bathrooms: listing.bathrooms ?? null,
+      privateContactPhone: listing.privateContactPhone ?? null,
+      imageUrls: listing.imageUrls,
+      originalCreatedAt: listing.updatedAt,
+      archivedAt: Date.now(),
+    };
+
+    // Remove from Convex database completely as requested
+    await ctx.db.delete(id);
+
+    return {
+      success: true,
+      message: "Listing permanently removed from Convex and archived",
+      archivedData: archivedSnapshot,
+    };
   },
 });

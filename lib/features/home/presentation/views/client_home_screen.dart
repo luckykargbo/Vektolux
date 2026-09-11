@@ -1121,9 +1121,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     final price = (item['price'] as num?)?.toDouble() ?? 5000.0;
     final address = item['address'] as String? ?? 'Wilkinson Road, Freetown';
     final images = (item['imageUrls'] as List?)?.cast<String>() ?? [];
-    final imageUrl = images.isNotEmpty
-        ? images.first
-        : 'https://images.unsplash.com/photo-1613490493576-7fde63acd811?w=800';
+    final imageUrl = images.isNotEmpty ? images.first : null;
     final beds = item['bedrooms'] as int? ?? 3;
     final baths = item['bathrooms'] as int? ?? 2;
     final isGuesthouse = item['category'] == 'hourly_guesthouse';
@@ -1342,9 +1340,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     final year = item['year'] as int? ?? 2021;
     final price = (item['salePrice'] as num?)?.toDouble() ?? 145000.0;
     final images = (item['imageUrls'] as List?)?.cast<String>() ?? [];
-    final imageUrl = images.isNotEmpty
-        ? images.first
-        : 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=800';
+    final imageUrl = images.isNotEmpty ? images.first : null;
 
     return GestureDetector(
       onTap: () {
