@@ -105,9 +105,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Vektolux Latest Mobile Release (v1.0.6)"
+          name: "Vektolux Latest Mobile Release (v1.0.7)"
           body: |
-            ## Vektolux Mobile App Builds (v1.0.6) — Multi-Vertical Super App
+            ## Vektolux Mobile App Builds (v1.0.7) — Multi-Vertical Super App
 
             ### Direct Downloads:
             - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
@@ -115,22 +115,20 @@ jobs:
             - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
               * Direct sideload / install on any Android device.
 
-            ### What's New in this Build (v1.0.6):
-            - **Live Resend Email OTP & Password Recovery**:
-              * Multi-channel password reset via SMS, WhatsApp, and live transactional Email powered by Resend.
-              * 6-digit OTP verification with countdown timers and automated email dispatch.
-            - **Performance & Media Loader Overhaul**:
-              * Zero-lag image rendering and memory leak elimination in `VxNetworkImage`.
-              * Lazy tab rendering in `MainNavigationShell` preventing UI thread saturation.
-            - **Payment Visibility & Mobile Money Agent Code 001**:
-              * High-contrast obsidian black input styling on all payment screens.
-              * Official Agent Code 001 integration for Orange Money and Africell escrow checkouts.
-            - **Pristine Map Experience**:
-              * Clean idle map with simulated driver clutter removed.
-              * Active 3D perspective tracking engages exclusively upon confirmed bookings.
-            - **24-Hour Rental Conditions & Interactive Tour**:
-              * Daily 24-hour vs hourly rental terms sheet with chauffeur options and fuel policies.
-              * 4-step interactive onboarding tour modal for clients, replayable anytime from Profile.
+            ### What's New in this Build (v1.0.7):
+            - **Manual Business Verification Pipeline & Agent Sandbox**:
+              * Dedicated `PendingVerificationScreen` sandboxing newly registered Real Estate Agents and Vehicle Merchants.
+              * Real-time 30-second polling for approval/rejection updates with instant auto-transition upon admin approval.
+              * Integrated in-app resubmission form with strict validation (PDF/JPEG/PNG ≤ 5MB) and rejection reason feedback.
+            - **Admin Verification Queue & Review Tools**:
+              * 5-tab Dev Tools queue (`pending`, `approved`, `rejected`, `all`) with signed proof document preview.
+              * One-tap approvals with audit logging (admin ID, timestamps) and reason-mandated rejection dialogs.
+            - **Marketplace Listing Creation Gate**:
+              * Unverified or pending business accounts are strictly prohibited from publishing listings until approved.
+              * Verification status cards and quick navigation buttons integrated directly on the Profile screen.
+            - **Post Management, Price Updates & Sold Post Archival**:
+              * Dynamic price range adjustments for post owners with immediate cross-client synchronization.
+              * Sold post deletion with permanent offline SQLite archival for transaction history.
           files: |
             release-assets/Vektolux.ipa
             release-assets/app-release.apk
