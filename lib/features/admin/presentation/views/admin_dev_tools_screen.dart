@@ -358,6 +358,71 @@ class _AdminDevToolsScreenState extends State<AdminDevToolsScreen>
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  //                 CLEAR ALL IMAGE POSTS & LISTINGS
+  // ═══════════════════════════════════════════════════════════════════
+
+  Future<void> _clearAllListings() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear All Image Posts & Listings'),
+        content: const Text(
+          'Are you sure you want to permanently delete ALL properties and vehicles from Convex and local cache? This will clear all image posts from the app.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final res = await widget.convexClient.mutation(
+        'admin:clearAllListings',
+        args: {},
+      );
+
+      if (res.success && mounted) {
+        setState(() {
+          _adminListings.clear();
+        });
+        try {
+          await widget.database.cachedPropertyListingsDao.clearAll();
+          await widget.database.cachedVehicleListingsDao.clearAll();
+        } catch (_) {}
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('All image posts and listings cleared successfully!'),
+              backgroundColor: AppColors.emerald,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Clear failed: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -390,6 +455,13 @@ class _AdminDevToolsScreenState extends State<AdminDevToolsScreen>
         backgroundColor: Colors.white,
         foregroundColor: AppColors.obsidian,
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.error),
+            tooltip: 'Clear All Image Posts & Listings',
+            onPressed: _clearAllListings,
+          ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           labelColor: const Color(0xFF059669),

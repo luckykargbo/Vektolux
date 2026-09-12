@@ -488,6 +488,42 @@ export const deleteAdminListing = mutation({
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+//                   CLEAR ALL IMAGE POSTS & LISTINGS
+// ═══════════════════════════════════════════════════════════════════════
+
+export const clearAllListings = mutation({
+  args: {},
+  returns: v.object({
+    success: v.boolean(),
+    propertiesCleared: v.number(),
+    vehiclesCleared: v.number(),
+    message: v.string(),
+  }),
+  handler: async (ctx) => {
+    const properties = await ctx.db.query("realEstateListings").collect();
+    let propCount = 0;
+    for (const p of properties) {
+      await ctx.db.delete(p._id);
+      propCount++;
+    }
+
+    const vehicles = await ctx.db.query("vehicleListings").collect();
+    let vehCount = 0;
+    for (const v of vehicles) {
+      await ctx.db.delete(v._id);
+      vehCount++;
+    }
+
+    return {
+      success: true,
+      propertiesCleared: propCount,
+      vehiclesCleared: vehCount,
+      message: `Successfully cleared ${propCount} properties and ${vehCount} vehicles from Convex.`,
+    };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 //                    BATCH GENERATE UPLOAD URLS
 // ═══════════════════════════════════════════════════════════════════════
 
