@@ -435,6 +435,13 @@ export const seedDemoUsers = mutation({
         role: "agent" as const,
         balance: 5000,
       },
+      {
+        email: "admin@vektolux.sl",
+        phone: "+23276100000",
+        name: "Vektolux Administrator",
+        role: "admin" as const,
+        balance: 99999,
+      },
     ];
 
     const seeded: string[] = [];

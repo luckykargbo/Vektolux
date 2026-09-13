@@ -8,10 +8,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/database/app_database.dart';
+import '../../../../core/network/convex_client_wrapper.dart';
+import '../../../admin/presentation/views/admin_dev_tools_screen.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
+import '../../domain/entities/user_entity.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
+import 'admin_login_screen.dart';
 import 'register_screen.dart';
 import 'forgot_password_screen.dart';
 
@@ -49,11 +54,26 @@ class _LoginScreenState extends State<LoginScreen> {
     return BlocListener<AuthBloc, AuthState>(
       listener: (context, state) {
         if (state.status == AuthStatus.authenticated && state.user != null) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => const MainNavigationShell(),
-            ),
-          );
+          final user = state.user!;
+          if (user.role == UserRole.admin) {
+            final database = context.read<AppDatabase>();
+            final convexClient = context.read<ConvexClientWrapper>();
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (_) => AdminDevToolsScreen(
+                  convexClient: convexClient,
+                  database: database,
+                  currentUser: user,
+                ),
+              ),
+            );
+          } else {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (_) => const MainNavigationShell(),
+              ),
+            );
+          }
         } else if (state.status == AuthStatus.error && state.errorMessage != null) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -69,6 +89,37 @@ class _LoginScreenState extends State<LoginScreen> {
         appBar: AppBar(
           backgroundColor: Colors.transparent,
           elevation: 0,
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: TextButton.icon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AdminLoginScreen(),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.admin_panel_settings_outlined, size: 18, color: AppColors.emeraldDark),
+                label: const Text(
+                  'Admin Portal',
+                  style: TextStyle(
+                    color: AppColors.emeraldDark,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
+                style: TextButton.styleFrom(
+                  backgroundColor: AppColors.emerald.withValues(alpha: 0.12),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide(color: AppColors.emerald.withValues(alpha: 0.3)),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
         body: SafeArea(
           child: SingleChildScrollView(
@@ -252,6 +303,12 @@ class _LoginScreenState extends State<LoginScreen> {
                               label: 'Real Estate Agent',
                               email: 'agent@vektolux.sl',
                             ),
+                            _buildQuickFillChip(
+                              label: '👑 Administrator',
+                              email: 'admin@vektolux.sl',
+                              icon: Icons.admin_panel_settings_rounded,
+                              iconColor: const Color(0xFFD97706),
+                            ),
                           ],
                         ),
                       ],
@@ -326,7 +383,13 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _buildQuickFillChip({required String label, required String email}) {
+  Widget _buildQuickFillChip({
+    required String label,
+    required String email,
+    IconData? icon,
+    Color? iconColor,
+  }) {
+    final chipColor = iconColor ?? AppColors.emerald;
     return InkWell(
       onTap: () {
         setState(() {
@@ -341,13 +404,13 @@ class _LoginScreenState extends State<LoginScreen> {
           color: AppColors.white,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: AppColors.emerald.withValues(alpha: 0.3),
+            color: chipColor.withValues(alpha: 0.3),
           ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.touch_app_outlined, size: 12, color: AppColors.emerald),
+            Icon(icon ?? Icons.touch_app_outlined, size: 12, color: chipColor),
             const SizedBox(width: 4),
             Text(
               label,
