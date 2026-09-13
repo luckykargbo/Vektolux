@@ -92,24 +92,51 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
   Future<void> _cancelBooking(CachedBooking booking) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Cancel Booking?'),
-        content: Text('Are you sure you want to cancel "${booking.listingTitle}"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Keep Booking'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.error,
-              foregroundColor: AppColors.white,
+      builder: (ctx) {
+        final isDark = Theme.of(ctx).brightness == Brightness.dark;
+        return AlertDialog(
+          backgroundColor: isDark ? const Color(0xFF1E293B) : AppColors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            'Cancel Booking?',
+            style: TextStyle(
+              color: isDark ? AppColors.white : AppColors.obsidian,
+              fontWeight: FontWeight.w700,
+              fontSize: 18,
             ),
-            child: const Text('Yes, Cancel'),
           ),
-        ],
-      ),
+          content: Text(
+            'Are you sure you want to cancel "${booking.listingTitle}"?',
+            style: TextStyle(
+              color: isDark ? const Color(0xFFCBD5E1) : const Color(0xFF475569),
+              fontSize: 14,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(
+                'Keep Booking',
+                style: TextStyle(
+                  color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.error,
+                foregroundColor: AppColors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: const Text('Yes, Cancel'),
+            ),
+          ],
+        );
+      },
     );
 
     if (confirmed != true) return;

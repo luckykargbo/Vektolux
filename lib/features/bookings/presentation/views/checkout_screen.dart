@@ -259,100 +259,157 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        contentPadding: const EdgeInsets.all(24),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: const BoxDecoration(
-                color: AppColors.emeraldSurface,
-                shape: BoxShape.circle,
+      builder: (ctx) {
+        final isDark = Theme.of(ctx).brightness == Brightness.dark;
+        return AlertDialog(
+          backgroundColor: isDark ? const Color(0xFF1E293B) : AppColors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          contentPadding: const EdgeInsets.all(24),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF064E3B) : AppColors.emeraldSurface,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_circle_rounded,
+                  color: AppColors.emerald,
+                  size: 40,
+                ),
               ),
-              child: const Icon(
-                Icons.check_circle_rounded,
-                color: AppColors.emerald,
-                size: 40,
+              const SizedBox(height: 18),
+              Text(
+                'Escrow Locked & Confirmed!',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: isDark ? AppColors.white : AppColors.obsidian,
+                ),
+                textAlign: TextAlign.center,
               ),
-            ),
-            const SizedBox(height: 18),
-            const Text(
-              'Escrow Locked & Confirmed!',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: AppColors.obsidian,
+              const SizedBox(height: 8),
+              Text(
+                'Your booking for ${widget.listingTitle} is confirmed. Funds are protected in Vektolux Escrow.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: isDark ? const Color(0xFFCBD5E1) : const Color(0xFF475569),
+                ),
               ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Your booking for ${widget.listingTitle} is confirmed. Funds are protected in Vektolux Escrow.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 13,
-                color: AppColors.textSecondary,
-              ),
-            ),
-            const SizedBox(height: 14),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.gray100,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Reference:', style: TextStyle(fontSize: 11, color: AppColors.gray600)),
-                      Text('#$bookingId', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, fontFamily: 'monospace')),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Partner Split (60%):', style: TextStyle(fontSize: 11, color: AppColors.gray600)),
-                      Text('SLE ${_currencyFormat.format(partnerAmount)}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.emeraldDark)),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Platform Fee (40%):', style: TextStyle(fontSize: 11, color: AppColors.gray600)),
-                      Text('SLE ${_currencyFormat.format(widget.totalAmount - partnerAmount)}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.gray600)),
-                    ],
-                  ),
-                  if (txHash != null) ...[
-                    const Divider(height: 14),
-                    const Row(
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: isDark ? const Color(0xFF334155) : AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Icon(Icons.lock_clock_rounded, size: 12, color: AppColors.emerald),
-                        SizedBox(width: 4),
-                        Text('Ledger Audit Hash:', style: TextStyle(fontSize: 10, color: AppColors.gray500, fontWeight: FontWeight.w600)),
+                        Text(
+                          'Reference:',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+                          ),
+                        ),
+                        Text(
+                          '#$bookingId',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            fontFamily: 'monospace',
+                            color: isDark ? AppColors.white : AppColors.obsidian,
+                          ),
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      txHash,
-                      style: const TextStyle(fontSize: 9, fontFamily: 'monospace', color: AppColors.gray600),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Partner Split (60%):',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+                          ),
+                        ),
+                        Text(
+                          'SLE ${_currencyFormat.format(partnerAmount)}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: isDark ? AppColors.emerald : AppColors.emeraldDark,
+                          ),
+                        ),
+                      ],
                     ),
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Platform Fee (40%):',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+                          ),
+                        ),
+                        Text(
+                          'SLE ${_currencyFormat.format(widget.totalAmount - partnerAmount)}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? const Color(0xFFCBD5E1) : const Color(0xFF475569),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (txHash != null) ...[
+                      Divider(
+                        height: 14,
+                        color: isDark ? const Color(0xFF334155) : AppColors.border,
+                      ),
+                      Row(
+                        children: [
+                          const Icon(Icons.lock_clock_rounded, size: 12, color: AppColors.emerald),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Ledger Audit Hash:',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        txHash,
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontFamily: 'monospace',
+                          color: isDark ? const Color(0xFFCBD5E1) : const Color(0xFF475569),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
+              const SizedBox(height: 20),
             SizedBox(
               width: double.infinity,
               height: 48,
@@ -381,9 +438,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
+      );
+    },
+  );
+}
 
   @override
   Widget build(BuildContext context) {
@@ -480,14 +538,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Schedule',
-                          style: TextStyle(
-                              fontSize: 13, color: AppColors.textSecondary)),
+                      const Text(
+                        'Schedule',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppColors.gray600,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
                       Text(
                         DateFormat('EEE, MMM d, yyyy')
                             .format(DateTime.fromMillisecondsSinceEpoch(widget.startTime)),
                         style: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w600),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.obsidian,
+                        ),
                       ),
                     ],
                   ),
@@ -496,12 +562,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('Duration',
-                            style: TextStyle(
-                                fontSize: 13, color: AppColors.textSecondary)),
-                        Text('${widget.hours} Hours',
-                            style: const TextStyle(
-                                fontSize: 13, fontWeight: FontWeight.w600)),
+                        const Text(
+                          'Duration',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: AppColors.gray600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        Text(
+                          '${widget.hours} Hours',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.obsidian,
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -510,12 +586,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('Rental Period',
-                            style: TextStyle(
-                                fontSize: 13, color: AppColors.textSecondary)),
-                        Text('${widget.days} Days',
-                            style: const TextStyle(
-                                fontSize: 13, fontWeight: FontWeight.w600)),
+                        const Text(
+                          'Rental Period',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: AppColors.gray600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        Text(
+                          '${widget.days} Days',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.obsidian,
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -572,9 +658,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Mobile Network Provider',
-                        style: TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w600)),
+                    const Text(
+                      'Mobile Network Provider',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.obsidian,
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -583,6 +674,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             label: const Text('Orange Money'),
                             selected: _momoProvider == 'orange_money',
                             selectedColor: Colors.orange.shade700,
+                            backgroundColor: const Color(0xFFF1F5F9),
                             labelStyle: TextStyle(
                               color: _momoProvider == 'orange_money'
                                   ? AppColors.white
@@ -603,6 +695,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             label: const Text('Africell Money'),
                             selected: _momoProvider == 'africell_money',
                             selectedColor: Colors.purple.shade700,
+                            backgroundColor: const Color(0xFFF1F5F9),
                             labelStyle: TextStyle(
                               color: _momoProvider == 'africell_money'
                                   ? AppColors.white
@@ -630,6 +723,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       ),
                       decoration: const InputDecoration(
                         labelText: 'Sierra Leone Phone Number',
+                        labelStyle: TextStyle(color: AppColors.gray600),
                         prefixText: '+232 ',
                         prefixStyle: TextStyle(
                           color: AppColors.obsidian,
@@ -651,6 +745,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         labelText: _momoProvider == 'orange_money'
                             ? 'Orange Money Agent # / Merchant Code'
                             : 'Africell Agent Code',
+                        labelStyle: const TextStyle(color: AppColors.gray600),
                         hintText: 'e.g. 001',
                         prefixIcon: const Icon(Icons.store_mall_directory_outlined),
                         helperText: 'Default Agent / Merchant Code is 001 for direct app payment',
@@ -671,10 +766,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       ),
                       decoration: const InputDecoration(
                         labelText: '4-Digit Wallet Security PIN',
+                        labelStyle: TextStyle(color: AppColors.gray600),
                         hintText: '••••',
                         prefixIcon: Icon(Icons.lock_outline_rounded),
                         helperText: 'Required to authorize escrow payment lock',
-                        helperStyle: TextStyle(fontSize: 11, color: AppColors.gray500),
+                        helperStyle: TextStyle(fontSize: 11, color: AppColors.gray600),
                         counterText: '',
                       ),
                     ),
@@ -693,8 +789,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   children: [
                     TextFormField(
                       controller: _cardNumberController,
+                      style: const TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600),
                       decoration: const InputDecoration(
                         labelText: 'Card Number',
+                        labelStyle: TextStyle(color: AppColors.gray600),
                         prefixIcon: Icon(Icons.credit_card_outlined),
                       ),
                     ),
@@ -704,8 +802,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         Expanded(
                           child: TextFormField(
                             controller: _cardExpiryController,
+                            style: const TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600),
                             decoration: const InputDecoration(
                               labelText: 'Expiry (MM/YY)',
+                              labelStyle: TextStyle(color: AppColors.gray600),
                             ),
                           ),
                         ),
@@ -714,8 +814,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           child: TextFormField(
                             controller: _cardCvvController,
                             obscureText: true,
+                            style: const TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600),
                             decoration: const InputDecoration(
                               labelText: 'CVV',
+                              labelStyle: TextStyle(color: AppColors.gray600),
                             ),
                           ),
                         ),
@@ -740,20 +842,44 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Subtotal'),
-                      Text('SLE ${_currencyFormat.format(widget.subtotal)}'),
+                      const Text(
+                        'Subtotal',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.gray600,
+                        ),
+                      ),
+                      Text(
+                        'SLE ${_currencyFormat.format(widget.subtotal)}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.obsidian,
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Platform & Escrow Protection (5%)',
-                          style: TextStyle(
-                              color: AppColors.textSecondary, fontSize: 12)),
-                      Text('SLE ${_currencyFormat.format(widget.serviceFee)}',
-                          style: const TextStyle(
-                              color: AppColors.textSecondary, fontSize: 12)),
+                      const Text(
+                        'Platform & Escrow Protection (5%)',
+                        style: TextStyle(
+                          color: AppColors.gray600,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      Text(
+                        'SLE ${_currencyFormat.format(widget.serviceFee)}',
+                        style: const TextStyle(
+                          color: AppColors.gray600,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ],
                   ),
                   const Divider(height: 20),
@@ -820,7 +946,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           '60% partner disbursement is locked in escrow until property or vehicle handover inspection is verified. 40% platform service fee & tax reserve.',
                           style: TextStyle(
                             fontSize: 11,
-                            color: AppColors.textSecondary,
+                            color: Color(0xFF065F46),
+                            fontWeight: FontWeight.w500,
                             height: 1.35,
                           ),
                         ),
@@ -929,9 +1056,12 @@ class _PaymentTypeCard extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               subtitle,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
-                color: AppColors.textSecondary,
+                fontWeight: FontWeight.w500,
+                color: isSelected
+                    ? AppColors.emeraldDark.withValues(alpha: 0.9)
+                    : const Color(0xFF475569),
               ),
             ),
           ],

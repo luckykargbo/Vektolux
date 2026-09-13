@@ -167,11 +167,18 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardBg = isDark ? const Color(0xFF1E293B) : AppColors.white;
+    final primaryTextColor = isDark ? AppColors.white : AppColors.obsidian;
+    final secondaryTextColor = isDark ? const Color(0xFFCBD5E1) : const Color(0xFF475569);
+    final unselectedChipBg = isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9);
+
     return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: EdgeInsets.only(
         left: 20,
@@ -189,7 +196,7 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: AppColors.gray300,
+                color: isDark ? const Color(0xFF475569) : AppColors.gray300,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -200,30 +207,30 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 'Schedule Site Visit',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.obsidian,
+                  color: primaryTextColor,
                 ),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: AppColors.emeraldSurface,
+                  color: isDark ? const Color(0xFF064E3B) : AppColors.emeraldSurface,
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
-                    Icon(Icons.shield_rounded, size: 14, color: AppColors.emerald),
-                    SizedBox(width: 4),
+                    const Icon(Icons.shield_rounded, size: 14, color: AppColors.emerald),
+                    const SizedBox(width: 4),
                     Text(
                       'FREE VISIT',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: AppColors.emeraldDark,
+                        color: isDark ? AppColors.emeraldLight : AppColors.emeraldDark,
                       ),
                     ),
                   ],
@@ -234,16 +241,20 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
           const SizedBox(height: 4),
           Text(
             widget.property.title,
-            style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            style: TextStyle(fontSize: 13, color: secondaryTextColor),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 20),
 
           // Date Selector Chips
-          const Text(
+          Text(
             'Select Preferred Date',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: primaryTextColor,
+            ),
           ),
           const SizedBox(height: 10),
           SingleChildScrollView(
@@ -262,11 +273,12 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
                           : DateFormat('EEE, d MMM').format(date),
                     ),
                     selected: isSelected,
-                    selectedColor: AppColors.obsidian,
+                    selectedColor: AppColors.emerald,
+                    backgroundColor: unselectedChipBg,
                     labelStyle: TextStyle(
-                      color: isSelected ? AppColors.white : AppColors.obsidian,
+                      color: isSelected ? AppColors.white : primaryTextColor,
                       fontWeight:
-                          isSelected ? FontWeight.w700 : FontWeight.w500,
+                          isSelected ? FontWeight.w700 : FontWeight.w600,
                       fontSize: 12,
                     ),
                     onSelected: (val) {
@@ -280,9 +292,13 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
           const SizedBox(height: 20),
 
           // Time Slot Grid
-          const Text(
+          Text(
             'Select Time Window',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: primaryTextColor,
+            ),
           ),
           const SizedBox(height: 10),
           Wrap(
@@ -294,9 +310,10 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
                 label: Text(slot),
                 selected: isSelected,
                 selectedColor: AppColors.emerald,
+                backgroundColor: unselectedChipBg,
                 labelStyle: TextStyle(
-                  color: isSelected ? AppColors.white : AppColors.obsidian,
-                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  color: isSelected ? AppColors.white : primaryTextColor,
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
                   fontSize: 12,
                 ),
                 onSelected: (val) {
@@ -310,12 +327,15 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
           // Notes
           TextField(
             controller: _notesController,
+            style: TextStyle(color: primaryTextColor),
             decoration: InputDecoration(
               hintText: 'Special instructions or questions for the agent...',
-              hintStyle: const TextStyle(fontSize: 13, color: AppColors.gray400),
+              hintStyle: TextStyle(fontSize: 13, color: isDark ? const Color(0xFF94A3B8) : AppColors.gray400),
+              fillColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
+              filled: true,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: AppColors.border),
+                borderSide: BorderSide(color: isDark ? const Color(0xFF334155) : AppColors.border),
               ),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -331,7 +351,7 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
             child: ElevatedButton(
               onPressed: _isSubmitting ? null : _submitInspection,
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.obsidian,
+                backgroundColor: AppColors.emerald,
                 foregroundColor: AppColors.white,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -446,10 +466,12 @@ class _HourlyBookingModalState extends State<HourlyBookingModal> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E293B) : AppColors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -462,7 +484,7 @@ class _HourlyBookingModalState extends State<HourlyBookingModal> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: AppColors.gray300,
+                color: isDark ? const Color(0xFF475569) : AppColors.gray300,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -473,26 +495,28 @@ class _HourlyBookingModalState extends State<HourlyBookingModal> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 'Short Stay / Hourly Booking',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.obsidian,
+                  color: isDark ? AppColors.white : AppColors.obsidian,
                 ),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: AppColors.emeraldSurface,
+                  color: isDark
+                      ? AppColors.emeraldDark.withValues(alpha: 0.3)
+                      : AppColors.emeraldSurface,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
                   'SLE ${_currencyFormat.format(_hourlyRate)}/hr',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.emeraldDark,
+                    color: isDark ? const Color(0xFF34D399) : AppColors.emeraldDark,
                   ),
                 ),
               ),
@@ -501,7 +525,10 @@ class _HourlyBookingModalState extends State<HourlyBookingModal> {
           const SizedBox(height: 4),
           Text(
             widget.property.title,
-            style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            style: TextStyle(
+              fontSize: 13,
+              color: isDark ? const Color(0xFF94A3B8) : AppColors.textSecondary,
+            ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -511,9 +538,13 @@ class _HourlyBookingModalState extends State<HourlyBookingModal> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 'Duration of Stay:',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? AppColors.white : AppColors.obsidian,
+                ),
               ),
               Text(
                 '$_selectedHours ${_selectedHours == 1 ? 'Hour' : 'Hours'}',
@@ -529,8 +560,8 @@ class _HourlyBookingModalState extends State<HourlyBookingModal> {
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
               activeTrackColor: AppColors.emerald,
-              inactiveTrackColor: AppColors.gray200,
-              thumbColor: AppColors.obsidian,
+              inactiveTrackColor: isDark ? const Color(0xFF334155) : AppColors.gray200,
+              thumbColor: isDark ? AppColors.white : AppColors.obsidian,
               overlayColor: AppColors.emerald.withValues(alpha: 0.15),
             ),
             child: Slider(
@@ -553,12 +584,16 @@ class _HourlyBookingModalState extends State<HourlyBookingModal> {
               return OutlinedButton(
                 onPressed: () => setState(() => _selectedHours = hrs),
                 style: OutlinedButton.styleFrom(
-                  backgroundColor:
-                      isSelected ? AppColors.obsidian : Colors.transparent,
-                  foregroundColor:
-                      isSelected ? AppColors.white : AppColors.obsidian,
+                  backgroundColor: isSelected
+                      ? (isDark ? AppColors.white : AppColors.obsidian)
+                      : Colors.transparent,
+                  foregroundColor: isSelected
+                      ? (isDark ? AppColors.obsidian : AppColors.white)
+                      : (isDark ? const Color(0xFFCBD5E1) : AppColors.obsidian),
                   side: BorderSide(
-                    color: isSelected ? AppColors.obsidian : AppColors.border,
+                    color: isSelected
+                        ? (isDark ? AppColors.white : AppColors.obsidian)
+                        : (isDark ? const Color(0xFF334155) : AppColors.border),
                   ),
                   padding:
                       const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -576,41 +611,75 @@ class _HourlyBookingModalState extends State<HourlyBookingModal> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: AppColors.gray50,
+              color: isDark ? const Color(0xFF0F172A) : AppColors.gray50,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.border),
+              border: Border.all(
+                color: isDark ? const Color(0xFF334155) : AppColors.border,
+              ),
             ),
             child: Column(
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('$_selectedHours hrs @ SLE ${_currencyFormat.format(_hourlyRate)}'),
-                    Text('SLE ${_currencyFormat.format(_subtotal)}'),
+                    Text(
+                      '$_selectedHours hrs @ SLE ${_currencyFormat.format(_hourlyRate)}',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: isDark ? const Color(0xFFCBD5E1) : AppColors.obsidian,
+                      ),
+                    ),
+                    Text(
+                      'SLE ${_currencyFormat.format(_subtotal)}',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: isDark ? AppColors.white : AppColors.obsidian,
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Platform & Security Fee (5%)',
-                        style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-                    Text('SLE ${_currencyFormat.format(_serviceFee)}',
-                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                    Text(
+                      'Platform & Security Fee (5%)',
+                      style: TextStyle(
+                        color: isDark ? const Color(0xFF94A3B8) : AppColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    Text(
+                      'SLE ${_currencyFormat.format(_serviceFee)}',
+                      style: TextStyle(
+                        color: isDark ? const Color(0xFF94A3B8) : AppColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
                   ],
                 ),
-                const Divider(height: 18),
+                Divider(
+                  height: 18,
+                  color: isDark ? const Color(0xFF1E293B) : AppColors.border,
+                ),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Estimated Total',
-                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                    Text(
+                      'Estimated Total',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                        color: isDark ? AppColors.white : AppColors.obsidian,
+                      ),
+                    ),
                     Text(
                       'SLE ${_currencyFormat.format(_totalAmount)}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 16,
-                        color: AppColors.emeraldDark,
+                        color: isDark ? const Color(0xFF34D399) : AppColors.emeraldDark,
                       ),
                     ),
                   ],
@@ -731,10 +800,12 @@ class _VehicleRentalModalState extends State<VehicleRentalModal> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E293B) : AppColors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -746,7 +817,7 @@ class _VehicleRentalModalState extends State<VehicleRentalModal> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: AppColors.gray300,
+                color: isDark ? const Color(0xFF475569) : AppColors.gray300,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -756,26 +827,28 @@ class _VehicleRentalModalState extends State<VehicleRentalModal> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 'Vehicle Rental',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.obsidian,
+                  color: isDark ? AppColors.white : AppColors.obsidian,
                 ),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: AppColors.emeraldSurface,
+                  color: isDark
+                      ? AppColors.emeraldDark.withValues(alpha: 0.3)
+                      : AppColors.emeraldSurface,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
                   'SLE ${_currencyFormat.format(_pricePerDay)}/day',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.emeraldDark,
+                    color: isDark ? const Color(0xFF34D399) : AppColors.emeraldDark,
                   ),
                 ),
               ),
@@ -784,7 +857,10 @@ class _VehicleRentalModalState extends State<VehicleRentalModal> {
           const SizedBox(height: 4),
           Text(
             '${widget.vehicle.make} ${widget.vehicle.model} (${widget.vehicle.year})',
-            style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            style: TextStyle(
+              fontSize: 13,
+              color: isDark ? const Color(0xFF94A3B8) : AppColors.textSecondary,
+            ),
           ),
           const SizedBox(height: 20),
 
@@ -792,21 +868,39 @@ class _VehicleRentalModalState extends State<VehicleRentalModal> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Rental Duration', style: TextStyle(fontWeight: FontWeight.w600)),
+              Text(
+                'Rental Duration',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? AppColors.white : AppColors.obsidian,
+                ),
+              ),
               Row(
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.remove_circle_outline),
+                    icon: Icon(
+                      Icons.remove_circle_outline,
+                      color: _rentalDays > 1
+                          ? (isDark ? const Color(0xFFCBD5E1) : AppColors.obsidian)
+                          : (isDark ? const Color(0xFF475569) : AppColors.gray300),
+                    ),
                     onPressed: _rentalDays > 1
                         ? () => setState(() => _rentalDays--)
                         : null,
                   ),
                   Text(
                     '$_rentalDays ${_rentalDays == 1 ? 'Day' : 'Days'}',
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: isDark ? AppColors.white : AppColors.obsidian,
+                    ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.add_circle_outline),
+                    icon: Icon(
+                      Icons.add_circle_outline,
+                      color: isDark ? const Color(0xFFCBD5E1) : AppColors.obsidian,
+                    ),
                     onPressed: () => setState(() => _rentalDays++),
                   ),
                 ],
@@ -817,10 +911,21 @@ class _VehicleRentalModalState extends State<VehicleRentalModal> {
 
           // Dedicated Driver Toggle
           SwitchListTile(
-            title: const Text('Add Dedicated Driver (+120 SLE/day)',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-            subtitle: const Text('Professional vetted chauffeur for the trip',
-                style: TextStyle(fontSize: 11)),
+            title: Text(
+              'Add Dedicated Driver (+120 SLE/day)',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isDark ? AppColors.white : AppColors.obsidian,
+              ),
+            ),
+            subtitle: Text(
+              'Professional vetted chauffeur for the trip',
+              style: TextStyle(
+                fontSize: 11,
+                color: isDark ? const Color(0xFF94A3B8) : AppColors.textSecondary,
+              ),
+            ),
             value: _includeDriver,
             activeThumbColor: AppColors.emerald,
             contentPadding: EdgeInsets.zero,
@@ -832,17 +937,32 @@ class _VehicleRentalModalState extends State<VehicleRentalModal> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: AppColors.gray50,
+              color: isDark ? const Color(0xFF0F172A) : AppColors.gray50,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.border),
+              border: Border.all(
+                color: isDark ? const Color(0xFF334155) : AppColors.border,
+              ),
             ),
             child: Column(
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('$_rentalDays days vehicle rental'),
-                    Text('SLE ${_currencyFormat.format(_pricePerDay * _rentalDays)}'),
+                    Text(
+                      '$_rentalDays days vehicle rental',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: isDark ? const Color(0xFFCBD5E1) : AppColors.obsidian,
+                      ),
+                    ),
+                    Text(
+                      'SLE ${_currencyFormat.format(_pricePerDay * _rentalDays)}',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: isDark ? AppColors.white : AppColors.obsidian,
+                      ),
+                    ),
                   ],
                 ),
                 if (_includeDriver) ...[
@@ -850,8 +970,21 @@ class _VehicleRentalModalState extends State<VehicleRentalModal> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('Dedicated Driver ($_rentalDays days)'),
-                      Text('SLE ${_currencyFormat.format(_driverFeePerDay * _rentalDays)}'),
+                      Text(
+                        'Dedicated Driver ($_rentalDays days)',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: isDark ? const Color(0xFFCBD5E1) : AppColors.obsidian,
+                        ),
+                      ),
+                      Text(
+                        'SLE ${_currencyFormat.format(_driverFeePerDay * _rentalDays)}',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: isDark ? AppColors.white : AppColors.obsidian,
+                        ),
+                      ),
                     ],
                   ),
                 ],
@@ -859,24 +992,43 @@ class _VehicleRentalModalState extends State<VehicleRentalModal> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Service & Insurance Fee (5%)',
-                        style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-                    Text('SLE ${_currencyFormat.format(_serviceFee)}',
-                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                    Text(
+                      'Service & Insurance Fee (5%)',
+                      style: TextStyle(
+                        color: isDark ? const Color(0xFF94A3B8) : AppColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    Text(
+                      'SLE ${_currencyFormat.format(_serviceFee)}',
+                      style: TextStyle(
+                        color: isDark ? const Color(0xFF94A3B8) : AppColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
                   ],
                 ),
-                const Divider(height: 18),
+                Divider(
+                  height: 18,
+                  color: isDark ? const Color(0xFF1E293B) : AppColors.border,
+                ),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Total Payable',
-                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                    Text(
+                      'Total Payable',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                        color: isDark ? AppColors.white : AppColors.obsidian,
+                      ),
+                    ),
                     Text(
                       'SLE ${_currencyFormat.format(_totalAmount)}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 16,
-                        color: AppColors.emeraldDark,
+                        color: isDark ? const Color(0xFF34D399) : AppColors.emeraldDark,
                       ),
                     ),
                   ],

@@ -235,8 +235,13 @@ abstract final class AppTheme {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
         ),
-        titleTextStyle: AppTypography.textTheme.headlineSmall,
-        contentTextStyle: AppTypography.textTheme.bodyMedium,
+        titleTextStyle: AppTypography.textTheme.headlineSmall?.copyWith(
+          color: AppColors.obsidian, // #0F172A
+          fontWeight: FontWeight.w700,
+        ),
+        contentTextStyle: AppTypography.textTheme.bodyMedium?.copyWith(
+          color: const Color(0xFF475569), // text-slate-600
+        ),
       ),
 
       // ── Snack Bar ───────────────────────────────────────────────
@@ -387,11 +392,23 @@ abstract final class AppTheme {
       bottomSheetTheme: light.bottomSheetTheme.copyWith(
         backgroundColor: AppColors.obsidianLight,
         modalBackgroundColor: AppColors.obsidianLight,
-        dragHandleColor: AppColors.gray600,
+        dragHandleColor: const Color(0xFF64748B),
       ),
 
-      dialogTheme: light.dialogTheme.copyWith(
-        backgroundColor: AppColors.obsidianLight,
+      dialogTheme: DialogThemeData(
+        backgroundColor: AppColors.obsidianLight, // #1E293B
+        surfaceTintColor: Colors.transparent,
+        elevation: 8,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        titleTextStyle: AppTypography.textTheme.headlineSmall?.copyWith(
+          color: AppColors.white, // #FFFFFF
+          fontWeight: FontWeight.w700,
+        ),
+        contentTextStyle: AppTypography.textTheme.bodyMedium?.copyWith(
+          color: const Color(0xFFCBD5E1), // #CBD5E1 / text-slate-300
+        ),
       ),
 
       inputDecorationTheme: _inputDecorationTheme,
