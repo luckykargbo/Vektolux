@@ -105,9 +105,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Vektolux Latest Mobile Release (v1.0.7)"
+          name: "Vektolux Latest Mobile Release (v1.0.8)"
           body: |
-            ## Vektolux Mobile App Builds (v1.0.7) — Multi-Vertical Super App
+            ## Vektolux Mobile App Builds (v1.0.8) — Multi-Vertical Super App
 
             ### Direct Downloads:
             - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
@@ -115,7 +115,13 @@ jobs:
             - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
               * Direct sideload / install on any Android device.
 
-            ### What's New in this Build (v1.0.7):
+            ### What's New in this Build (v1.0.8):
+            - **Dedicated Administrator Portal & Direct Login**:
+              * Added dedicated `AdminLoginScreen` with high-security obsidian/emerald design and instant routing to Admin Dev Tools.
+              * Integrated "Admin Portal" action directly in standard `LoginScreen` header with `👑 Administrator` quick-fill demo chip.
+              * Pre-seeded administrator credentials (`admin@vektolux.sl`) on Convex backend.
+            - **Post Management & Listings Cleanup Tools**:
+              * Added 1-click `Clear All Listings` capability in Admin Dev Tools to purge test listings from the database.
             - **Manual Business Verification Pipeline & Agent Sandbox**:
               * Dedicated `PendingVerificationScreen` sandboxing newly registered Real Estate Agents and Vehicle Merchants.
               * Real-time 30-second polling for approval/rejection updates with instant auto-transition upon admin approval.
@@ -126,9 +132,6 @@ jobs:
             - **Marketplace Listing Creation Gate**:
               * Unverified or pending business accounts are strictly prohibited from publishing listings until approved.
               * Verification status cards and quick navigation buttons integrated directly on the Profile screen.
-            - **Post Management, Price Updates & Sold Post Archival**:
-              * Dynamic price range adjustments for post owners with immediate cross-client synchronization.
-              * Sold post deletion with permanent offline SQLite archival for transaction history.
           files: |
             release-assets/Vektolux.ipa
             release-assets/app-release.apk
