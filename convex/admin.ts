@@ -42,6 +42,7 @@ export const quickSeedListings = mutation({
         phone: "+232 76 000 999",
         role: "admin",
         activeRole: "admin",
+        passwordHash: "8f26796073cec5b2d34a862b351b7c15:519b4b98224792d0f7e3236126d0993b05b4f4b701da3f0d63d2661d8366f4bd",
         isVerified: true,
         isActive: true,
         avatarUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400",
@@ -50,6 +51,15 @@ export const quickSeedListings = mutation({
         updatedAt: now,
       });
       adminUser = await ctx.db.get(adminId);
+    } else if (!adminUser.passwordHash) {
+      await ctx.db.patch(adminUser._id, {
+        passwordHash: "8f26796073cec5b2d34a862b351b7c15:519b4b98224792d0f7e3236126d0993b05b4f4b701da3f0d63d2661d8366f4bd",
+        role: "admin",
+        isActive: true,
+        isVerified: true,
+        updatedAt: now,
+      });
+      adminUser = (await ctx.db.get(adminUser._id))!;
     }
 
     if (!adminUser) {
