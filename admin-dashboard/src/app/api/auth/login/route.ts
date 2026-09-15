@@ -17,7 +17,7 @@ export async function POST(request: Request) {
 
     // Call the existing Vektolux login mutation
     const result = await client.mutation("auth:loginWithPhoneOrEmail" as any, {
-      emailOrPhone: email,
+      identifier: email,
       password,
     });
 
