@@ -22,7 +22,6 @@ import '../../../auth/presentation/views/login_screen.dart';
 import '../../../../core/widgets/vektolux_avatar.dart';
 import '../../../operator/presentation/views/operator_dashboard_screen.dart';
 import '../../../mobility/presentation/views/driver_vehicle_registration_screen.dart';
-import '../../../admin/presentation/views/admin_dev_tools_screen.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/my_listings_screen.dart';
@@ -1327,7 +1326,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             color: AppColors.emeraldDark,
                           ),
                         ),
-                        onTap: null,
+                        onTap: () {},
                       ),
                     ],
                   ),
