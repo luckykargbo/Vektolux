@@ -12,4 +12,3 @@ export 'presentation/bloc/auth_state.dart';
 export 'presentation/views/splash_screen.dart';
 export 'presentation/views/register_screen.dart';
 export 'presentation/views/login_screen.dart';
-export 'presentation/views/admin_login_screen.dart';

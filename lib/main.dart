@@ -102,17 +102,6 @@ class VektoluxApp extends StatelessWidget {
 
           // ── Initial Screen ──────────────────────────────────────────
           home: const SplashScreen(),
-
-          // ── Web & Deep Link Routes ──────────────────────────────────
-          onGenerateRoute: (settings) {
-            if (settings.name == '/admin' || settings.name == 'admin') {
-              return MaterialPageRoute(
-                settings: settings,
-                builder: (_) => const AdminLoginScreen(),
-              );
-            }
-            return null;
-          },
         ),
       ),
     );

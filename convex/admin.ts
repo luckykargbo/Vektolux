@@ -551,3 +551,104 @@ export const batchGenerateUploadUrls = mutation({
     return urls;
   },
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+//                 GET ALL USERS (ADMIN DIRECTORY)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const getAllUsers = query({
+  args: {
+    adminId: v.string(),
+    sessionToken: v.optional(v.string()),
+    roleFilter: v.optional(v.string()),
+    searchQuery: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const adminDocId = ctx.db.normalizeId("users", args.adminId);
+    if (!adminDocId) throw new Error("Unauthorized: Invalid administrator credentials.");
+    const adminUser = await ctx.db.get(adminDocId);
+    if (!adminUser || adminUser.role !== "admin") {
+      throw new Error("Forbidden: Access restricted to platform administrators.");
+    }
+    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
+      throw new Error("Unauthorized: Invalid session token.");
+    }
+
+    let usersQuery;
+    if (args.roleFilter && args.roleFilter !== "all") {
+      usersQuery = await ctx.db
+        .query("users")
+        .withIndex("by_role", (q) => q.eq("role", args.roleFilter as any))
+        .take(200);
+    } else {
+      usersQuery = await ctx.db
+        .query("users")
+        .order("desc")
+        .take(200);
+    }
+
+    let results = usersQuery;
+    if (args.searchQuery && args.searchQuery.trim()) {
+      const q = args.searchQuery.toLowerCase().trim();
+      results = results.filter((u) =>
+        (u.name && u.name.toLowerCase().includes(q)) ||
+        (u.email && u.email.toLowerCase().includes(q)) ||
+        (u.phone && u.phone.includes(q)) ||
+        (u.businessName && u.businessName.toLowerCase().includes(q))
+      );
+    }
+
+    return results.map((u) => ({
+      id: u._id as string,
+      name: u.name,
+      email: u.email,
+      phone: u.phone,
+      role: u.role,
+      activeRole: u.activeRole,
+      isVerified: u.isVerified === true,
+      verificationStatus: u.verificationStatus ?? (u.isVerified ? "verified" : "unverified"),
+      isActive: u.isActive !== false,
+      businessName: u.businessName,
+      tinNumber: u.tinNumber,
+      avatarUrl: u.avatarUrl,
+      walletAddress: u.walletAddress,
+      createdAt: u._creationTime,
+      updatedAt: u.updatedAt,
+    }));
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                 TOGGLE USER ACTIVE STATUS (ADMIN)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const toggleUserActiveStatus = mutation({
+  args: {
+    adminId: v.string(),
+    sessionToken: v.optional(v.string()),
+    userId: v.string(),
+    isActive: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const adminDocId = ctx.db.normalizeId("users", args.adminId);
+    if (!adminDocId) throw new Error("Unauthorized: Admin account not found.");
+    const adminUser = await ctx.db.get(adminDocId);
+    if (!adminUser || adminUser.role !== "admin") {
+      throw new Error("Forbidden: Access restricted to platform administrators.");
+    }
+    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
+      throw new Error("Unauthorized: Invalid session token.");
+    }
+
+    const targetDocId = ctx.db.normalizeId("users", args.userId);
+    if (!targetDocId) throw new Error("User not found.");
+
+    await ctx.db.patch(targetDocId, {
+      isActive: args.isActive,
+      updatedAt: Date.now(),
+    });
+
+    return { success: true };
+  },
+});
+

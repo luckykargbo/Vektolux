@@ -43,3 +43,22 @@ export interface AdminSession {
   user: AdminUser;
   loggedInAt: number;
 }
+
+export interface UserRecord {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  role: string;
+  activeRole?: string;
+  isVerified: boolean;
+  verificationStatus: string;
+  isActive: boolean;
+  businessName?: string;
+  tinNumber?: string;
+  avatarUrl?: string;
+  walletAddress?: string;
+  createdAt: number;
+  updatedAt?: number;
+}
+

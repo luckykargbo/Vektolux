@@ -12,7 +12,7 @@ interface Stats {
 
 export default function DashboardPage() {
   const [session, setSession] = useState<AdminSession | null>(null);
-  const [stats, setStats] = useState<Stats>({ pendingVerifications: 0, totalListings: 0 });
+  const [stats, setStats] = useState<Stats>({ pendingVerifications: 0, totalListings: 0, totalUsers: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -24,15 +24,18 @@ export default function DashboardPage() {
     if (!session) return;
     (async () => {
       try {
-        const [vRes, lRes] = await Promise.all([
+        const [vRes, lRes, uRes] = await Promise.all([
           fetch(`/api/verifications?adminId=${session.user.id}&sessionToken=${session.user.sessionToken}&status=pending`),
           fetch("/api/listings"),
+          fetch(`/api/users?adminId=${session.user.id}&sessionToken=${session.user.sessionToken}`),
         ]);
         const vData = await vRes.json();
         const lData = await lRes.json();
+        const uData = await uRes.json();
         setStats({
           pendingVerifications: vData.success ? (vData.data?.length ?? 0) : 0,
           totalListings: lData.success ? (lData.data?.length ?? 0) : 0,
+          totalUsers: uData.success ? (uData.data?.length ?? 0) : 0,
         });
       } catch {}
       setLoading(false);
@@ -40,6 +43,14 @@ export default function DashboardPage() {
   }, [session]);
 
   const cards = [
+    {
+      icon: "👥",
+      label: "Total App Users",
+      value: loading ? "…" : (stats.totalUsers ?? 0).toString(),
+      color: "#8b5cf6",
+      href: "/dashboard/users",
+      cta: "View Directory →",
+    },
     {
       icon: "⏳",
       label: "Pending Verifications",
@@ -63,14 +74,6 @@ export default function DashboardPage() {
       color: "#10b981",
       href: "/dashboard/seed",
       cta: "Open Seeder →",
-    },
-    {
-      icon: "🔒",
-      label: "Convex Backend",
-      value: "LIVE",
-      color: "#10b981",
-      href: "https://dashboard.convex.dev",
-      cta: "Open Convex ↗",
     },
   ];
 

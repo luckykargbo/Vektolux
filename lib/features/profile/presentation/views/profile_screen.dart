@@ -47,59 +47,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _smsAlerts = true;
   bool _biometricAuth = false;
 
-  int _versionTapCount = 0;
-  DateTime? _lastVersionTap;
-
-  void _openAdminDevTools(BuildContext context, UserEntity? user) {
-    if (user == null) return;
-    final database = context.read<AppDatabase>();
-    final convexClient = context.read<ConvexClientWrapper>();
-
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => AdminDevToolsScreen(
-          convexClient: convexClient,
-          database: database,
-          currentUser: user,
-        ),
-      ),
-    );
-  }
-
-  void _onVersionTapped(BuildContext context, UserEntity? user) {
-    final now = DateTime.now();
-    if (_lastVersionTap == null ||
-        now.difference(_lastVersionTap!) > const Duration(seconds: 3)) {
-      _versionTapCount = 1;
-    } else {
-      _versionTapCount++;
-    }
-    _lastVersionTap = now;
-
-    if (_versionTapCount >= 5) {
-      _versionTapCount = 0;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('🛠️ Developer mode unlocked! Opening Dev Tools...'),
-          backgroundColor: Color(0xFF0F172A),
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
-        ),
-      );
-      _openAdminDevTools(context, user);
-    } else if (_versionTapCount >= 2) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content:
-              Text('Tap ${5 - _versionTapCount} more times to open Dev Tools'),
-          duration: const Duration(milliseconds: 700),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  }
-
   void _showEditProfileModal(BuildContext context, UserEntity user) {
     final nameCtrl = TextEditingController(text: user.name);
     final phoneCtrl = TextEditingController(text: user.phone);
@@ -1380,47 +1327,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             color: AppColors.emeraldDark,
                           ),
                         ),
-                        onTap: () => _onVersionTapped(context, user),
+                        onTap: null,
                       ),
                     ],
                   ),
                 ),
-
-                // ── 7. Developer & Admin Tools ──────────────────────
-                if (role == UserRole.admin) ...[
-                  const SizedBox(height: 18),
-                  _buildSectionHeader('DEVELOPER & ADMIN TOOLS'),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: AppColors.white,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: const Color(0xFFF59E0B)),
-                    ),
-                    child: _buildSettingsTile(
-                      icon: Icons.developer_mode_rounded,
-                      title: 'Developer & Admin Tools',
-                      subtitle:
-                          'Quick seed, batch asset uploader & draft manager',
-                      trailing: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFEF3C7),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Text(
-                          'DEV TOOLS',
-                          style: TextStyle(
-                            color: Color(0xFFD97706),
-                            fontWeight: FontWeight.bold,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ),
-                      onTap: () => _openAdminDevTools(context, user),
-                    ),
-                  ),
-                ],
 
                 const SizedBox(height: 28),
 

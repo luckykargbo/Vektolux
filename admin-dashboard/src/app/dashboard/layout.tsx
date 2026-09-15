@@ -39,6 +39,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const navLinks = [
     { href: "/dashboard", label: "Overview", icon: "🏠" },
+    { href: "/dashboard/users", label: "User Directory", icon: "👥" },
     { href: "/dashboard/verifications", label: "Verification Queue", icon: "✅" },
     { href: "/dashboard/listings", label: "Listings Inspector", icon: "🏘️" },
     { href: "/dashboard/seed", label: "Quick Seed", icon: "⚡" },
