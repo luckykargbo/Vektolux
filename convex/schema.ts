@@ -220,6 +220,12 @@ export default defineSchema({
     isVerifiedMerchant: v.optional(v.boolean()),
     driverVehicleId: v.optional(v.string()),
 
+    // Social & Profile
+    bio: v.optional(v.string()),
+    followersCount: v.optional(v.number()),
+    followingCount: v.optional(v.number()),
+    kycStatus: v.optional(v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected"))),
+
     // Metadata
     updatedAt: v.number(),
   })
@@ -235,6 +241,16 @@ export default defineSchema({
       searchField: "name",
       filterFields: ["role", "isActive"],
     }),
+
+  // ─── FOLLOWS ───────────────────────────────────────────────────────
+  follows: defineTable({
+    followerId: v.id("users"),
+    followingId: v.id("users"),
+    createdAt: v.number(),
+  })
+    .index("by_follower", ["followerId"])
+    .index("by_following", ["followingId"])
+    .index("by_follower_following", ["followerId", "followingId"]),
 
   // ─── REAL ESTATE LISTINGS ─────────────────────────────────────────
   realEstateListings: defineTable({

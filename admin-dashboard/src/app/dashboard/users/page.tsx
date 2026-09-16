@@ -1,5 +1,6 @@
 "use client";
 // src/app/dashboard/users/page.tsx — Platform Users Directory
+import { RefreshCcw, AlertTriangle, Users, User, Car, Building, Store, Shield, Mail, Phone, CheckCircle2, Clock, CircleDot, Activity, X } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 import type { AdminSession, UserRecord } from "@/lib/types";
 import styles from "./users.module.css";
@@ -91,12 +92,12 @@ export default function UsersDirectoryPage() {
     });
   }
 
-  const roleBadges: Record<string, { bg: string; color: string; label: string; icon: string }> = {
-    client: { bg: "rgba(59,130,246,0.12)", color: "#3b82f6", label: "Client", icon: "👤" },
-    driver: { bg: "rgba(245,158,11,0.12)", color: "#f59e0b", label: "Driver", icon: "🚗" },
-    agent: { bg: "rgba(16,185,129,0.12)", color: "#10b981", label: "Agent", icon: "🏢" },
-    merchant: { bg: "rgba(139,92,246,0.12)", color: "#8b5cf6", label: "Merchant", icon: "🏪" },
-    admin: { bg: "rgba(236,72,153,0.12)", color: "#ec4899", label: "Admin", icon: "👑" },
+  const roleBadges: Record<string, { bg: string; color: string; label: string; icon: React.ReactNode }> = {
+    client: { bg: "rgba(59,130,246,0.12)", color: "#3b82f6", label: "Client", icon: <User size={14} style={{ display: 'inline-block' }} /> },
+    driver: { bg: "rgba(245,158,11,0.12)", color: "#f59e0b", label: "Driver", icon: <Car size={14} style={{ display: 'inline-block' }} /> },
+    agent: { bg: "rgba(16,185,129,0.12)", color: "#10b981", label: "Agent", icon: <Building size={14} style={{ display: 'inline-block' }} /> },
+    merchant: { bg: "rgba(139,92,246,0.12)", color: "#8b5cf6", label: "Merchant", icon: <Store size={14} style={{ display: 'inline-block' }} /> },
+    admin: { bg: "rgba(236,72,153,0.12)", color: "#ec4899", label: "Admin", icon: <Shield size={14} style={{ display: 'inline-block' }} /> },
   };
 
   return (
@@ -109,8 +110,8 @@ export default function UsersDirectoryPage() {
             Live directory of all registered mobile and web users across Sierra Leone.
           </p>
         </div>
-        <button onClick={loadUsers} className={styles.refreshBtn} disabled={loading}>
-          {loading ? "Loading…" : "↻ Refresh Users"}
+        <button onClick={loadUsers} className={styles.refreshBtn} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {loading ? "Loading…" : <><RefreshCcw size={16} /> Refresh Users</>}
         </button>
       </div>
 
@@ -144,14 +145,14 @@ export default function UsersDirectoryPage() {
             className={styles.searchInput}
           />
           {searchQuery && (
-            <button onClick={() => setSearchQuery("")} className={styles.clearSearchBtn}>
-              ✕
+            <button onClick={() => setSearchQuery("")} className={styles.clearSearchBtn} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <X size={14} />
             </button>
           )}
         </div>
       </div>
 
-      {error && <div className={styles.errorBox}>⚠️ {error}</div>}
+      {error && <div className={styles.errorBox} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><AlertTriangle size={16} /> {error}</div>}
 
       {/* Count Indicator */}
       <div className={styles.counterBar}>
@@ -170,7 +171,7 @@ export default function UsersDirectoryPage() {
       {/* Empty */}
       {!loading && !error && users.length === 0 && (
         <div className={styles.emptyBox}>
-          <div className={styles.emptyIcon}>👥</div>
+          <div className={styles.emptyIcon}><Users size={32} /></div>
           <div className={styles.emptyText}>No users found matching the selected filters.</div>
         </div>
       )}
@@ -196,7 +197,7 @@ export default function UsersDirectoryPage() {
                   bg: "rgba(148,163,184,0.12)",
                   color: "#94a3b8",
                   label: u.role,
-                  icon: "👤",
+                  icon: <User size={14} style={{ display: 'inline-block' }} />,
                 };
                 return (
                   <tr key={u.id} className={u.isActive ? styles.rowActive : styles.rowSuspended}>
@@ -214,7 +215,7 @@ export default function UsersDirectoryPage() {
                         <div>
                           <div className={styles.userName}>{u.name}</div>
                           {u.businessName && (
-                            <div className={styles.businessName}>🏢 {u.businessName}</div>
+                            <div className={styles.businessName} style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Building size={12} /> {u.businessName}</div>
                           )}
                           <div className={styles.userId}>ID: {u.id.substring(0, 8)}…</div>
                         </div>
@@ -229,6 +230,9 @@ export default function UsersDirectoryPage() {
                           background: roleConfig.bg,
                           color: roleConfig.color,
                           border: `1px solid ${roleConfig.color}40`,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4
                         }}
                       >
                         {roleConfig.icon} {roleConfig.label}
@@ -238,8 +242,8 @@ export default function UsersDirectoryPage() {
                     {/* Contact */}
                     <td>
                       <div className={styles.contactCell}>
-                        <div className={styles.emailText}>📧 {u.email}</div>
-                        <div className={styles.phoneText}>📱 {u.phone || "No phone"}</div>
+                        <div className={styles.emailText} style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Mail size={12} /> {u.email}</div>
+                        <div className={styles.phoneText} style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Phone size={12} /> {u.phone || "No phone"}</div>
                         {u.tinNumber && (
                           <div className={styles.tinText}>TIN: {u.tinNumber}</div>
                         )}
@@ -249,6 +253,7 @@ export default function UsersDirectoryPage() {
                     {/* Verification */}
                     <td>
                       <span
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
                         className={`${styles.badge} ${
                           u.isVerified || u.verificationStatus === "approved" || u.verificationStatus === "verified"
                             ? styles.badgeVerified
@@ -258,21 +263,22 @@ export default function UsersDirectoryPage() {
                         }`}
                       >
                         {u.isVerified || u.verificationStatus === "approved" || u.verificationStatus === "verified"
-                          ? "✅ Verified"
+                          ? <><CheckCircle2 size={12} /> Verified</>
                           : u.verificationStatus === "pending"
-                          ? "⏳ Pending"
-                          : "⚪ Unverified"}
+                          ? <><Clock size={12} /> Pending</>
+                          : <><CircleDot size={12} /> Unverified</>}
                       </span>
                     </td>
 
                     {/* Account Status */}
                     <td>
                       <span
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
                         className={`${styles.statusBadge} ${
                           u.isActive ? styles.statusActive : styles.statusSuspended
                         }`}
                       >
-                        {u.isActive ? "● Active" : "✕ Suspended"}
+                        {u.isActive ? <><Activity size={12} /> Active</> : <><X size={12} /> Suspended</>}
                       </span>
                     </td>
 

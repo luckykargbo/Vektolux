@@ -652,3 +652,37 @@ export const toggleUserActiveStatus = mutation({
   },
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+//                 TAKE DOWN LISTING (ADMIN)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const takeDownListing = mutation({
+  args: {
+    adminId: v.id("users"),
+    sessionToken: v.optional(v.string()),
+    listingId: v.string(),
+    listingType: v.union(v.literal("property"), v.literal("vehicle")),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const adminUser = await ctx.db.get(args.adminId);
+    if (!adminUser || adminUser.role !== "admin") {
+      throw new Error("Forbidden: Access restricted to platform administrators.");
+    }
+    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
+      throw new Error("Unauthorized: Invalid session token.");
+    }
+
+    if (args.listingType === "property") {
+      const id = ctx.db.normalizeId("realEstateListings", args.listingId);
+      if (!id) throw new Error("Invalid property listing ID");
+      await ctx.db.patch(id, { isPublished: false, isDeleted: true, updatedAt: Date.now() });
+    } else {
+      const id = ctx.db.normalizeId("vehicleListings", args.listingId);
+      if (!id) throw new Error("Invalid vehicle listing ID");
+      await ctx.db.patch(id, { isPublished: false, isDeleted: true, updatedAt: Date.now() });
+    }
+
+    return { success: true };
+  },
+});

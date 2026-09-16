@@ -1,5 +1,6 @@
 "use client";
 // src/app/dashboard/page.tsx — Dashboard Overview / Stats
+import { Users, Clock, FolderOpen, Zap, ClipboardList } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AdminSession } from "@/lib/types";
 import styles from "./overview.module.css";
@@ -44,7 +45,7 @@ export default function DashboardPage() {
 
   const cards = [
     {
-      icon: "👥",
+      icon: <Users size={24} />,
       label: "Total App Users",
       value: loading ? "…" : (stats.totalUsers ?? 0).toString(),
       color: "#8b5cf6",
@@ -52,7 +53,7 @@ export default function DashboardPage() {
       cta: "View Directory →",
     },
     {
-      icon: "⏳",
+      icon: <Clock size={24} />,
       label: "Pending Verifications",
       value: loading ? "…" : stats.pendingVerifications.toString(),
       color: "#f59e0b",
@@ -60,7 +61,7 @@ export default function DashboardPage() {
       cta: "Review Queue →",
     },
     {
-      icon: "🏘️",
+      icon: <FolderOpen size={24} />,
       label: "Total Listings",
       value: loading ? "…" : stats.totalListings.toString(),
       color: "#3b82f6",
@@ -68,7 +69,7 @@ export default function DashboardPage() {
       cta: "Inspect Listings →",
     },
     {
-      icon: "⚡",
+      icon: <Zap size={24} />,
       label: "Quick Seed",
       value: "1-click",
       color: "#10b981",
@@ -95,7 +96,7 @@ export default function DashboardPage() {
       <div className={styles.statsGrid}>
         {cards.map((card) => (
           <a key={card.label} href={card.href} className={styles.statCard} target={card.href.startsWith("http") ? "_blank" : undefined} rel="noopener noreferrer">
-            <div className={styles.statIcon} style={{ background: `${card.color}20`, color: card.color }}>
+            <div className={styles.statIcon} style={{ background: `${card.color}20`, color: card.color, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {card.icon}
             </div>
             <div className={styles.statValue} style={{ color: card.color }}>{card.value}</div>
@@ -106,7 +107,7 @@ export default function DashboardPage() {
       </div>
 
       <div className={styles.infoBox}>
-        <h3>📋 About this Dashboard</h3>
+        <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}><ClipboardList size={20} /> About this Dashboard</h3>
         <ul>
           <li>Runs locally on <code>localhost:3000</code> — never exposed to the internet</li>
           <li>Connected directly to the live <strong>Convex production</strong> cloud backend</li>

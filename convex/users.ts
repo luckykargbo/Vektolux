@@ -374,3 +374,73 @@ export const mockApproveRoleUpgrade = mutation({
     return true;
   },
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+//                     SOCIAL / PUBLIC PROFILE
+// ═══════════════════════════════════════════════════════════════════════
+
+export const getUserProfile = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) return null;
+
+    return {
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      avatarUrl: user.avatarUrl,
+      bio: user.bio,
+      role: user.role,
+      verificationBadge: user.verificationBadge,
+      followersCount: user.followersCount || 0,
+      followingCount: user.followingCount || 0,
+      isVerified: user.isVerified,
+      kycStatus: user.kycStatus,
+    };
+  },
+});
+
+export const getUserPosts = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const realEstate = await ctx.db
+      .query("realEstateListings")
+      .withIndex("by_owner", (q) => q.eq("ownerId", args.userId))
+      .order("desc")
+      .take(50);
+
+    const vehicles = await ctx.db
+      .query("vehicleListings")
+      .withIndex("by_owner", (q) => q.eq("ownerId", args.userId))
+      .order("desc")
+      .take(50);
+
+    const combined = [
+      ...realEstate.map((r) => ({ ...r, type: "property" })),
+      ...vehicles.map((v) => ({ ...v, type: "vehicle" })),
+    ];
+
+    combined.sort((a, b) => b._creationTime - a._creationTime);
+    return combined;
+  },
+});
+
+export const updateBio = mutation({
+  args: { 
+    userId: v.id("users"), 
+    sessionToken: v.optional(v.string()), 
+    bio: v.string() 
+  },
+  handler: async (ctx, args) => {
+    if (!args.sessionToken) throw new Error("Unauthorized");
+    const user = await ctx.db.get(args.userId);
+    if (!user || user.sessionToken !== args.sessionToken) {
+      throw new Error("Unauthorized");
+    }
+
+    await ctx.db.patch(args.userId, { bio: args.bio, updatedAt: Date.now() });
+    return { success: true };
+  },
+});

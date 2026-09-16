@@ -17,6 +17,7 @@ import '../../../auth/domain/entities/user_entity.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
+import '../../../social/presentation/views/public_profile_screen.dart';
 
 class RealEstateMarketplaceScreen extends StatefulWidget {
   final AppDatabase database;
@@ -575,6 +576,7 @@ class _RealEstateMarketplaceScreenState
     final area = item['areaSqM'] as int? ?? 180;
     final isGuesthouse = item['category'] == 'hourly_guesthouse';
     final isSale = item['category'] == 'sale';
+    final ownerId = item['ownerId'] as String? ?? '';
 
     return GestureDetector(
       onTap: () {
@@ -757,27 +759,41 @@ class _RealEstateMarketplaceScreenState
                                   fontSize: 12, color: AppColors.gray700)),
                         ],
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.emeraldSurface,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Row(
-                          children: const [
-                            Icon(Icons.verified_user_rounded,
-                                size: 12, color: AppColors.emeraldDark),
-                            SizedBox(width: 4),
-                            Text(
-                              'Verified Agent',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.emeraldDark,
+                      InkWell(
+                        onTap: ownerId.isNotEmpty
+                            ? () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => PublicProfileScreen(
+                                      userId: ownerId,
+                                      convexClient: widget.convexClient,
+                                    ),
+                                  ),
+                                );
+                              }
+                            : null,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppColors.emeraldSurface,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Row(
+                            children: [
+                              Icon(Icons.verified_user_rounded,
+                                  size: 12, color: AppColors.emeraldDark),
+                              SizedBox(width: 4),
+                              Text(
+                                'Verified Agent',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.emeraldDark,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ],

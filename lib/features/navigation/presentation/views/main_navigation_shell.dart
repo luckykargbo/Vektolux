@@ -1,7 +1,7 @@
 // lib/features/navigation/presentation/views/main_navigation_shell.dart
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Super App Persistent Bottom Navigation Shell
-// Coordinates 5 core verticals: Home Discovery, Rides (Hailing),
+// Coordinates 5 core verticals: Home Discovery, Explore (Social Feed),
 // Real Estate Marketplace, Auto Marketplace, and Account Profile.
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -15,10 +15,9 @@ import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../home/presentation/views/client_home_screen.dart';
 import '../../../mobility/presentation/views/auto_marketplace_screen.dart';
-import '../../../mobility/presentation/views/driver_portal_screen.dart';
-import '../../../mobility/presentation/views/mobility_home_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
 import '../../../real_estate/presentation/views/real_estate_marketplace_screen.dart';
+import '../../../social/presentation/views/social_feed_screen.dart';
 import '../widgets/client_onboarding_tour_modal.dart';
 
 class MainNavigationShell extends StatefulWidget {
@@ -83,16 +82,6 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     return BlocBuilder<AuthBloc, AuthState>(
       builder: (context, authState) {
         final currentUserId = authState.user?.id ?? '';
-        final isDriverMode = authState.user?.isDriverMode ?? false;
-
-        // ── Strict View Isolation: Exclusively display Driver Portal when active_mode is 'driver' ──
-        if (isDriverMode) {
-          return DriverPortalScreen(
-            currentUserId: currentUserId,
-            initialLat: 8.484,
-            initialLng: -13.229,
-          );
-        }
 
         final pages = [
           // 0: Home Super App Discovery
@@ -100,13 +89,9 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
               ? ClientHomeScreen(database: database, convexClient: convexClient)
               : const SizedBox.shrink(),
 
-          // 1: Rides (Interactive Map, Keke/Okada/Taxi Hailing) — lazy-loaded
+          // 1: Explore — Social Feed (listings from followed agents/dealers)
           _activatedTabs.contains(1)
-              ? MobilityHomeScreen(
-                  currentUserId: currentUserId,
-                  initialLat: 8.484,
-                  initialLng: -13.229,
-                )
+              ? SocialFeedScreen(convexClient: convexClient)
               : const SizedBox.shrink(),
 
           // 2: Real Estate Vertical Marketplace
@@ -114,7 +99,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
               ? RealEstateMarketplaceScreen(database: database, convexClient: convexClient)
               : const SizedBox.shrink(),
 
-          // 3: Auto Market & Car Rentals Vertical
+          // 3: Auto Market & Car Rentals + Delivery Van Bookings
           _activatedTabs.contains(3)
               ? AutoMarketplaceScreen(database: database, convexClient: convexClient)
               : const SizedBox.shrink(),
@@ -158,9 +143,9 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                     ),
                     _buildNavItem(
                       index: 1,
-                      label: 'Rides',
-                      icon: Icons.local_taxi_outlined,
-                      activeIcon: Icons.local_taxi_rounded,
+                      label: 'Explore',
+                      icon: Icons.explore_outlined,
+                      activeIcon: Icons.explore_rounded,
                     ),
                     _buildNavItem(
                       index: 2,

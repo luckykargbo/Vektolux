@@ -10,6 +10,7 @@ export interface VerificationEntry {
   phone: string;
   businessName: string;
   tinNumber: string;
+  documentType?: string;
   documentUrl?: string;
   documentStorageId?: string;
   verificationStatus: string;

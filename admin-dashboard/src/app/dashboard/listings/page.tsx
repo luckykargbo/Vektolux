@@ -1,5 +1,6 @@
 "use client";
 // src/app/dashboard/listings/page.tsx — Listings Inspector
+import { RefreshCcw, Trash2, PackageSearch, Building2, Car, MapPin, Banknote, User, AlertTriangle, CheckCircle2, Ban } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 import type { AdminSession } from "@/lib/types";
 import styles from "./listings.module.css";
@@ -22,6 +23,7 @@ export default function ListingsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
   const [clearing, setClearing] = useState(false);
+  const [takingDown, setTakingDown] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -44,15 +46,46 @@ export default function ListingsPage() {
   useEffect(() => { loadListings(); }, [loadListings]);
 
   async function handleClearAll() {
-    if (!confirm("⚠️ This will permanently delete ALL properties and vehicles from the database. Are you absolutely sure?")) return;
+    if (!confirm("This will permanently delete ALL properties and vehicles from the database. Are you absolutely sure?")) return;
     setClearing(true);
     try {
       const res = await fetch("/api/listings", { method: "DELETE" });
       const data = await res.json();
-      if (data.success) { setListings([]); alert("✅ All listings cleared!"); }
+      if (data.success) { setListings([]); alert("All listings cleared!"); }
       else alert("Failed: " + (data.error ?? "Unknown error"));
     } catch { alert("Network error."); }
     setClearing(false);
+  }
+
+  async function handleTakeDown(listingId: string, listingType: string) {
+    if (!session) return;
+    const reason = prompt("Enter reason for taking down this listing:");
+    if (reason === null) return;
+    
+    setTakingDown(listingId);
+    try {
+      const res = await fetch("/api/listings/takedown", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          adminId: session.user.id,
+          sessionToken: session.user.sessionToken,
+          listingId,
+          listingType,
+          reason: reason || "Violation of terms"
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert("Listing taken down successfully");
+        loadListings();
+      } else {
+        alert("Failed to take down: " + (data.error ?? "Unknown error"));
+      }
+    } catch (e) {
+      alert("Network error.");
+    }
+    setTakingDown(null);
   }
 
   const filterOptions = [
@@ -69,9 +102,9 @@ export default function ListingsPage() {
           <p className={styles.subtitle}>View, filter, and manage all platform listings.</p>
         </div>
         <div className={styles.headerActions}>
-          <button onClick={loadListings} className={styles.refreshBtn} disabled={loading}>↻ Refresh</button>
+          <button onClick={loadListings} className={styles.refreshBtn} disabled={loading}><RefreshCcw size={16} style={{display: 'inline', marginRight: 4}} /> Refresh</button>
           <button onClick={handleClearAll} className={styles.clearBtn} disabled={clearing || loading}>
-            {clearing ? "Clearing…" : "🗑️ Clear All"}
+            {clearing ? "Clearing…" : <><Trash2 size={16} style={{display: 'inline', marginRight: 4}} /> Clear All</>}
           </button>
         </div>
       </div>
@@ -88,7 +121,7 @@ export default function ListingsPage() {
         ))}
       </div>
 
-      {error && <div className={styles.errorBox}>⚠️ {error}</div>}
+      {error && <div className={styles.errorBox}><AlertTriangle size={16} style={{display: 'inline'}} /> {error}</div>}
 
       {loading && !error && (
         <div className={styles.loadingBox}>
@@ -99,7 +132,7 @@ export default function ListingsPage() {
 
       {!loading && !error && listings.length === 0 && (
         <div className={styles.emptyBox}>
-          <div className={styles.emptyIcon}>📦</div>
+          <div className={styles.emptyIcon}><PackageSearch size={32} /></div>
           <div>No listings found. Use Quick Seed to add test data.</div>
           <a href="/dashboard/seed" className={styles.seedLink}>Go to Quick Seed →</a>
         </div>
@@ -114,7 +147,7 @@ export default function ListingsPage() {
                 <div className={styles.cardImagePlaceholder}>
                   {l.imageUrls?.[0]
                     ? <img src={l.imageUrls[0]} alt={l.title} className={styles.cardImage} />
-                    : <span className={styles.noImage}>{l.type === "property" ? "🏠" : "🚗"}</span>
+                    : <span className={styles.noImage}>{l.type === "property" ? <Building2 size={24} /> : <Car size={24} />}</span>
                   }
                   <div className={styles.typeBadge} style={{ background: l.type === "property" ? "#3b82f6" : "#8b5cf6" }}>
                     {l.type}
@@ -126,10 +159,30 @@ export default function ListingsPage() {
                 <div className={styles.cardBody}>
                   <div className={styles.cardTitle}>{l.title}</div>
                   <div className={styles.cardMeta}>
-                    <span>📍 {l.city}</span>
-                    <span>💰 Le {l.price?.toLocaleString()}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><MapPin size={14} /> {l.city}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Banknote size={14} /> Le {l.price?.toLocaleString()}</span>
                   </div>
-                  {l.ownerName && <div className={styles.cardOwner}>👤 {l.ownerName}</div>}
+                  {l.ownerName && <div className={styles.cardOwner} style={{ display: 'flex', alignItems: 'center', gap: 4 }}><User size={14} /> {l.ownerName}</div>}
+                  <button 
+                    onClick={() => handleTakeDown(l.id, l.type)} 
+                    disabled={takingDown === l.id}
+                    style={{
+                      marginTop: 12,
+                      width: '100%',
+                      background: '#ef4444',
+                      color: 'white',
+                      border: 'none',
+                      padding: '8px',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px'
+                    }}
+                  >
+                    <Ban size={16} /> {takingDown === l.id ? "Processing..." : "Take Down"}
+                  </button>
                 </div>
               </div>
             ))}

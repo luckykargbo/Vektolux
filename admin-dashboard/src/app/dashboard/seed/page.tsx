@@ -1,5 +1,6 @@
 "use client";
 // src/app/dashboard/seed/page.tsx — Quick Seed Tool
+import { Building2, Home, Car, Truck, CheckCircle2, XCircle } from "lucide-react";
 import { useState } from "react";
 import styles from "./seed.module.css";
 
@@ -8,14 +9,14 @@ interface SeedTask {
   vertical: "property" | "vehicle" | "both";
   city: string;
   subtitle: string;
-  icon: string;
+  icon: React.ReactNode;
 }
 
 const SEED_TASKS: SeedTask[] = [
-  { label: "Freetown Real Estate (3 Properties)", subtitle: "Spur Loop Executive Villa, Lumley Ocean Suite & Regent Mountain Ridge", icon: "🏢", vertical: "property", city: "Freetown" },
-  { label: "Bo Town Real Estate (2 Properties)", subtitle: "Bo-Tajama Highway Residency & Commercial Gated Compound", icon: "🏡", vertical: "property", city: "Bo" },
-  { label: "Freetown Vehicles (3 Vehicles)", subtitle: "Toyota Land Cruiser Prado, TVS King Keke & Hyundai Santa Fe", icon: "🚗", vertical: "vehicle", city: "Freetown" },
-  { label: "Makeni & Waterloo Hub (Mixed)", subtitle: "Toyota Hilux 4x4, TVS Star Okada & Waterloo Gated Compound", icon: "🚛", vertical: "both", city: "Makeni" },
+  { label: "Freetown Real Estate (3 Properties)", subtitle: "Spur Loop Executive Villa, Lumley Ocean Suite & Regent Mountain Ridge", icon: <Building2 size={32} />, vertical: "property", city: "Freetown" },
+  { label: "Bo Town Real Estate (2 Properties)", subtitle: "Bo-Tajama Highway Residency & Commercial Gated Compound", icon: <Home size={32} />, vertical: "property", city: "Bo" },
+  { label: "Freetown Vehicles (3 Vehicles)", subtitle: "Toyota Land Cruiser Prado, TVS King Keke & Hyundai Santa Fe", icon: <Car size={32} />, vertical: "vehicle", city: "Freetown" },
+  { label: "Makeni & Waterloo Hub (Mixed)", subtitle: "Toyota Hilux 4x4, TVS Star Okada & Waterloo Gated Compound", icon: <Truck size={32} />, vertical: "both", city: "Makeni" },
 ];
 
 export default function SeedPage() {
@@ -78,7 +79,7 @@ export default function SeedPage() {
             disabled={runningTask !== null}
             className={styles.seedCard}
           >
-            <div className={styles.seedIcon}>{task.icon}</div>
+            <div className={styles.seedIcon} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{task.icon}</div>
             <div className={styles.seedLabel}>{task.label}</div>
             <div className={styles.seedSubtitle}>{task.subtitle}</div>
             <div className={styles.seedBadge} style={{ background: isPublished ? "#10b981" : "#f59e0b" }}>
@@ -101,7 +102,7 @@ export default function SeedPage() {
           <div className={styles.resultsList}>
             {results.map((r, i) => (
               <div key={i} className={`${styles.resultItem} ${r.ok ? styles.resultOk : styles.resultErr}`}>
-                <span>{r.ok ? "✅" : "❌"}</span>
+                <span>{r.ok ? <CheckCircle2 size={16} /> : <XCircle size={16} />}</span>
                 <div>
                   <div className={styles.resultLabel}>{r.label}</div>
                   <div className={styles.resultMsg}>{r.message}</div>

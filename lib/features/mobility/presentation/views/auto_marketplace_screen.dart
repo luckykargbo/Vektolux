@@ -16,6 +16,8 @@ import '../../../../core/widgets/vx_network_image.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/vehicle_detail_screen.dart';
+import '../../../social/presentation/views/public_profile_screen.dart';
+import 'delivery_van_booking_screen.dart';
 
 class AutoMarketplaceScreen extends StatefulWidget {
   final AppDatabase database;
@@ -365,6 +367,11 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
     final imageUrl = images.isNotEmpty ? images.first : null;
     final transmission = item['transmission'] as String? ?? 'Automatic';
     final fuel = item['fuelType'] as String? ?? 'Petrol';
+    final vehicleType = item['vehicleType'] as String? ?? 'taxi';
+    final ownerId = item['ownerId'] as String?;
+    final isDeliveryVan = vehicleType == 'delivery_van' ||
+        model.toLowerCase().contains('van') ||
+        model.toLowerCase().contains('hiace');
 
     return GestureDetector(
       onTap: () {
@@ -500,43 +507,99 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
+                      InkWell(
+                        onTap: ownerId != null && ownerId.isNotEmpty
+                            ? () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => PublicProfileScreen(
+                                      userId: ownerId,
+                                      convexClient: widget.convexClient,
+                                    ),
+                                  ),
+                                );
+                              }
+                            : null,
+                        child: Row(
+                          children: const [
+                            Icon(Icons.storefront_rounded,
+                                size: 14, color: AppColors.gray500),
+                            SizedBox(width: 4),
+                            Text(
+                              'Verified Auto Dealer',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.gray600,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                       Row(
-                        children: const [
-                          Icon(Icons.storefront_rounded,
-                              size: 14, color: AppColors.gray500),
-                          SizedBox(width: 4),
-                          Text(
-                            'Verified Auto Dealer',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: AppColors.gray600,
-                              fontWeight: FontWeight.w500,
+                        children: [
+                          if (isDeliveryVan) ...[
+                            InkWell(
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => DeliveryVanBookingScreen(
+                                      vehicle: item,
+                                      convexClient: widget.convexClient,
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 5),
+                                margin: const EdgeInsets.only(right: 8),
+                                decoration: BoxDecoration(
+                                  color: AppColors.mobility.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Row(
+                                  children: [
+                                    Icon(Icons.calendar_today_rounded,
+                                        size: 10, color: AppColors.mobility),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      'Book Van',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppColors.mobility,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: AppColors.emeraldSurface,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Row(
+                              children: [
+                                Text(
+                                  'View Vehicle',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.emeraldDark,
+                                  ),
+                                ),
+                                SizedBox(width: 4),
+                                Icon(Icons.arrow_forward_ios_rounded,
+                                    size: 10, color: AppColors.emeraldDark),
+                              ],
                             ),
                           ),
                         ],
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: AppColors.emeraldSurface,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Row(
-                          children: const [
-                            Text(
-                              'View Vehicle',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.emeraldDark,
-                              ),
-                            ),
-                            SizedBox(width: 4),
-                            Icon(Icons.arrow_forward_ios_rounded,
-                                size: 10, color: AppColors.emeraldDark),
-                          ],
-                        ),
                       ),
                     ],
                   ),

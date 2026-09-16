@@ -1,5 +1,6 @@
 "use client";
 // src/app/dashboard/layout.tsx — Shared dashboard shell with sidebar nav
+import { LayoutDashboard, Users, FileCheck, FolderOpen, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import type { AdminSession } from "@/lib/types";
@@ -38,11 +39,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   const navLinks = [
-    { href: "/dashboard", label: "Overview", icon: "🏠" },
-    { href: "/dashboard/users", label: "User Directory", icon: "👥" },
-    { href: "/dashboard/verifications", label: "Verification Queue", icon: "✅" },
-    { href: "/dashboard/listings", label: "Listings Inspector", icon: "🏘️" },
-    { href: "/dashboard/seed", label: "Quick Seed", icon: "⚡" },
+    { href: "/dashboard", label: "Overview", icon: <LayoutDashboard size={18} /> },
+    { href: "/dashboard/users", label: "User Directory", icon: <Users size={18} /> },
+    { href: "/dashboard/verifications", label: "Verification Queue", icon: <FileCheck size={18} /> },
+    { href: "/dashboard/listings", label: "Listings Inspector", icon: <FolderOpen size={18} /> },
+    { href: "/dashboard/seed", label: "Quick Seed", icon: <Zap size={18} /> },
   ];
 
   return (
@@ -50,7 +51,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* Sidebar */}
       <aside className={styles.sidebar}>
         <div className={styles.sidebarHeader}>
-          <span className={styles.sidebarLogo}>⚡</span>
+          <span className={styles.sidebarLogo}><Zap size={24} /></span>
           <div>
             <div className={styles.sidebarBrand}>Vektolux</div>
             <div className={styles.sidebarRole}>Admin Dashboard</div>

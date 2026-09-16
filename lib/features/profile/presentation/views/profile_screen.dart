@@ -26,6 +26,7 @@ import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/my_listings_screen.dart';
 import '../../../auth/presentation/views/pending_verification_screen.dart';
+import '../../../social/presentation/views/public_profile_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? currentUserId;
@@ -759,7 +760,96 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                 const SizedBox(height: 18),
 
-                // ── 1A. Business Verification Status Card (Agents & Merchants) ──
+                // ── 1A. Public Creator Profile Card ──
+                if (user != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: AppColors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AppColors.border),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.02),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            color: AppColors.emeraldSurface,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.grid_view_rounded,
+                            color: AppColors.emeraldDark,
+                            size: 22,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Public Creator Profile',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.obsidian,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Followers, bio & catalog grid',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.gray500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        FilledButton(
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => PublicProfileScreen(
+                                  userId: user.id,
+                                  convexClient: context.read<ConvexClientWrapper>(),
+                                ),
+                              ),
+                            );
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.emerald,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: const Text(
+                            'View',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                ],
+
+                // ── 1B. Business Verification Status Card (Agents & Merchants) ──
                 if (user != null && (user.role == UserRole.agent || user.role == UserRole.merchant)) ...[
                   _buildBusinessVerificationCard(context, user),
                   const SizedBox(height: 18),
