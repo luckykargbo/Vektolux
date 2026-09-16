@@ -139,7 +139,7 @@ class _DeliveryVanBookingScreenState extends State<DeliveryVanBookingScreen> {
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Booking failed: ${res.error ?? 'Unknown error'}'),
+              content: Text('Booking failed: ${res.errorMessage ?? 'Unknown error'}'),
               backgroundColor: AppColors.error,
             ),
           );
