@@ -5,6 +5,7 @@
 
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { userRole } from "./schema";
 
 // ═══════════════════════════════════════════════════════════════════════
 //                        GET USER BY ID
@@ -24,15 +25,10 @@ export const getUserById = query({
       isVerified: v.boolean(),
       isActive: v.boolean(),
       avatarUrl: v.optional(v.string()),
+      bio: v.optional(v.string()),
+      kycStatus: v.optional(v.string()),
       walletAddress: v.optional(v.string()),
       createdAt: v.number(),
-      activeRole: v.optional(v.string()),
-      active_mode: v.optional(v.string()),
-      isVerifiedDriver: v.optional(v.boolean()),
-      is_driver_verified: v.optional(v.boolean()),
-      driver_status: v.optional(v.string()),
-      isVerifiedAgent: v.optional(v.boolean()),
-      isVerifiedMerchant: v.optional(v.boolean()),
     }),
     v.null()
   ),
@@ -44,12 +40,6 @@ export const getUserById = query({
       const user = await ctx.db.get(userId);
       if (!user) return null;
 
-      const isDriverVerified = Boolean(
-        user.is_driver_verified ?? user.isVerifiedDriver ?? (user.role === "driver")
-      );
-      const activeMode = user.active_mode ?? (user.activeRole === "driver" ? "driver" : "passenger");
-      const driverStatus = user.driver_status ?? (user.role === "driver" ? "online" : "offline");
-
       return {
         id: user._id as string,
         name: user.name,
@@ -59,15 +49,10 @@ export const getUserById = query({
         isVerified: user.isVerified,
         isActive: user.isActive,
         avatarUrl: user.avatarUrl,
+        bio: user.bio,
+        kycStatus: user.kycStatus,
         walletAddress: user.walletAddress,
         createdAt: user._creationTime,
-        activeRole: user.activeRole ?? (activeMode === "driver" ? "driver" : "client"),
-        active_mode: activeMode,
-        isVerifiedDriver: isDriverVerified,
-        is_driver_verified: isDriverVerified,
-        driver_status: driverStatus,
-        isVerifiedAgent: user.isVerifiedAgent ?? (user.role === "agent"),
-        isVerifiedMerchant: user.isVerifiedMerchant ?? (user.role === "merchant"),
       };
     } catch {
       return null;
@@ -91,6 +76,8 @@ export const getUserByEmail = query({
       phone: v.string(),
       role: v.string(),
       isVerified: v.boolean(),
+      bio: v.optional(v.string()),
+      kycStatus: v.optional(v.string()),
     }),
     v.null()
   ),
@@ -109,6 +96,8 @@ export const getUserByEmail = query({
       phone: user.phone,
       role: user.role,
       isVerified: user.isVerified,
+      bio: user.bio,
+      kycStatus: user.kycStatus,
     };
   },
 });
@@ -123,22 +112,153 @@ export const updateUserProfile = mutation({
     name: v.optional(v.string()),
     phone: v.optional(v.string()),
     avatarUrl: v.optional(v.string()),
+    bio: v.optional(v.string()),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
     try {
-      const userId = ctx.db.normalizeId("users", args.userId);
-      if (!userId) return false;
+      let userDoc = null;
+      const normalized = ctx.db.normalizeId("users", args.userId);
+      if (normalized) {
+        userDoc = await ctx.db.get(normalized);
+      }
+      if (!userDoc) {
+        // Fallback: search by email/phone or string id
+        userDoc = await ctx.db
+          .query("users")
+          .filter((q) => q.eq(q.field("_id"), args.userId))
+          .first();
+      }
+      if (!userDoc) return false;
 
       const updates: Record<string, unknown> = { updatedAt: Date.now() };
       if (args.name !== undefined) updates.name = args.name;
       if (args.phone !== undefined) updates.phone = args.phone;
       if (args.avatarUrl !== undefined) updates.avatarUrl = args.avatarUrl;
+      if (args.bio !== undefined) updates.bio = args.bio;
 
-      await ctx.db.patch(userId, updates);
+      await ctx.db.patch(userDoc._id, updates);
       return true;
     } catch {
       return false;
+    }
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                    CREATE OR SYNC USER DIRECTLY
+// ═══════════════════════════════════════════════════════════════════════
+
+export const syncUser = mutation({
+  args: {
+    userId: v.optional(v.string()),
+    name: v.string(),
+    email: v.string(),
+    phone: v.string(),
+    role: v.optional(userRole),
+    bio: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
+    kycStatus: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    userId: v.string(),
+    name: v.string(),
+    email: v.string(),
+    phone: v.string(),
+    role: v.string(),
+    kycStatus: v.string(),
+    bio: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    let existingUser = null;
+    if (args.userId) {
+      const normalized = ctx.db.normalizeId("users", args.userId);
+      if (normalized) {
+        existingUser = await ctx.db.get(normalized);
+      }
+    }
+    if (!existingUser && args.email) {
+      existingUser = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", args.email))
+        .first();
+    }
+    if (!existingUser && args.phone) {
+      existingUser = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", args.phone))
+        .first();
+    }
+
+    const now = Date.now();
+    const effectiveRole = args.role ?? (existingUser ? existingUser.role : "client");
+    const effectiveKyc = args.kycStatus ?? (existingUser?.kycStatus ?? "PENDING_VERIFICATION");
+
+    if (existingUser) {
+      const updates: Record<string, unknown> = {
+        name: args.name,
+        phone: args.phone,
+        updatedAt: now,
+      };
+      if (args.role) updates.role = args.role;
+      if (args.bio !== undefined) updates.bio = args.bio;
+      if (args.avatarUrl !== undefined) updates.avatarUrl = args.avatarUrl;
+      if (args.kycStatus !== undefined) updates.kycStatus = args.kycStatus;
+      if (args.sessionToken !== undefined) updates.sessionToken = args.sessionToken;
+
+      await ctx.db.patch(existingUser._id, updates);
+      return {
+        success: true,
+        userId: existingUser._id as string,
+        name: args.name,
+        email: existingUser.email,
+        phone: args.phone,
+        role: (updates.role as string) ?? existingUser.role,
+        kycStatus: (updates.kycStatus as string) ?? existingUser.kycStatus ?? "PENDING_VERIFICATION",
+        bio: (updates.bio as string) ?? existingUser.bio,
+        avatarUrl: (updates.avatarUrl as string) ?? existingUser.avatarUrl,
+        sessionToken: (updates.sessionToken as string) ?? existingUser.sessionToken,
+      };
+    } else {
+      const insertedId = await ctx.db.insert("users", {
+        name: args.name,
+        email: args.email,
+        phone: args.phone,
+        role: effectiveRole,
+        bio: args.bio,
+        avatarUrl: args.avatarUrl,
+        kycStatus: effectiveKyc as any,
+        isActive: true,
+        isVerified: false,
+        verificationStatus: "pending",
+        sessionToken: args.sessionToken,
+        updatedAt: now,
+      });
+
+      await ctx.db.insert("walletBalances", {
+        userId: insertedId,
+        availableBalance: 0,
+        pendingBalance: 0,
+        currency: "SLE",
+        updatedAt: now,
+      });
+
+      return {
+        success: true,
+        userId: insertedId as string,
+        name: args.name,
+        email: args.email,
+        phone: args.phone,
+        role: effectiveRole,
+        kycStatus: effectiveKyc,
+        bio: args.bio,
+        avatarUrl: args.avatarUrl,
+        sessionToken: args.sessionToken,
+      };
     }
   },
 });

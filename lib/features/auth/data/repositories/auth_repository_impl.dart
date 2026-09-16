@@ -136,6 +136,8 @@ class AuthRepositoryImpl implements AuthRepository {
       documentUrl: data['documentUrl'] as String?,
       rejectionReason: data['rejectionReason'] as String?,
       verifiedAt: data['verifiedAt'] as int?,
+      bio: data['bio'] as String?,
+      kycStatus: data['kycStatus'] as String?,
     );
 
     await _cacheUser(user);
@@ -209,6 +211,8 @@ class AuthRepositoryImpl implements AuthRepository {
         documentUrl: data['documentUrl'] as String?,
         rejectionReason: data['rejectionReason'] as String?,
         verifiedAt: data['verifiedAt'] as int?,
+        bio: data['bio'] as String?,
+        kycStatus: data['kycStatus'] as String?,
       );
 
       // Refresh local cache with latest data
@@ -248,6 +252,7 @@ class AuthRepositoryImpl implements AuthRepository {
     String? name,
     String? phone,
     String? avatarUrl,
+    String? bio,
   }) async {
     final current = await getActiveSession();
     if (current == null) {
@@ -262,6 +267,7 @@ class AuthRepositoryImpl implements AuthRepository {
           if (name != null) 'name': name,
           if (phone != null) 'phone': phone,
           if (avatarUrl != null) 'avatarUrl': avatarUrl,
+          if (bio != null) 'bio': bio,
         },
       );
     } catch (e) {
@@ -272,6 +278,7 @@ class AuthRepositoryImpl implements AuthRepository {
       name: name ?? current.name,
       phone: phone ?? current.phone,
       avatarUrl: avatarUrl ?? current.avatarUrl,
+      bio: bio ?? current.bio,
     );
 
     await _cacheUser(updated);

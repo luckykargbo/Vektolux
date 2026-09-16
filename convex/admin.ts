@@ -686,3 +686,290 @@ export const takeDownListing = mutation({
     return { success: true };
   },
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+//                 GET USER FULL DETAILS (ADMIN INSPECT)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const getUserFullDetails = query({
+  args: {
+    adminId: v.string(),
+    sessionToken: v.optional(v.string()),
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const adminDocId = ctx.db.normalizeId("users", args.adminId);
+    if (!adminDocId) throw new Error("Unauthorized: Admin not found.");
+    const adminUser = await ctx.db.get(adminDocId);
+    if (!adminUser || adminUser.role !== "admin") {
+      throw new Error("Forbidden: Access restricted to administrators.");
+    }
+    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
+      throw new Error("Unauthorized: Invalid session token.");
+    }
+
+    const targetDocId = ctx.db.normalizeId("users", args.userId);
+    if (!targetDocId) return null;
+    const user = await ctx.db.get(targetDocId);
+    if (!user) return null;
+
+    // Fetch listings
+    const properties = await ctx.db
+      .query("realEstateListings")
+      .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+      .filter((q) => q.neq(q.field("isDeleted"), true))
+      .collect();
+
+    const vehicles = await ctx.db
+      .query("vehicleListings")
+      .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+      .filter((q) => q.neq(q.field("isDeleted"), true))
+      .collect();
+
+    // Merchant profile
+    const merchantProfile = await ctx.db
+      .query("merchant_profiles")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .first();
+
+    return {
+      user: {
+        id: user._id as string,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        kycStatus: user.kycStatus ?? (user.isVerified ? "VERIFIED" : "PENDING_VERIFICATION"),
+        verificationStatus: user.verificationStatus ?? "unverified",
+        verificationBadge: user.verificationBadge ?? "NONE",
+        isActive: user.isActive,
+        bio: user.bio,
+        avatarUrl: user.avatarUrl,
+        businessName: user.businessName ?? merchantProfile?.businessName,
+        tinNumber: user.tinNumber ?? merchantProfile?.tinNumber,
+        documentUrl: user.documentUrl ?? merchantProfile?.documentUrl,
+        rejectionReason: user.rejectionReason,
+        createdAt: user._creationTime,
+        updatedAt: user.updatedAt,
+      },
+      properties: properties.map((p) => ({
+        id: p._id as string,
+        title: p.title,
+        category: p.category,
+        price: p.price,
+        city: p.city,
+        isPublished: p.isPublished,
+        imageUrls: p.imageUrls,
+        createdAt: p.updatedAt ?? p._creationTime,
+      })),
+      vehicles: vehicles.map((v) => ({
+        id: v._id as string,
+        make: v.make,
+        model: v.model,
+        year: v.year,
+        vehicleType: v.vehicleType,
+        listingIntent: v.listingIntent,
+        salePrice: v.salePrice,
+        pricePerDay: v.pricePerDay,
+        isPublished: v.isPublished,
+        imageUrls: v.imageUrls,
+        createdAt: v.updatedAt ?? v._creationTime,
+      })),
+    };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                    VERIFY USER (ADMIN)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const verifyUser = mutation({
+  args: {
+    adminId: v.string(),
+    sessionToken: v.optional(v.string()),
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const adminDocId = ctx.db.normalizeId("users", args.adminId);
+    if (!adminDocId) throw new Error("Unauthorized: Admin not found.");
+    const adminUser = await ctx.db.get(adminDocId);
+    if (!adminUser || adminUser.role !== "admin") {
+      throw new Error("Forbidden: Access restricted to administrators.");
+    }
+    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
+      throw new Error("Unauthorized: Invalid session token.");
+    }
+
+    const targetDocId = ctx.db.normalizeId("users", args.userId);
+    if (!targetDocId) throw new Error("User not found.");
+
+    await ctx.db.patch(targetDocId, {
+      kycStatus: "VERIFIED",
+      isVerified: true,
+      verificationStatus: "verified",
+      verificationBadge: "GREEN_TICK",
+      verifiedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    return { success: true, message: "User verified successfully." };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                  SET USER STATUS (SUSPEND / BAN / ACTIVATE)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const setUserStatus = mutation({
+  args: {
+    adminId: v.string(),
+    sessionToken: v.optional(v.string()),
+    userId: v.string(),
+    status: v.union(v.literal("ACTIVE"), v.literal("SUSPENDED"), v.literal("BANNED")),
+  },
+  handler: async (ctx, args) => {
+    const adminDocId = ctx.db.normalizeId("users", args.adminId);
+    if (!adminDocId) throw new Error("Unauthorized: Admin not found.");
+    const adminUser = await ctx.db.get(adminDocId);
+    if (!adminUser || adminUser.role !== "admin") {
+      throw new Error("Forbidden: Access restricted to administrators.");
+    }
+    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
+      throw new Error("Unauthorized: Invalid session token.");
+    }
+
+    const targetDocId = ctx.db.normalizeId("users", args.userId);
+    if (!targetDocId) throw new Error("User not found.");
+
+    const isActive = args.status === "ACTIVE";
+    const verificationStatus = args.status === "ACTIVE" ? "verified" : "suspended";
+    const kycStatus = args.status === "ACTIVE" ? "VERIFIED" : args.status;
+
+    await ctx.db.patch(targetDocId, {
+      isActive,
+      kycStatus,
+      verificationStatus,
+      updatedAt: Date.now(),
+    });
+
+    return { success: true, status: args.status };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                    DELETE USER (ADMIN)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const deleteUser = mutation({
+  args: {
+    adminId: v.string(),
+    sessionToken: v.optional(v.string()),
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const adminDocId = ctx.db.normalizeId("users", args.adminId);
+    if (!adminDocId) throw new Error("Unauthorized: Admin not found.");
+    const adminUser = await ctx.db.get(adminDocId);
+    if (!adminUser || adminUser.role !== "admin") {
+      throw new Error("Forbidden: Access restricted to administrators.");
+    }
+    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
+      throw new Error("Unauthorized: Invalid session token.");
+    }
+
+    const targetDocId = ctx.db.normalizeId("users", args.userId);
+    if (!targetDocId) throw new Error("User not found.");
+
+    // Archive user's property listings
+    const props = await ctx.db
+      .query("realEstateListings")
+      .withIndex("by_owner", (q) => q.eq("ownerId", targetDocId))
+      .collect();
+    for (const p of props) {
+      await ctx.db.patch(p._id, { isDeleted: true, isPublished: false });
+    }
+
+    // Archive user's vehicle listings
+    const vechs = await ctx.db
+      .query("vehicleListings")
+      .withIndex("by_owner", (q) => q.eq("ownerId", targetDocId))
+      .collect();
+    for (const v of vechs) {
+      await ctx.db.patch(v._id, { isDeleted: true, isPublished: false });
+    }
+
+    // Remove follows
+    const follows = await ctx.db
+      .query("follows")
+      .withIndex("by_follower", (q) => q.eq("followerId", targetDocId))
+      .collect();
+    for (const f of follows) {
+      await ctx.db.delete(f._id);
+    }
+
+    // Delete user
+    await ctx.db.delete(targetDocId);
+
+    return { success: true, message: "User and associated content removed." };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                  PURGE MOCK / SEED USERS (ADMIN)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const purgeMockUsers = mutation({
+  args: {
+    adminId: v.string(),
+    sessionToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const adminDocId = ctx.db.normalizeId("users", args.adminId);
+    if (!adminDocId) throw new Error("Unauthorized: Admin not found.");
+    const adminUser = await ctx.db.get(adminDocId);
+    if (!adminUser || adminUser.role !== "admin") {
+      throw new Error("Forbidden: Access restricted to administrators.");
+    }
+    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
+      throw new Error("Unauthorized: Invalid session token.");
+    }
+
+    const mockEmails = ["demo@vektolux.sl", "driver@vektolux.sl", "agent@vektolux.sl"];
+    const mockNames = ["Fatmatta Bangura", "Abu Kamara", "Lamin Sesay"];
+
+    let purgedCount = 0;
+
+    const allUsers = await ctx.db.query("users").collect();
+    for (const u of allUsers) {
+      const isMock =
+        mockEmails.includes(u.email) ||
+        mockNames.includes(u.name) ||
+        (u.email === "admin@vektolux.sl" && u.name === "Vektolux Administrator");
+
+      if (isMock) {
+        // If this is the current admin user executing the purge, standardize it instead of deleting
+        if (u._id === adminDocId) {
+          await ctx.db.patch(u._id, {
+            name: "Platform Administrator",
+            updatedAt: Date.now(),
+          });
+          continue;
+        }
+
+        // Delete wallet
+        const wallets = await ctx.db
+          .query("walletBalances")
+          .withIndex("by_user", (q) => q.eq("userId", u._id))
+          .collect();
+        for (const w of wallets) {
+          await ctx.db.delete(w._id);
+        }
+
+        await ctx.db.delete(u._id);
+        purgedCount++;
+      }
+    }
+
+    return { success: true, purgedCount, message: `Successfully purged ${purgedCount} mock user accounts.` };
+  },
+});

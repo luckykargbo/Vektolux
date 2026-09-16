@@ -47,9 +47,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _smsAlerts = true;
   bool _biometricAuth = false;
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<AuthBloc>().add(const RefreshUserSessionEvent());
+    });
+  }
+
   void _showEditProfileModal(BuildContext context, UserEntity user) {
     final nameCtrl = TextEditingController(text: user.name);
     final phoneCtrl = TextEditingController(text: user.phone);
+    final bioCtrl = TextEditingController(text: user.bio ?? '');
 
     showModalBottomSheet(
       context: context,
@@ -91,7 +100,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               const SizedBox(height: 6),
               const Text(
-                'Update your display name and contact phone number.',
+                'Update your display name, contact phone number, and bio.',
                 style: TextStyle(fontSize: 13, color: AppColors.gray500),
               ),
               const SizedBox(height: 20),
@@ -121,6 +130,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   prefixIcon: Icon(Icons.phone_outlined),
                 ),
               ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: bioCtrl,
+                maxLines: 3,
+                style: const TextStyle(
+                  color: AppColors.obsidian,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Bio / About You',
+                  alignLabelWithHint: true,
+                  prefixIcon: Padding(
+                    padding: EdgeInsets.only(bottom: 40),
+                    child: Icon(Icons.edit_note_outlined),
+                  ),
+                ),
+              ),
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
@@ -129,10 +156,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   onPressed: () {
                     final updatedName = nameCtrl.text.trim();
                     final updatedPhone = phoneCtrl.text.trim();
+                    final updatedBio = bioCtrl.text.trim();
                     context.read<AuthBloc>().add(
                           UpdateUserProfileEvent(
                             name: updatedName.isNotEmpty ? updatedName : null,
                             phone: updatedPhone.isNotEmpty ? updatedPhone : null,
+                            bio: updatedBio.isNotEmpty ? updatedBio : null,
                           ),
                         );
                     Navigator.of(modalCtx).pop();
@@ -570,9 +599,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return BlocBuilder<AuthBloc, AuthState>(
       builder: (context, authState) {
         final user = authState.user;
-        final displayName = user?.name.isNotEmpty == true ? user!.name : 'Lamin Kamara';
-        final displayPhone = user?.phone.isNotEmpty == true ? user!.phone : '+232 76 123 456';
-        final displayEmail = user?.email.isNotEmpty == true ? user!.email : 'user@vektolux.sl';
+        final displayName = user?.name.isNotEmpty == true ? user!.name : 'User';
+        final displayPhone = user?.phone.isNotEmpty == true ? user!.phone : '';
+        final displayEmail = user?.email.isNotEmpty == true ? user!.email : '';
+        final userBio = user?.bio;
         final role = user?.role ?? UserRole.client;
         final isVendor = role == UserRole.agent ||
             role == UserRole.merchant ||
@@ -742,6 +772,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ),
                               ],
                             ),
+                            if (userBio != null && userBio.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                userBio,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.gray600,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                           ],
                         ),
                       ),

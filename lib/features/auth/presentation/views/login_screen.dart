@@ -9,7 +9,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
-import '../../domain/entities/user_entity.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
@@ -201,63 +200,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
 
-                  const SizedBox(height: 16),
-
-                  // Demo Account Quick Selector
-                  Container(
-                    margin: const EdgeInsets.only(top: 8, bottom: 20),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppColors.emerald.withValues(alpha: 0.06),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: AppColors.emerald.withValues(alpha: 0.2),
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Row(
-                          children: [
-                            Icon(
-                              Icons.bolt,
-                              size: 16,
-                              color: AppColors.emerald,
-                            ),
-                            SizedBox(width: 6),
-                            Text(
-                              'Instant Test Accounts',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.emeraldDark,
-                                letterSpacing: 0.3,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 6,
-                          children: [
-                            _buildQuickFillChip(
-                              label: 'Client (Traveler)',
-                              email: 'demo@vektolux.sl',
-                            ),
-                            _buildQuickFillChip(
-                              label: 'Driver Node',
-                              email: 'driver@vektolux.sl',
-                            ),
-                            _buildQuickFillChip(
-                              label: 'Real Estate Agent',
-                              email: 'agent@vektolux.sl',
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
+                  const SizedBox(height: 24),
 
                   // Sign In Action Button
                   BlocBuilder<AuthBloc, AuthState>(
@@ -322,49 +265,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildQuickFillChip({
-    required String label,
-    required String email,
-    IconData? icon,
-    Color? iconColor,
-  }) {
-    final chipColor = iconColor ?? AppColors.emerald;
-    return InkWell(
-      onTap: () {
-        setState(() {
-          _identifierController.text = email;
-          _passwordController.text = 'password123';
-        });
-      },
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: AppColors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: chipColor.withValues(alpha: 0.3),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon ?? Icons.touch_app_outlined, size: 12, color: chipColor),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF0F172A),
-              ),
-            ),
-          ],
         ),
       ),
     );

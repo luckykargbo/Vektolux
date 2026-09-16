@@ -353,7 +353,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               decoration: const InputDecoration(
                 labelText: 'Full Name',
-                hintText: 'e.g. Lamin Kamara',
+                hintText: 'Enter your full legal name',
                 prefixIcon: Icon(Icons.person_outline),
               ),
               validator: (v) {

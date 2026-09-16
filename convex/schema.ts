@@ -224,7 +224,18 @@ export default defineSchema({
     bio: v.optional(v.string()),
     followersCount: v.optional(v.number()),
     followingCount: v.optional(v.number()),
-    kycStatus: v.optional(v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected"))),
+    kycStatus: v.optional(v.union(
+      v.literal("pending"),
+      v.literal("approved"),
+      v.literal("rejected"),
+      v.literal("verified"),
+      v.literal("suspended"),
+      v.literal("banned"),
+      v.literal("PENDING_VERIFICATION"),
+      v.literal("VERIFIED"),
+      v.literal("SUSPENDED"),
+      v.literal("BANNED")
+    )),
 
     // Metadata
     updatedAt: v.number(),

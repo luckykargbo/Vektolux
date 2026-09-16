@@ -200,6 +200,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         name: event.name,
         phone: event.phone,
         avatarUrl: event.avatarUrl,
+        bio: event.bio,
       );
 
       emit(state.copyWith(

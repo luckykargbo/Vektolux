@@ -8,7 +8,7 @@ abstract final class ApiConstants {
   /// Convex deployment URL.
   static const String convexUrl = String.fromEnvironment(
     'CONVEX_URL',
-    defaultValue: 'https://ideal-poodle-813.convex.cloud',
+    defaultValue: 'https://incredible-possum-462.convex.cloud',
   );
 
   /// Payment gateway base URLs.
