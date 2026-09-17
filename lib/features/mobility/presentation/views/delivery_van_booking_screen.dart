@@ -13,7 +13,6 @@ import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/vx_network_image.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
-import '../../../auth/presentation/bloc/auth_state.dart';
 
 class DeliveryVanBookingScreen extends StatefulWidget {
   final Map<String, dynamic> vehicle;

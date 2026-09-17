@@ -18,6 +18,7 @@ import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/vehicle_detail_screen.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
 import 'delivery_van_booking_screen.dart';
+import 'my_escrow_orders_screen.dart';
 
 class AutoMarketplaceScreen extends StatefulWidget {
   final AppDatabase database;
@@ -238,6 +239,17 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
           ),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.shield_outlined, color: AppColors.emerald),
+            tooltip: 'My Escrow Contracts',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const MyEscrowOrdersScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Refresh Showroom',

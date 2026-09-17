@@ -16,10 +16,10 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
 import '../../../auth/domain/entities/user_entity.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
-import '../../../bookings/presentation/views/checkout_screen.dart';
 import '../../../mobility/domain/entities/mobility_vehicle_entity.dart';
 import '../../../mobility/presentation/widgets/in_app_chat_modal.dart';
-import '../../../mobility/presentation/widgets/vehicle_rental_terms_sheet.dart';
+import '../../../mobility/presentation/views/escrow_checkout_screen.dart';
+import '../../../mobility/presentation/views/my_escrow_orders_screen.dart';
 
 class VehicleDetailScreen extends StatefulWidget {
   final String id;
@@ -443,48 +443,49 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
       return;
     }
 
-    final dailyRate = widget.pricePerDay ?? 350.0;
+    final dailyRate = widget.pricePerDay ?? _currentPricePerDay ?? 350.0;
 
-    VehicleRentalTermsSheet.show(
-      context,
-      vehicleTitle: _title,
-      dailyRate: dailyRate,
-      hourlyRate: dailyRate / 10,
-      vendorName: widget.ownerName ?? 'Verified Fleet Vendor',
-      vendorPhone: widget.ownerPhone ?? '+232 76 000 001',
-      onProceedToCheckout: (days, hours, subtotal, total) {
-        final now = DateTime.now();
-        final durationText = hours != null ? '$hours Hours Rental' : '$days Days (24h) Rental';
-        final endMillis = hours != null
-            ? now.add(Duration(hours: hours)).millisecondsSinceEpoch
-            : now.add(Duration(days: days)).millisecondsSinceEpoch;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => EscrowCheckoutScreen(
+          vehicleListingId: widget.id,
+          vehicleTitle: _title,
+          vehicleCategory: widget.listingIntent == 'rental' ? 'Car Rental' : 'Vehicle',
+          dailyRate: dailyRate,
+          vehicleImageUrl: widget.imageUrls.isNotEmpty ? widget.imageUrls.first : null,
+          isPurchase: false,
+        ),
+      ),
+    );
+  }
 
-        final serviceFee = (subtotal * 0.05).roundToDouble();
+  void _handlePurchaseEscrow(BuildContext context) {
+    final user = context.read<AuthBloc>().state.user;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please log in to purchase this vehicle with Escrow.'),
+          backgroundColor: AppColors.obsidian,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
 
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => CheckoutScreen(
-              database: context.read<AppDatabase>(),
-              convexClient: context.read<ConvexClientWrapper>(),
-              currentUser: user,
-              listingId: widget.id,
-              listingType: 'vehicle',
-              listingTitle: _title,
-              listingSubtitle: '$durationText • Orange / Africell (Agent 001)',
-              primaryImageUrl: widget.imageUrls.isNotEmpty ? widget.imageUrls.first : null,
-              vendorId: widget.ownerId ?? 'fleet_operator',
-              bookingType: 'vehicle_rental',
-              startTime: now.millisecondsSinceEpoch,
-              endTime: endMillis,
-              days: days,
-              hours: hours,
-              subtotal: subtotal,
-              serviceFee: serviceFee,
-              totalAmount: total,
-            ),
-          ),
-        );
-      },
+    final price = _currentSalePrice ?? widget.salePrice ?? 25000.0;
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => EscrowCheckoutScreen(
+          vehicleListingId: widget.id,
+          vehicleTitle: _title,
+          vehicleCategory: 'Car Sales',
+          dailyRate: 0.0,
+          purchasePrice: price,
+          isPurchase: true,
+          vehicleImageUrl: widget.imageUrls.isNotEmpty ? widget.imageUrls.first : null,
+        ),
+      ),
     );
   }
 
@@ -511,6 +512,17 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.shield_outlined, color: AppColors.emerald),
+            tooltip: 'My Escrow Contracts',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const MyEscrowOrdersScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.share_outlined, color: AppColors.white),
             tooltip: 'Share listing',
@@ -1015,14 +1027,35 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
                   Expanded(
                     child: widget.listingIntent == 'rental'
                         ? VxButton(
-                            label: 'Rent Now',
-                            icon: Icons.key_rounded,
+                            label: 'Rent with Escrow',
+                            icon: Icons.shield_outlined,
                             onPressed: () => _handleRentalCheckout(context),
                           )
-                        : VxButton(
-                            label: 'Schedule Inspection',
-                            icon: Icons.calendar_today_rounded,
-                            onPressed: () => _openScheduleInspectionModal(context),
+                        : Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(Icons.calendar_today_rounded, size: 14),
+                                  label: const Text('Inspect', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                                  style: OutlinedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
+                                    foregroundColor: AppColors.obsidian,
+                                    side: const BorderSide(color: AppColors.border, width: 1.5),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  ),
+                                  onPressed: () => _openScheduleInspectionModal(context),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 2,
+                                child: VxButton(
+                                  label: 'Buy with Escrow',
+                                  icon: Icons.shield_outlined,
+                                  onPressed: () => _handlePurchaseEscrow(context),
+                                ),
+                              ),
+                            ],
                           ),
                   ),
                 ],

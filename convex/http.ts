@@ -702,4 +702,206 @@ http.route({
   }),
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+//          VEHICLE ESCROW & SETTLEMENT REST API ENDPOINTS
+// ═══════════════════════════════════════════════════════════════════════
+
+// 1. POST /api/v1/vehicles/escrow/initiate
+http.route({
+  path: "/api/v1/vehicles/escrow/initiate",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.escrow.initiateEscrowOrder, {
+        orderType: body.orderType,
+        vehicleListingId: body.vehicleListingId as Id<"vehicleListings">,
+        rentalStartDate: body.rentalPeriod?.startDate ? new Date(body.rentalPeriod.startDate).getTime() : undefined,
+        rentalEndDate: body.rentalPeriod?.endDate ? new Date(body.rentalPeriod.endDate).getTime() : undefined,
+        numberOfDays: body.rentalPeriod?.numberOfDays,
+        baseRentalAmount: body.pricing?.baseRentalAmountSLE,
+        refundableDepositAmount: body.pricing?.refundableDepositAmountSLE,
+        earnestFeeAmount: body.pricing?.earnestFeeAmountSLE,
+        fullPurchaseAmount: body.pricing?.fullPurchaseAmountSLE,
+        paymentProvider: body.paymentMethod?.provider,
+        paymentPhone: body.paymentMethod?.subscriberMsisdn,
+        payFromWallet: body.payFromWallet ?? false,
+      });
+
+      return new Response(
+        JSON.stringify({ success: true, data: result }),
+        { status: 201, headers: corsHeaders() }
+      );
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ success: false, error: err.message }),
+        { status: 400, headers: corsHeaders() }
+      );
+    }
+  }),
+});
+
+// 2. POST /api/v1/vehicles/inspection/complete
+http.route({
+  path: "/api/v1/vehicles/inspection/complete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.escrow.completeVehicleInspection, {
+        escrowOrderId: body.escrowOrderId as Id<"escrow_orders">,
+        inspectionType: body.inspectionType,
+        odometerReadingKm: body.odometerReadingKm,
+        fuelTankPercentage: body.fuelTankPercentage,
+        photoFrontUrl: body.photos?.front ?? "",
+        photoRearUrl: body.photos?.rear ?? "",
+        photoLeftSideUrl: body.photos?.leftSide ?? "",
+        photoRightSideUrl: body.photos?.rightSide ?? "",
+        photoInteriorUrl: body.photos?.interior ?? "",
+        photoDashboardOdometerUrl: body.photos?.dashboardOdometer ?? "",
+        damagesDetected: body.damagesDetected ? body.damagesDetected.map((d: any) => typeof d === "string" ? d : JSON.stringify(d)) : undefined,
+        notes: body.notes,
+        qrTokenHash: body.handoffVerification?.scannedQrToken ?? "TOKEN_CLEAN",
+        counterpartySignatureUrl: body.handoffVerification?.counterpartySignatureUrl,
+      });
+
+      return new Response(
+        JSON.stringify({ success: true, data: result }),
+        { status: 200, headers: corsHeaders() }
+      );
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ success: false, error: err.message }),
+        { status: 400, headers: corsHeaders() }
+      );
+    }
+  }),
+});
+
+// 3. POST /api/v1/vehicles/escrow/release-milestone
+http.route({
+  path: "/api/v1/vehicles/escrow/release-milestone",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.escrow.releaseMilestoneHandoff60, {
+        escrowOrderId: body.escrowOrderId as Id<"escrow_orders">,
+      });
+
+      return new Response(
+        JSON.stringify({ success: true, data: result }),
+        { status: 200, headers: corsHeaders() }
+      );
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ success: false, error: err.message }),
+        { status: 400, headers: corsHeaders() }
+      );
+    }
+  }),
+});
+
+// 4. POST /api/v1/vehicles/escrow/settle-return
+http.route({
+  path: "/api/v1/vehicles/escrow/settle-return",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.escrow.settleVehicleReturn, {
+        escrowOrderId: body.escrowOrderId as Id<"escrow_orders">,
+        damageDeductionCost: body.damageAssessment?.deductionAmountSLE,
+      });
+
+      return new Response(
+        JSON.stringify({ success: true, data: result }),
+        { status: 200, headers: corsHeaders() }
+      );
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ success: false, error: err.message }),
+        { status: 400, headers: corsHeaders() }
+      );
+    }
+  }),
+});
+
+// 5. POST /api/webhooks/orange-money-escrow
+http.route({
+  path: "/api/webhooks/orange-money-escrow",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const { transactionId, orderCode, amount, status } = body;
+
+      if (!transactionId || !orderCode) {
+        return new Response(JSON.stringify({ error: "Missing required fields" }), {
+          status: 400,
+          headers: corsHeaders(),
+        });
+      }
+
+      if (status === "SUCCESS") {
+        await ctx.runMutation(internal.escrow.confirmEscrowFunding, {
+          orderCode,
+          externalTransactionId: transactionId,
+          provider: "ORANGE_MONEY_SL",
+          amountPaid: Number(amount),
+        });
+      }
+
+      return new Response(JSON.stringify({ received: true, status: "PROCESSED" }), {
+        status: 200,
+        headers: corsHeaders(),
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message }), {
+        status: 500,
+        headers: corsHeaders(),
+      });
+    }
+  }),
+});
+
+// 6. POST /api/webhooks/africell-escrow
+http.route({
+  path: "/api/webhooks/africell-escrow",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const { transactionId, orderCode, amount, status } = body;
+
+      if (!transactionId || !orderCode) {
+        return new Response(JSON.stringify({ error: "Missing required fields" }), {
+          status: 400,
+          headers: corsHeaders(),
+        });
+      }
+
+      if (status === "SUCCESS") {
+        await ctx.runMutation(internal.escrow.confirmEscrowFunding, {
+          orderCode,
+          externalTransactionId: transactionId,
+          provider: "AFRICELL_AFRIMONEY_SL",
+          amountPaid: Number(amount),
+        });
+      }
+
+      return new Response(JSON.stringify({ received: true, status: "PROCESSED" }), {
+        status: 200,
+        headers: corsHeaders(),
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message }), {
+        status: 500,
+        headers: corsHeaders(),
+      });
+    }
+  }),
+});
+
 export default http;
+

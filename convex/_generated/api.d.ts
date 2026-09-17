@@ -15,6 +15,7 @@ import type * as bookings from "../bookings.js";
 import type * as businessVerification from "../businessVerification.js";
 import type * as driverVehicles from "../driverVehicles.js";
 import type * as emails from "../emails.js";
+import type * as escrow from "../escrow.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as lib_geo from "../lib/geo.js";
@@ -44,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   businessVerification: typeof businessVerification;
   driverVehicles: typeof driverVehicles;
   emails: typeof emails;
+  escrow: typeof escrow;
   files: typeof files;
   http: typeof http;
   "lib/geo": typeof lib_geo;

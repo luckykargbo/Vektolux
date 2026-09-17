@@ -100,6 +100,69 @@ export const commercialVehicleStatus = v.union(
   v.literal("TAKEN_DOWN")
 );
 
+export const escrowOrderType = v.union(
+  v.literal("VEHICLE_RENTAL"),
+  v.literal("VEHICLE_PURCHASE")
+);
+
+export const escrowOrderStatus = v.union(
+  v.literal("INITIATED"),
+  v.literal("PENDING_PAYMENT"),
+  v.literal("HELD_IN_ESCROW"),
+  v.literal("PARTIALLY_RELEASED"),
+  v.literal("POST_INSPECTION_PENDING"),
+  v.literal("SETTLED"),
+  v.literal("DISPUTED"),
+  v.literal("REFUNDED"),
+  v.literal("CANCELLED")
+);
+
+export const escrowPurchaseStage = v.union(
+  v.literal("EARNEST_PENDING"),
+  v.literal("EARNEST_HELD"),
+  v.literal("INSPECTION_PASSED"),
+  v.literal("FULL_FUNDS_HELD"),
+  v.literal("SLRSA_DOCS_SUBMITTED"),
+  v.literal("TRANSFER_CONFIRMED"),
+  v.literal("SETTLED")
+);
+
+export const inspectionTypeEnum = v.union(
+  v.literal("PRE_TRIP_RENTAL"),
+  v.literal("POST_TRIP_RENTAL"),
+  v.literal("PURCHASE_MECHANIC_INSPECTION")
+);
+
+export const inspectionStatusEnum = v.union(
+  v.literal("PENDING"),
+  v.literal("COMPLETED_CLEAN"),
+  v.literal("COMPLETED_WITH_DAMAGE"),
+  v.literal("REJECTED")
+);
+
+export const ledgerAccountTypeEnum = v.union(
+  v.literal("CLIENT_AVAILABLE"),
+  v.literal("CLIENT_ESCROW_LOCKED"),
+  v.literal("OWNER_AVAILABLE"),
+  v.literal("OWNER_ESCROW_PENDING"),
+  v.literal("PLATFORM_REVENUE_REALIZED"),
+  v.literal("DAMAGE_DEPOSIT_CUSTODY"),
+  v.literal("TELCO_CLEARING_LIABILITY")
+);
+
+export const ledgerEntryDirectionEnum = v.union(
+  v.literal("DEBIT"),
+  v.literal("CREDIT")
+);
+
+export const escrowDisputeStatusEnum = v.union(
+  v.literal("OPENED"),
+  v.literal("UNDER_REVIEW"),
+  v.literal("RESOLVED_MUTUAL"),
+  v.literal("RESOLVED_ADJUDICATED"),
+  v.literal("REJECTED")
+);
+
 export const rideStatus = v.union(
   v.literal("requested"),
   v.literal("accepted"),
@@ -433,6 +496,7 @@ export default defineSchema({
     userId: v.id("users"),
     availableBalance: v.number(),
     pendingBalance: v.number(),
+    escrowBalance: v.optional(v.number()),
     currency: v.string(),
     updatedAt: v.number(),
   })
@@ -661,4 +725,160 @@ export default defineSchema({
   })
     .index("by_identifier", ["identifier"])
     .index("by_identifier_code", ["identifier", "otpCode"]),
+
+  // ─── ESCROW ORDERS ────────────────────────────────────────────────
+  escrow_orders: defineTable({
+    orderCode: v.string(), // e.g. VK-ESC-2026-98124
+    orderType: escrowOrderType,
+    renterOrBuyerId: v.id("users"),
+    ownerOrSellerId: v.id("users"),
+    vehicleListingId: v.id("vehicleListings"),
+    currency: v.string(), // "SLE"
+
+    // Rental Breakdown
+    baseRentalAmount: v.number(),
+    refundableDepositAmount: v.number(),
+
+    // Purchase Breakdown
+    earnestFeeAmount: v.number(),
+    fullPurchaseAmount: v.number(),
+
+    // Financial Totals
+    grossEscrowAmount: v.number(),
+    platformFeeAmount: v.number(),
+    netMerchantExpected: v.number(),
+
+    // Split Releases (60/40)
+    split60ReleasedAmount: v.number(),
+    split40ReleasedAmount: v.number(),
+    depositRefundedAmount: v.number(),
+    depositDamageDeductedAmount: v.number(),
+
+    status: escrowOrderStatus,
+    purchaseStage: v.optional(escrowPurchaseStage),
+
+    // Schedule
+    rentalStartDate: v.optional(v.number()),
+    rentalEndDate: v.optional(v.number()),
+    numberOfDays: v.optional(v.number()),
+
+    // Payment Info
+    paymentProvider: v.optional(v.string()),
+    paymentPhone: v.optional(v.string()),
+
+    metadata: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_order_code", ["orderCode"])
+    .index("by_renter_or_buyer", ["renterOrBuyerId"])
+    .index("by_owner_or_seller", ["ownerOrSellerId"])
+    .index("by_vehicle", ["vehicleListingId"])
+    .index("by_status", ["status"])
+    .index("by_type_status", ["orderType", "status"]),
+
+  // ─── VEHICLE INSPECTIONS ──────────────────────────────────────────
+  vehicle_inspections: defineTable({
+    escrowOrderId: v.id("escrow_orders"),
+    inspectorId: v.id("users"),
+    inspectionType: inspectionTypeEnum,
+    odometerReadingKm: v.number(),
+    fuelTankPercentage: v.number(),
+
+    // 6 Directional Photos
+    photoFrontUrl: v.string(),
+    photoRearUrl: v.string(),
+    photoLeftSideUrl: v.string(),
+    photoRightSideUrl: v.string(),
+    photoInteriorUrl: v.string(),
+    photoDashboardOdometerUrl: v.string(),
+    additionalPhotos: v.optional(v.array(v.string())),
+
+    damagesDetected: v.optional(v.array(v.string())),
+    notes: v.optional(v.string()),
+
+    // Dual QR Authentication Token & Signature
+    qrTokenHash: v.string(),
+    counterpartySignatureUrl: v.optional(v.string()),
+
+    status: inspectionStatusEnum,
+    createdAt: v.number(),
+    completedAt: v.optional(v.number()),
+  })
+    .index("by_order", ["escrowOrderId"])
+    .index("by_order_type", ["escrowOrderId", "inspectionType"])
+    .index("by_inspector", ["inspectorId"]),
+
+  // ─── SLRSA TRANSFER RECORDS ───────────────────────────────────────
+  slrsa_transfer_records: defineTable({
+    escrowOrderId: v.id("escrow_orders"),
+    vehicleVinOrChassis: v.string(),
+    slrsaLicensePlate: v.string(),
+    logbookBlueBookFrontUrl: v.string(),
+    logbookBlueBookEndorsementUrl: v.string(),
+    slrsaFormCUrl: v.string(),
+    buyerNationalIdUrl: v.string(),
+    sellerNationalIdUrl: v.string(),
+    verifiedByAdminId: v.optional(v.id("users")),
+    verificationNotes: v.optional(v.string()),
+    isVerified: v.boolean(),
+    verifiedAt: v.optional(v.number()),
+    submittedAt: v.number(),
+  })
+    .index("by_order", ["escrowOrderId"])
+    .index("by_verified", ["isVerified"]),
+
+  // ─── DOUBLE-ENTRY LEDGER: TRANSACTIONS & ENTRIES ───────────────────
+  ledger_transactions: defineTable({
+    transactionCode: v.string(),
+    escrowOrderId: v.optional(v.id("escrow_orders")),
+    description: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_code", ["transactionCode"])
+    .index("by_order", ["escrowOrderId"]),
+
+  ledger_entries: defineTable({
+    transactionId: v.id("ledger_transactions"),
+    accountType: ledgerAccountTypeEnum,
+    userId: v.optional(v.id("users")),
+    direction: ledgerEntryDirectionEnum,
+    amount: v.number(),
+    currency: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_tx", ["transactionId"])
+    .index("by_user", ["userId"])
+    .index("by_user_account", ["userId", "accountType"]),
+
+  // ─── ESCROW DISPUTES ──────────────────────────────────────────────
+  escrow_disputes: defineTable({
+    escrowOrderId: v.id("escrow_orders"),
+    openedByUserId: v.id("users"),
+    reason: v.string(),
+    claimedRepairCost: v.number(),
+    approvedRepairCost: v.optional(v.number()),
+    evidenceMediaUrls: v.array(v.string()),
+    status: escrowDisputeStatusEnum,
+    adjudicatedByAdminId: v.optional(v.id("users")),
+    adjudicationNotes: v.optional(v.string()),
+    openedAt: v.number(),
+    resolvedAt: v.optional(v.number()),
+  })
+    .index("by_order", ["escrowOrderId"])
+    .index("by_status", ["status"]),
+
+  // ─── TELCO WEBHOOK AUDIT & IDEMPOTENCY LOGS ───────────────────────
+  telco_webhook_logs: defineTable({
+    provider: v.string(),
+    externalTransactionId: v.string(),
+    idempotencyKey: v.string(),
+    requestPayload: v.string(),
+    isProcessed: v.boolean(),
+    errorMessage: v.optional(v.string()),
+    receivedAt: v.number(),
+    processedAt: v.optional(v.number()),
+  })
+    .index("by_idempotency", ["idempotencyKey"])
+    .index("by_prov_ext_id", ["provider", "externalTransactionId"]),
 });
