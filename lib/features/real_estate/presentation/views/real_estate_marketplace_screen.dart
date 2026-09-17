@@ -18,6 +18,8 @@ import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
+import 'inspection_pass_verification_screen.dart';
+import 'my_real_estate_escrows_screen.dart';
 
 class RealEstateMarketplaceScreen extends StatefulWidget {
   final AppDatabase database;
@@ -319,6 +321,28 @@ class _RealEstateMarketplaceScreenState
           ),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.shield_outlined, color: AppColors.emerald),
+            tooltip: 'Property Escrows',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const MyRealEstateEscrowsScreen(),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.qr_code_scanner_rounded),
+            tooltip: 'Agent Pass Verifier',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const InspectionPassVerificationScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.tune_rounded),
             tooltip: 'Filter Region',

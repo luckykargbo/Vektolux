@@ -21,9 +21,11 @@ import '../bloc/real_estate_detail_event.dart';
 import '../bloc/real_estate_detail_state.dart';
 import '../widgets/hero_image_carousel.dart';
 import '../widgets/sticky_header.dart';
-import '../widgets/site_visit_booking_modal.dart';
 import '../widgets/hourly_booking_panel.dart';
 import '../widgets/payment_webview_dialog.dart';
+import '../widgets/inspection_pass_modal.dart';
+import 'real_estate_escrow_checkout_screen.dart';
+import 'my_real_estate_escrows_screen.dart';
 
 class RealEstateListingDetailScreen extends StatefulWidget {
   final String listingId;
@@ -185,6 +187,18 @@ class _RealEstateListingDetailScreenState
                                     iconColor: _isFavorite ? AppColors.error : AppColors.obsidian,
                                     onTap: () {
                                       setState(() => _isFavorite = !_isFavorite);
+                                    },
+                                  ),
+                                  const SizedBox(width: 10),
+                                  _buildCircleNavButton(
+                                    icon: Icons.shield_rounded,
+                                    iconColor: AppColors.emerald,
+                                    onTap: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) => const MyRealEstateEscrowsScreen(),
+                                        ),
+                                      );
                                     },
                                   ),
                                   const SizedBox(width: 10),
@@ -667,52 +681,84 @@ class _RealEstateListingDetailScreenState
         ),
         padding: EdgeInsets.fromLTRB(
           20,
-          16,
+          14,
           20,
-          MediaQuery.of(context).padding.bottom + 16,
+          MediaQuery.of(context).padding.bottom + 12,
         ),
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // Price & status summary
-            Expanded(
-              flex: 4,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${listing.currency} ${listing.price.toStringAsFixed(0)}',
-                    style: AppTypography.priceDisplay.copyWith(fontSize: 22),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${listing.currency} ${listing.price.toStringAsFixed(0)}',
+                        style: AppTypography.priceDisplay.copyWith(fontSize: 20),
+                      ),
+                      Row(
+                        children: [
+                          const Icon(Icons.shield_rounded, size: 12, color: AppColors.emerald),
+                          const SizedBox(width: 4),
+                          Text(
+                            listing.category == RealEstateCategory.sale
+                                ? '10/40/50 Gated Milestones'
+                                : '10% Agency Fee • Protected Lease',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.emeraldDark,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                  Text(
-                    listing.category == RealEstateCategory.sale
-                        ? 'Sale Deed Ready'
-                        : 'Annual Lease Term',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.gray500,
-                    ),
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.qr_code_scanner_rounded, size: 16, color: AppColors.obsidian),
+                  label: const Text('Viewing Pass', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w700, fontSize: 12)),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    side: const BorderSide(color: AppColors.border),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
-                ],
-              ),
+                  onPressed: () {
+                    InspectionPassModal.show(
+                      context: context,
+                      listing: listing,
+                    );
+                  },
+                ),
+              ],
             ),
-            const SizedBox(width: 16),
-            // Primary Site Visit Action Button
-            Expanded(
-              flex: 6,
-              child: VxButton(
-                label: 'Schedule Site Visit',
-                icon: Icons.calendar_today_rounded,
-                onPressed: () {
-                  SiteVisitBookingModal.show(
-                    context: context,
-                    listing: listing,
-                    currentUserId: widget.currentUserId,
-                    bloc: context.read<RealEstateDetailBloc>(),
-                  );
-                },
-              ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: VxButton.primary(
+                    text: listing.category == RealEstateCategory.sale
+                        ? 'Buy Property with Escrow'
+                        : 'Rent Property with Escrow',
+                    icon: Icons.shield_rounded,
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => RealEstateEscrowCheckoutScreen(
+                            listing: listing,
+                            initialType: listing.category == RealEstateCategory.sale
+                                ? RealEstateEscrowType.landPurchase
+                                : RealEstateEscrowType.longTermLease,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
           ],
         ),

@@ -24,6 +24,7 @@ import type * as middleware from "../middleware.js";
 import type * as mobility from "../mobility.js";
 import type * as payments from "../payments.js";
 import type * as realEstate from "../realEstate.js";
+import type * as realEstateEscrow from "../realEstateEscrow.js";
 import type * as rides from "../rides.js";
 import type * as seedData from "../seedData.js";
 import type * as social from "../social.js";
@@ -54,6 +55,7 @@ declare const fullApi: ApiFromModules<{
   mobility: typeof mobility;
   payments: typeof payments;
   realEstate: typeof realEstate;
+  realEstateEscrow: typeof realEstateEscrow;
   rides: typeof rides;
   seedData: typeof seedData;
   social: typeof social;

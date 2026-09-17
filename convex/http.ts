@@ -903,5 +903,180 @@ http.route({
   }),
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// REAL ESTATE ESCROW REST API ENDPOINTS (SLE CURRENCY)
+// ═══════════════════════════════════════════════════════════════════════
+
+// 7. POST /api/v1/real-estate/inspection-pass/initiate
+http.route({
+  path: "/api/v1/real-estate/inspection-pass/initiate",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.realEstateEscrow.initiateInspectionPass, {
+        propertyListingId: body.propertyListingId as Id<"realEstateListings">,
+        clientId: body.clientId,
+        preferredAgentId: body.preferredAgentId,
+        tourFee: body.tourFee ? Number(body.tourFee) : undefined,
+        scheduledTimestamp: Number(body.scheduledTimestamp ?? Date.now()),
+        paymentRail: body.paymentRail,
+        paymentPhone: body.paymentPhone,
+      });
+
+      return new Response(JSON.stringify({ success: true, data: result }), {
+        status: 201,
+        headers: corsHeaders(),
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ success: false, error: err.message }), {
+        status: 400,
+        headers: corsHeaders(),
+      });
+    }
+  }),
+});
+
+// 8. POST /api/v1/real-estate/inspection-pass/verify
+http.route({
+  path: "/api/v1/real-estate/inspection-pass/verify",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.realEstateEscrow.verifyInspectionPass, {
+        passId: body.passId as Id<"re_inspection_passes">,
+        scannedQrHash: body.scannedQrHash,
+        enteredOtp: body.enteredOtp,
+        agentId: body.agentId,
+        agentGpsLat: body.agentGpsLat ? Number(body.agentGpsLat) : undefined,
+        agentGpsLng: body.agentGpsLng ? Number(body.agentGpsLng) : undefined,
+      });
+
+      return new Response(JSON.stringify({ success: true, data: result }), {
+        status: 200,
+        headers: corsHeaders(),
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ success: false, error: err.message }), {
+        status: 400,
+        headers: corsHeaders(),
+      });
+    }
+  }),
+});
+
+// 9. POST /api/v1/real-estate/escrow/initiate
+http.route({
+  path: "/api/v1/real-estate/escrow/initiate",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.realEstateEscrow.initiateRealEstateEscrow, {
+        contractType: body.contractType,
+        propertyListingId: body.propertyListingId as Id<"realEstateListings">,
+        clientId: body.clientId,
+        baseAmount: Number(body.baseAmount),
+        cautionDepositAmount: body.cautionDepositAmount ? Number(body.cautionDepositAmount) : undefined,
+        nightsCount: body.nightsCount ? Number(body.nightsCount) : undefined,
+        leaseDurationMonths: body.leaseDurationMonths ? Number(body.leaseDurationMonths) : undefined,
+        paymentRail: body.paymentRail,
+        paymentPhone: body.paymentPhone,
+      });
+
+      return new Response(JSON.stringify({ success: true, data: result }), {
+        status: 201,
+        headers: corsHeaders(),
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ success: false, error: err.message }), {
+        status: 400,
+        headers: corsHeaders(),
+      });
+    }
+  }),
+});
+
+// 10. POST /api/v1/real-estate/escrow/short-stay/check-in
+http.route({
+  path: "/api/v1/real-estate/escrow/short-stay/check-in",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.realEstateEscrow.checkInShortStay, {
+        contractId: body.contractId as Id<"re_escrow_contracts">,
+        doorQrCode: body.doorQrCode,
+      });
+
+      return new Response(JSON.stringify({ success: true, data: result }), {
+        status: 200,
+        headers: corsHeaders(),
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ success: false, error: err.message }), {
+        status: 400,
+        headers: corsHeaders(),
+      });
+    }
+  }),
+});
+
+// 11. POST /api/v1/real-estate/escrow/caution-deposit/refund
+http.route({
+  path: "/api/v1/real-estate/escrow/caution-deposit/refund",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.realEstateEscrow.refundCautionDeposit, {
+        contractId: body.contractId as Id<"re_escrow_contracts">,
+        inspectionPassedClean: Boolean(body.inspectionPassedClean),
+        damageDeductionAmount: body.damageDeductionAmount ? Number(body.damageDeductionAmount) : undefined,
+        notes: body.notes,
+      });
+
+      return new Response(JSON.stringify({ success: true, data: result }), {
+        status: 200,
+        headers: corsHeaders(),
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ success: false, error: err.message }), {
+        status: 400,
+        headers: corsHeaders(),
+      });
+    }
+  }),
+});
+
+// 12. POST /api/v1/real-estate/escrow/land-milestone/verify
+http.route({
+  path: "/api/v1/real-estate/escrow/land-milestone/verify",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.realEstateEscrow.verifyAndReleaseLandMilestone, {
+        contractId: body.contractId as Id<"re_escrow_contracts">,
+        milestoneIndex: Number(body.milestoneIndex),
+        proofDocumentUrls: Array.isArray(body.proofDocumentUrls) ? body.proofDocumentUrls : [],
+        legalNotes: body.legalNotes,
+        verifiedByAdminId: body.verifiedByAdminId,
+      });
+
+      return new Response(JSON.stringify({ success: true, data: result }), {
+        status: 200,
+        headers: corsHeaders(),
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ success: false, error: err.message }), {
+        status: 400,
+        headers: corsHeaders(),
+      });
+    }
+  }),
+});
+
 export default http;
 

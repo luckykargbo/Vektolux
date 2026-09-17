@@ -163,6 +163,34 @@ export const escrowDisputeStatusEnum = v.union(
   v.literal("REJECTED")
 );
 
+export const reContractType = v.union(
+  v.literal("INSPECTION_PASS"),
+  v.literal("SHORT_STAY_BOOKING"),
+  v.literal("LONG_TERM_LEASE"),
+  v.literal("LAND_PURCHASE_MILESTONE")
+);
+
+export const reMilestoneState = v.union(
+  v.literal("CREATED"),
+  v.literal("FUNDS_LOCKED"),
+  v.literal("AGENT_DISPATCHED"),
+  v.literal("CHECKED_IN"),
+  v.literal("MILESTONE_VERIFIED"),
+  v.literal("FULLY_SETTLED"),
+  v.literal("UNDER_ARBITRATION"),
+  v.literal("REFUNDED"),
+  v.literal("CANCELLED")
+);
+
+export const reDisputeStatus = v.union(
+  v.literal("OPENED"),
+  v.literal("EVIDENCE_SUBMITTED"),
+  v.literal("IN_CONCILIATION"),
+  v.literal("RESOLVED_MUTUAL"),
+  v.literal("ADJUDICATED_ADMIN"),
+  v.literal("REJECTED")
+);
+
 export const rideStatus = v.union(
   v.literal("requested"),
   v.literal("accepted"),
@@ -881,4 +909,117 @@ export default defineSchema({
   })
     .index("by_idempotency", ["idempotencyKey"])
     .index("by_prov_ext_id", ["provider", "externalTransactionId"]),
+
+  // ─── REAL ESTATE ESCROW: INSPECTION PASSES (ANTI-BYPASS TOURS) ────
+  re_inspection_passes: defineTable({
+    propertyListingId: v.id("realEstateListings"),
+    clientId: v.id("users"),
+    agentId: v.id("users"),
+    tourFee: v.number(),
+    platformFee: v.number(),
+    agentNetFee: v.number(),
+    qrHash: v.string(),
+    otpCode: v.string(),
+    otpExpiresAt: v.number(),
+    status: reMilestoneState,
+    scheduledAt: v.number(),
+    verifiedAt: v.optional(v.number()),
+    agentGpsLat: v.optional(v.number()),
+    agentGpsLng: v.optional(v.number()),
+    isAddressUnmasked: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_client", ["clientId"])
+    .index("by_agent", ["agentId"])
+    .index("by_property", ["propertyListingId"])
+    .index("by_qr", ["qrHash"])
+    .index("by_status", ["status"]),
+
+  // ─── REAL ESTATE ESCROW: MASTER CONTRACTS & VAULTS ────────────────
+  re_escrow_contracts: defineTable({
+    contractCode: v.string(),
+    contractType: reContractType,
+    propertyListingId: v.id("realEstateListings"),
+    clientId: v.id("users"),
+    beneficiaryId: v.id("users"),
+    agentId: v.optional(v.id("users")),
+    grossAmount: v.number(),
+    cautionDepositAmount: v.number(),
+    platformFeeAmount: v.number(),
+    agentCommissionAmount: v.number(),
+    netBeneficiaryExpected: v.number(),
+    releasedBeneficiaryAmount: v.number(),
+    refundedClientAmount: v.number(),
+    paymentRail: v.string(),
+    currentState: reMilestoneState,
+    stayCheckInTimestamp: v.optional(v.number()),
+    stay24hAutoReleaseTimestamp: v.optional(v.number()),
+    leaseDurationMonths: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_contract_code", ["contractCode"])
+    .index("by_client", ["clientId"])
+    .index("by_beneficiary", ["beneficiaryId"])
+    .index("by_property", ["propertyListingId"])
+    .index("by_state", ["currentState"]),
+
+  // ─── REAL ESTATE ESCROW: LAND & PROPERTY MILESTONES (10/40/50) ────
+  re_escrow_milestones: defineTable({
+    contractId: v.id("re_escrow_contracts"),
+    milestoneIndex: v.number(), // 1 (Title Search), 2 (Survey & Deed), 3 (OARG Conveyance)
+    title: v.string(),
+    targetPercentage: v.number(),
+    amount: v.number(),
+    verificationRequirement: v.string(),
+    proofDocumentUrls: v.array(v.string()),
+    isVerified: v.boolean(),
+    verifiedByLegalAgentId: v.optional(v.id("users")),
+    state: reMilestoneState,
+    releasedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_contract", ["contractId"])
+    .index("by_state", ["state"]),
+
+  // ─── REAL ESTATE ESCROW: CAUTION DEPOSITS IN VAULT ─────────────────
+  re_caution_deposits: defineTable({
+    contractId: v.id("re_escrow_contracts"),
+    originalDepositAmount: v.number(),
+    heldAmount: v.number(),
+    deductionClaimAmount: v.number(),
+    refundedAmount: v.number(),
+    status: v.union(
+      v.literal("LOCKED"),
+      v.literal("REFUND_INITIATED"),
+      v.literal("REFUNDED_CLEAN"),
+      v.literal("DEDUCTED_PARTIAL"),
+      v.literal("FORFEITED_FULL"),
+      v.literal("IN_DISPUTE")
+    ),
+    inventoryChecklistSigned: v.boolean(),
+    checkoutNotes: v.optional(v.string()),
+    settledAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_contract", ["contractId"])
+    .index("by_status", ["status"]),
+
+  // ─── REAL ESTATE ESCROW: PROPERTY DISPUTES & ARBITRATION ──────────
+  re_escrow_disputes: defineTable({
+    contractId: v.id("re_escrow_contracts"),
+    openedByUserId: v.id("users"),
+    claimantRole: v.string(),
+    reason: v.string(),
+    claimedRepairCost: v.number(),
+    approvedRepairCost: v.optional(v.number()),
+    evidenceMediaUrls: v.array(v.string()),
+    status: reDisputeStatus,
+    adjudicatedByAdminId: v.optional(v.id("users")),
+    adjudicationNotes: v.optional(v.string()),
+    openedAt: v.number(),
+    resolvedAt: v.optional(v.number()),
+  })
+    .index("by_contract", ["contractId"])
+    .index("by_status", ["status"]),
 });
