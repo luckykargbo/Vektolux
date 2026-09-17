@@ -131,14 +131,16 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
   String get _title => '${widget.make} ${widget.model} (${widget.year})';
 
   String get _priceFormatted {
-    if (widget.listingIntent == 'sale' && _currentSalePrice != null) {
-      return 'SLE ${_currencyFormat.format(_currentSalePrice)}';
+    if ((widget.vehicleType == 'sand_dump_truck' || widget.vehicleType == 'container_freight_truck') &&
+        (widget.pricePerKm != null || _currentPricePerDay != null || _currentSalePrice != null)) {
+      final rate = widget.pricePerKm ?? _currentPricePerDay ?? _currentSalePrice!;
+      return 'SLE ${_currencyFormat.format(rate)} / trip';
     }
     if (widget.listingIntent == 'rental' && _currentPricePerDay != null) {
       return 'SLE ${_currencyFormat.format(_currentPricePerDay)} / day';
     }
-    if (widget.listingIntent == 'ride_hailing' && widget.pricePerKm != null) {
-      return 'SLE ${_currencyFormat.format(widget.pricePerKm)} / km';
+    if (widget.listingIntent == 'sale' && _currentSalePrice != null) {
+      return 'SLE ${_currencyFormat.format(_currentSalePrice)}';
     }
     if (_currentSalePrice != null) {
       return 'SLE ${_currencyFormat.format(_currentSalePrice)}';
@@ -146,17 +148,21 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
     return 'Contact for Price';
   }
 
-  String get _badgeText => switch (widget.listingIntent) {
-        'sale' => 'FOR SALE',
-        'rental' => 'DAILY RENTAL',
-        'ride_hailing' => 'RIDE HAILING',
-        _ => widget.listingIntent.toUpperCase(),
+  String get _badgeText => switch (widget.vehicleType) {
+        'sand_dump_truck' => 'DUMP TRUCK',
+        'container_freight_truck' => 'CONTAINER FREIGHT',
+        'delivery_van' => 'DELIVERY VAN',
+        'car_rental' => 'DAILY RENTAL',
+        'car_sale' => 'FOR SALE',
+        _ => widget.listingIntent == 'rental' ? 'DAILY RENTAL' : 'FOR SALE',
       };
 
-  Color get _badgeColor => switch (widget.listingIntent) {
-        'sale' => AppColors.emerald,
-        'rental' => const Color(0xFF06B6D4), // Cyan
-        _ => const Color(0xFF6366F1), // Indigo
+  Color get _badgeColor => switch (widget.vehicleType) {
+        'sand_dump_truck' => const Color(0xFFD97706),
+        'container_freight_truck' => const Color(0xFF4F46E5),
+        'delivery_van' => const Color(0xFF0284C7),
+        'car_rental' => const Color(0xFF06B6D4),
+        _ => AppColors.emerald,
       };
 
   void _openScheduleInspectionModal(BuildContext context) {

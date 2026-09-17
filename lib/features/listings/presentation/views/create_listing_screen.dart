@@ -4,7 +4,6 @@
 // 4-step listing creation for vendors/agents with media upload & offline cache.
 // ═══════════════════════════════════════════════════════════════════════
 
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -68,8 +67,9 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   final _vehPricePerKmController = TextEditingController();
   final _vehPricePerDayController = TextEditingController();
   final _vehSalePriceController = TextEditingController();
-  String _vehType = 'taxi';
-  String _vehIntent = 'rental';
+  String _vehType = 'car_sale';
+  String _vehIntent = 'sale';
+  final _vehCapacityController = TextEditingController(text: '5 Seats');
   final double _vehLat = 8.4840;
   final double _vehLng = -13.2344;
 
@@ -419,6 +419,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
         final salePrice =
             double.tryParse(_vehSalePriceController.text.trim());
         final year = int.tryParse(_vehYearController.text.trim()) ?? 2022;
+        final title = '$year ${_vehMakeController.text.trim()} ${_vehModelController.text.trim()}';
 
         // 1. Convex Mutation
         final result = await widget.convexClient.mutation(
@@ -427,6 +428,10 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             'ownerId': widget.currentUser.id,
             if (widget.currentUser.sessionToken != null)
               'sessionToken': widget.currentUser.sessionToken!,
+            'category': _vehType,
+            'title': title,
+            'capacity': _vehCapacityController.text.trim(),
+            'location': 'Freetown, Sierra Leone',
             'vehicleType': _vehType,
             'listingIntent': _vehIntent,
             'make': _vehMakeController.text.trim(),
@@ -818,7 +823,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                 ),
               ),
             ] else ...[
-              // Vehicle Type
+              // Commercial Vehicle Category
               DropdownButtonFormField<String>(
                 initialValue: _vehType,
                 dropdownColor: AppColors.white,
@@ -831,83 +836,60 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                   fontWeight: FontWeight.w600,
                 ),
                 decoration: const InputDecoration(
-                  labelText: 'Vehicle Type',
-                  hintText: 'Select vehicle category',
+                  labelText: 'Commercial Vehicle Category',
+                  hintText: 'Select commercial category',
                   prefixIcon: Icon(Icons.directions_car_outlined),
                 ),
                 selectedItemBuilder: (context) {
                   return const [
-                    Text('Standard Taxi', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
-                    Text('Motorcycle (Bike)', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
-                    Text('Delivery Van', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
-                    Text('Heavy Transport Truck', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                    Text('Car for Sale (Dealership)', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                    Text('Car Rental (Daily Hire)', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                    Text('Cargo & Delivery Van', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                    Text('Sand / Dump Tipper Truck', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
+                    Text('Container / Flatbed Truck', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
                   ];
                 },
                 items: const [
                   DropdownMenuItem(
-                    value: 'taxi',
-                    child: Text('Standard Taxi', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                    value: 'car_sale',
+                    child: Text('Car for Sale (Dealership)', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
                   ),
                   DropdownMenuItem(
-                    value: 'bike',
-                    child: Text('Motorcycle (Bike)', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                    value: 'car_rental',
+                    child: Text('Car Rental (Daily Hire)', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
                   ),
                   DropdownMenuItem(
                     value: 'delivery_van',
-                    child: Text('Delivery Van', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                    child: Text('Cargo & Delivery Van', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
                   ),
                   DropdownMenuItem(
-                    value: 'truck',
-                    child: Text('Heavy Transport Truck', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                    value: 'sand_dump_truck',
+                    child: Text('Sand / Dump Tipper Truck', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
+                  ),
+                  DropdownMenuItem(
+                    value: 'container_freight_truck',
+                    child: Text('Container / Flatbed Truck', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
                   ),
                 ],
                 onChanged: (v) {
-                  if (v != null) setState(() => _vehType = v);
+                  if (v != null) {
+                    setState(() {
+                      _vehType = v;
+                      _vehIntent = (v == 'car_rental' || v == 'delivery_van') ? 'rental' : 'sale';
+                    });
+                  }
                 },
               ),
               const SizedBox(height: 16),
 
-              // Listing Intent
-              DropdownButtonFormField<String>(
-                initialValue: _vehIntent,
-                dropdownColor: AppColors.white,
-                borderRadius: BorderRadius.circular(12),
-                elevation: 4,
-                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.obsidian),
-                style: const TextStyle(
-                  color: AppColors.obsidian,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                ),
+              // Payload / Haulage Capacity
+              TextFormField(
+                controller: _vehCapacityController,
                 decoration: const InputDecoration(
-                  labelText: 'Listing Intent',
-                  hintText: 'Select listing intent',
-                  prefixIcon: Icon(Icons.sell_outlined),
+                  labelText: 'Capacity / Payload Specification',
+                  hintText: 'e.g. 20 Tons Tipper, 2.5 Tons Payload, 7 Seats',
+                  prefixIcon: Icon(Icons.scale_rounded),
                 ),
-                selectedItemBuilder: (context) {
-                  return const [
-                    Text('Daily / Weekly Rental', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
-                    Text('Ride-Hailing Fleet', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
-                    Text('Vehicle for Sale', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w600)),
-                  ];
-                },
-                items: const [
-                  DropdownMenuItem(
-                    value: 'rental',
-                    child: Text('Daily / Weekly Rental', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
-                  ),
-                  DropdownMenuItem(
-                    value: 'ride_hailing',
-                    child: Text('Ride-Hailing Fleet', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
-                  ),
-                  DropdownMenuItem(
-                    value: 'sale',
-                    child: Text('Vehicle for Sale', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w500)),
-                  ),
-                ],
-                onChanged: (v) {
-                  if (v != null) setState(() => _vehIntent = v);
-                },
               ),
               const SizedBox(height: 16),
 
@@ -964,8 +946,8 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Pricing based on intent
-              if (_vehIntent == 'rental')
+              // Pricing based on commercial category
+              if (_vehType == 'car_rental')
                 TextFormField(
                   controller: _vehPricePerDayController,
                   keyboardType: TextInputType.number,
@@ -977,12 +959,25 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                       ? 'Rental rate required'
                       : null,
                 )
-              else if (_vehIntent == 'ride_hailing')
+              else if (_vehType == 'sand_dump_truck' || _vehType == 'container_freight_truck')
                 TextFormField(
                   controller: _vehPricePerKmController,
                   keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: _vehType == 'sand_dump_truck'
+                        ? 'Rate per Quarry Trip / Haulage (SLE)'
+                        : 'Rate per Port Container Haulage (SLE)',
+                    prefixText: 'SLE  ',
+                  ),
+                  validator: (v) =>
+                      v == null || v.trim().isEmpty ? 'Haulage rate required' : null,
+                )
+              else if (_vehType == 'delivery_van')
+                TextFormField(
+                  controller: _vehPricePerDayController,
+                  keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
-                    labelText: 'Rate per Km (SLE)',
+                    labelText: 'Delivery Van Daily / Trip Rate (SLE)',
                     prefixText: 'SLE  ',
                   ),
                   validator: (v) =>
@@ -993,7 +988,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                   controller: _vehSalePriceController,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
-                    labelText: 'Sale Price (SLE)',
+                    labelText: 'Vehicle Sale Price (SLE)',
                     prefixText: 'SLE  ',
                   ),
                   validator: (v) =>
@@ -1757,29 +1752,6 @@ class _ReviewRow extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Represents a media item in the multi-image staging pipeline
-class StagedMediaItem {
-  final String id;
-  final String slotLabel;
-  final Uint8List? localBytes;
-  final String? localPath;
-  String? storageId;
-  String? remoteUrl;
-  bool isUploading;
-  String? error;
-
-  StagedMediaItem({
-    required this.id,
-    required this.slotLabel,
-    this.localBytes,
-    this.localPath,
-    this.storageId,
-    this.remoteUrl,
-    this.isUploading = false,
-    this.error,
-  });
 }
 
 /// Custom painter for dashed borders (used in empty upload staging & add tile)

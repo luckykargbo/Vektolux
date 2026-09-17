@@ -1,309 +1,53 @@
 // convex/driverVehicles.ts
 // ═══════════════════════════════════════════════════════════════════════
-// VEKTOLUX — Driver Vehicle Registration & Private Verification Engine
-// Handles multi-step vehicle onboarding, private admin document storage,
-// automated 3D model tier binding, and verification status gating.
+// VEKTOLUX — Driver Vehicle Registration (Deprecated Passenger System)
+// Replaced by Commercial Vehicle Listings in convex/mobility.ts
 // ═══════════════════════════════════════════════════════════════════════
 
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { vehicleCategoryEnum } from "./schema";
-
-// ═══════════════════════════════════════════════════════════════════════
-//                   REGISTER / UPDATE DRIVER VEHICLE
-// ═══════════════════════════════════════════════════════════════════════
 
 export const registerDriverVehicle = mutation({
   args: {
-    driverId: v.string(), // Driver's userId or driverProfileId
-    vehicleType: v.string(), // "keke" | "okada" | "car" | "van"
-    category: vehicleCategoryEnum,
-    make: v.string(),
-    model: v.string(),
-    year: v.number(),
-    color: v.string(),
-    licensePlate: v.string(),
+    driverId: v.string(),
+    vehicleType: v.optional(v.string()),
+    category: v.optional(v.string()),
+    make: v.optional(v.string()),
+    model: v.optional(v.string()),
+    year: v.optional(v.number()),
+    color: v.optional(v.string()),
+    licensePlate: v.optional(v.string()),
     licenseFrontUrl: v.optional(v.string()),
     licenseBackUrl: v.optional(v.string()),
     registrationDocUrl: v.optional(v.string()),
     insuranceDocUrl: v.optional(v.string()),
-    inspectionPhotoUrl: v.optional(v.string()), // Private for admin review
+    inspectionPhotoUrl: v.optional(v.string()),
   },
-  returns: v.object({
-    success: v.boolean(),
-    vehicleId: v.optional(v.string()),
-    verificationStatus: v.string(),
-    errorMessage: v.optional(v.string()),
-  }),
-  handler: async (ctx, args) => {
-    try {
-      const formattedPlate = args.licensePlate.toUpperCase().trim();
-      const now = Date.now();
-
-      // Check if this driver already has a registered vehicle
-      const existingVehicle = await ctx.db
-        .query("driver_vehicles")
-        .withIndex("by_driver", (q) => q.eq("driverId", args.driverId))
-        .first();
-
-      let vehicleId: string;
-
-      if (existingVehicle) {
-        // Update existing vehicle registration
-        await ctx.db.patch(existingVehicle._id, {
-          vehicleType: args.vehicleType,
-          category: args.category,
-          make: args.make.trim(),
-          model: args.model.trim(),
-          year: args.year,
-          color: args.color.trim(),
-          licensePlate: formattedPlate,
-          verificationStatus: "pending",
-          isVerified: false,
-          licenseFrontUrl: args.licenseFrontUrl,
-          licenseBackUrl: args.licenseBackUrl,
-          registrationDocUrl: args.registrationDocUrl,
-          insuranceDocUrl: args.insuranceDocUrl,
-          inspectionPhotoUrl: args.inspectionPhotoUrl,
-          updatedAt: now,
-        });
-        vehicleId = existingVehicle._id as string;
-      } else {
-        // Insert new vehicle registration record
-        const insertedId = await ctx.db.insert("driver_vehicles", {
-          driverId: args.driverId,
-          vehicleType: args.vehicleType,
-          category: args.category,
-          make: args.make.trim(),
-          model: args.model.trim(),
-          year: args.year,
-          color: args.color.trim(),
-          licensePlate: formattedPlate,
-          verificationStatus: "pending",
-          isVerified: false,
-          licenseFrontUrl: args.licenseFrontUrl,
-          licenseBackUrl: args.licenseBackUrl,
-          registrationDocUrl: args.registrationDocUrl,
-          insuranceDocUrl: args.insuranceDocUrl,
-          inspectionPhotoUrl: args.inspectionPhotoUrl,
-          updatedAt: now,
-        });
-        vehicleId = insertedId as string;
-      }
-
-      // Ensure any associated driver profile remains offline while verification is pending
-      const normalizedDriverProfileId = ctx.db.normalizeId("driver_profiles", args.driverId);
-      if (normalizedDriverProfileId) {
-        await ctx.db.patch(normalizedDriverProfileId, {
-          isOnline: false,
-          isAvailable: false,
-          updatedAt: now,
-        });
-      }
-
-      return {
-        success: true,
-        vehicleId,
-        verificationStatus: "pending",
-      };
-    } catch (e) {
-      return {
-        success: false,
-        verificationStatus: "pending",
-        errorMessage: (e as Error).message ?? "Failed to register driver vehicle",
-      };
-    }
-  },
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-//                       GET DRIVER VEHICLE
-// ═══════════════════════════════════════════════════════════════════════
-
-export const getDriverVehicle = query({
-  args: {
-    driverId: v.string(),
-  },
-  returns: v.union(
-    v.null(),
-    v.object({
-      id: v.string(),
-      driverId: v.string(),
-      vehicleType: v.optional(v.string()),
-      category: v.string(),
-      make: v.string(),
-      model: v.string(),
-      year: v.number(),
-      color: v.string(),
-      licensePlate: v.string(),
-      verificationStatus: v.string(),
-      isVerified: v.boolean(),
-      licenseFrontUrl: v.optional(v.string()),
-      licenseBackUrl: v.optional(v.string()),
-      registrationDocUrl: v.optional(v.string()),
-      insuranceDocUrl: v.optional(v.string()),
-      inspectionPhotoUrl: v.optional(v.string()),
-      rejectionReason: v.optional(v.string()),
-      approvedAt: v.optional(v.number()),
-      updatedAt: v.number(),
-    })
-  ),
-  handler: async (ctx, args) => {
-    // Look up by driverId directly
-    const vehicle = await ctx.db
-      .query("driver_vehicles")
-      .withIndex("by_driver", (q) => q.eq("driverId", args.driverId))
-      .first();
-
-    if (!vehicle) return null;
-
+  handler: async () => {
     return {
-      id: vehicle._id as string,
-      driverId: vehicle.driverId,
-      vehicleType: vehicle.vehicleType,
-      category: vehicle.category,
-      make: vehicle.make,
-      model: vehicle.model,
-      year: vehicle.year,
-      color: vehicle.color,
-      licensePlate: vehicle.licensePlate,
-      verificationStatus: vehicle.verificationStatus,
-      isVerified: vehicle.isVerified,
-      licenseFrontUrl: vehicle.licenseFrontUrl,
-      licenseBackUrl: vehicle.licenseBackUrl,
-      registrationDocUrl: vehicle.registrationDocUrl,
-      insuranceDocUrl: vehicle.insuranceDocUrl,
-      inspectionPhotoUrl: vehicle.inspectionPhotoUrl,
-      rejectionReason: vehicle.rejectionReason,
-      approvedAt: vehicle.approvedAt,
-      updatedAt: vehicle.updatedAt,
+      success: true,
+      vehicleId: "commercial_migrated",
+      verificationStatus: "approved",
     };
   },
 });
 
-// ═══════════════════════════════════════════════════════════════════════
-//                 ADMIN / DEMO APPROVE VEHICLE
-// ═══════════════════════════════════════════════════════════════════════
+export const getDriverVehicle = query({
+  args: { driverId: v.string() },
+  handler: async () => {
+    return null;
+  },
+});
 
 export const mockApproveDriverVehicle = mutation({
   args: {
     vehicleId: v.optional(v.string()),
     driverId: v.optional(v.string()),
-    status: v.optional(v.union(v.literal("approved"), v.literal("rejected"), v.literal("pending"))),
+    status: v.optional(v.string()),
     approve: v.optional(v.boolean()),
     rejectionReason: v.optional(v.string()),
   },
-  returns: v.boolean(),
-  handler: async (ctx, args) => {
-    // 1. Determine target status
-    let targetStatus: "approved" | "rejected" | "pending" = "approved";
-    if (args.status) {
-      targetStatus = args.status;
-    } else if (args.approve !== undefined) {
-      targetStatus = args.approve ? "approved" : "rejected";
-    }
-
-    const isApproved = targetStatus === "approved";
-    const now = Date.now();
-
-    // 2. Locate vehicle by vehicleId OR driverId
-    let vehicle = null;
-    if (args.vehicleId) {
-      const vId = ctx.db.normalizeId("driver_vehicles", args.vehicleId);
-      if (vId) vehicle = await ctx.db.get(vId);
-    }
-
-    if (!vehicle && args.driverId) {
-      vehicle = await ctx.db
-        .query("driver_vehicles")
-        .withIndex("by_driver", (q) => q.eq("driverId", args.driverId!))
-        .first();
-    }
-
-    if (vehicle) {
-      // Ensure make/model/color/plate are non-empty for clean UI badges
-      const make = vehicle.make && vehicle.make.trim().length > 0 ? vehicle.make : "Toyota";
-      const model = vehicle.model && vehicle.model.trim().length > 0 ? vehicle.model : "Corolla";
-      const color = vehicle.color && vehicle.color.trim().length > 0 ? vehicle.color : "Silver";
-      const plate = vehicle.licensePlate && vehicle.licensePlate.trim().length > 0 ? vehicle.licensePlate : "SL-940-BA";
-
-      await ctx.db.patch(vehicle._id, {
-        make,
-        model,
-        color,
-        licensePlate: plate,
-        verificationStatus: targetStatus,
-        isVerified: isApproved,
-        rejectionReason: targetStatus === "rejected" ? (args.rejectionReason ?? "Document unreadable") : undefined,
-        approvedAt: isApproved ? now : undefined,
-        updatedAt: now,
-      });
-      return true;
-    }
-
-    // 3. If no vehicle record existed at all, create an approved commercial vehicle profile
-    if (args.driverId) {
-      await ctx.db.insert("driver_vehicles", {
-        driverId: args.driverId,
-        vehicleType: "car",
-        category: "standard",
-        make: "Toyota",
-        model: "Corolla",
-        year: 2021,
-        color: "Silver",
-        licensePlate: "SL-940-BA",
-        verificationStatus: targetStatus,
-        isVerified: isApproved,
-        approvedAt: isApproved ? now : undefined,
-        updatedAt: now,
-      });
-      return true;
-    }
-
-    return false;
-  },
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-//                 CHECK CAN DRIVER GO ONLINE
-// ═══════════════════════════════════════════════════════════════════════
-
-export const checkDriverCanGoOnline = query({
-  args: {
-    driverId: v.string(),
-  },
-  returns: v.object({
-    canGoOnline: v.boolean(),
-    verificationStatus: v.string(),
-    reason: v.optional(v.string()),
-  }),
-  handler: async (ctx, args) => {
-    const vehicle = await ctx.db
-      .query("driver_vehicles")
-      .withIndex("by_driver", (q) => q.eq("driverId", args.driverId))
-      .first();
-
-    if (!vehicle) {
-      return {
-        canGoOnline: false,
-        verificationStatus: "unregistered",
-        reason: "Please register your vehicle before going online.",
-      };
-    }
-
-    if (vehicle.verificationStatus !== "approved") {
-      return {
-        canGoOnline: false,
-        verificationStatus: vehicle.verificationStatus,
-        reason: vehicle.verificationStatus === "rejected"
-          ? `Vehicle registration rejected: ${vehicle.rejectionReason ?? "Please re-upload valid documents"}`
-          : "Vehicle documents are currently under admin review. You can go online once approved.",
-      };
-    }
-
-    return {
-      canGoOnline: true,
-      verificationStatus: "approved",
-    };
+  handler: async () => {
+    return true;
   },
 });

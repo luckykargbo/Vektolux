@@ -52,13 +52,13 @@ class _ClientOnboardingTourModalState extends State<ClientOnboardingTourModal> {
     },
     {
       'step': '2 of 4',
-      'title': 'Instant Rides & Deliveries',
-      'highlight': 'Live GPS Tracking',
+      'title': 'Delivery Vans & Heavy Freight',
+      'highlight': 'Commercial Haulage',
       'description':
-          'Hail nearby Keke tricycles, Okada motorbikes, and standard taxis, or dispatch parcels door-to-door with real-time route navigation and arrival alerts.',
-      'icon': Icons.local_taxi_rounded,
+          'Book delivery vans for courier and moving, or hire sand/dump tippers and heavy container trucks for construction and port logistics across Sierra Leone.',
+      'icon': Icons.local_shipping_rounded,
       'accentColor': const Color(0xFFF59E0B),
-      'badge': 'KEKE • OKADA • TAXI',
+      'badge': 'DELIVERY VANS • DUMP TRUCKS • FREIGHT',
     },
     {
       'step': '3 of 4',
@@ -72,10 +72,10 @@ class _ClientOnboardingTourModalState extends State<ClientOnboardingTourModal> {
     },
     {
       'step': '4 of 4',
-      'title': 'Your Profile & Seller Mode',
+      'title': 'Your Profile & Vendor Portal',
       'highlight': 'Earn as a Partner',
       'description':
-          'Check ride receipts, manage security PINs, and upgrade your account to an Agent, Car Dealer, or Driver anytime by submitting your National ID or Passport.',
+          'Check transaction receipts, manage security PINs, and register commercial fleet assets or list properties as an Agent or Dealership anytime.',
       'icon': Icons.verified_user_rounded,
       'accentColor': const Color(0xFF8B5CF6),
       'badge': 'VERIFIED ACCOUNTS',

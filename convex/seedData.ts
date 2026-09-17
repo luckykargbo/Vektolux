@@ -345,8 +345,24 @@ export const seedDiscoveryData = mutation({
 
       for (const v of vehicleItems) {
         const geohash = encodeGeohash(v.latitude, v.longitude, 7);
+        const category = (v.listingIntent === "rental" ? "car_rental" :
+          (v.vehicleType as string) === "delivery_van" ? "delivery_van" : "car_sale") as
+          "car_sale" | "car_rental" | "delivery_van" | "sand_dump_truck" | "container_freight_truck";
+        const pricingType = category === "car_sale" ? "total_sale" : "per_day";
+        const price = v.salePrice ?? v.pricePerDay ?? 50000;
+        const title = `${v.year} ${v.make} ${v.model}`;
+
         await ctx.db.insert("vehicleListings", {
           ownerId: dealerUser._id,
+          title,
+          category,
+          price,
+          pricingType,
+          capacity: v.vehicleType === "delivery_van" ? "2.5 Tons Payload" : undefined,
+          location: "Freetown, Sierra Leone",
+          images: v.imageUrls,
+          status: "AVAILABLE",
+          createdAt: now,
           vehicleType: v.vehicleType,
           listingIntent: v.listingIntent,
           make: v.make,

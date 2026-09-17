@@ -1078,12 +1078,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 // ── 3. Partner & Vendor Upgrades (All Users) ─────────
                 _buildSectionHeader('BECOME A VEKTOLUX PARTNER'),
                 _buildPartnerCard(
-                  icon: Icons.local_taxi_rounded,
-                  title: 'Become a Driver / Keke Operator',
+                  icon: Icons.local_shipping_rounded,
+                  title: 'Register Commercial Vehicle or Fleet',
                   subtitle:
-                      'Earn with on-demand rides & deliveries across Sierra Leone',
-                  actionLabel: 'Register Vehicle',
-                  badgeText: role == UserRole.driver ? 'ACTIVE' : 'APPLY',
+                      'List delivery vans, tipper trucks & heavy freight for commercial haulage',
+                  actionLabel: 'Register Fleet',
+                  badgeText: role == UserRole.driver ? 'ACTIVE' : 'REGISTER',
                   isEnrolled: role == UserRole.driver,
                   onTap: () async {
                     final res = await Navigator.of(context).push<bool>(
@@ -1116,7 +1116,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   icon: Icons.directions_car_filled_rounded,
                   title: 'Sell Vehicles as Auto Dealer',
                   subtitle:
-                      'List showroom cars, kekes & fleet rentals with escrow',
+                      'List showroom cars, SUVs, pickups & fleet rentals with escrow',
                   actionLabel: 'Apply as Dealer',
                   badgeText: role == UserRole.merchant ? 'ACTIVE' : 'APPLY',
                   isEnrolled: role == UserRole.merchant,
@@ -1354,7 +1354,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       SwitchListTile(
                         secondary: const Icon(Icons.notifications_outlined, color: AppColors.gray500),
                         title: const Text('Push Notifications', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                        subtitle: const Text('Real-time driver & inspection alerts', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
+                        subtitle: const Text('Real-time order & inspection alerts', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
                         value: _pushNotifications,
                         activeThumbColor: AppColors.emerald,
                         onChanged: (val) => setState(() => _pushNotifications = val),
@@ -1381,7 +1381,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       _buildSettingsTile(
                         icon: Icons.school_outlined,
                         title: 'Interactive App Tour',
-                        subtitle: 'Learn how to hail rides, book homes, and pay with Agent 001',
+                        subtitle: 'Learn how to book properties, vehicles & freight with Agent 001',
                         trailing: const Icon(
                           Icons.arrow_forward_ios_rounded,
                           size: 14,
@@ -1698,7 +1698,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  isDriverMode ? Icons.local_taxi_rounded : Icons.person_rounded,
+                  isDriverMode ? Icons.local_shipping_rounded : Icons.person_rounded,
                   color: isDriverMode ? AppColors.emeraldDark : AppColors.obsidian,
                   size: 22,
                 ),
@@ -1709,7 +1709,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      isDriverMode ? 'Driver Workspace Active' : 'Passenger Mode Active',
+                      isDriverMode ? 'Fleet Operator Mode Active' : 'Client Mode Active',
                       style: const TextStyle(
                         fontSize: 14.5,
                         fontWeight: FontWeight.w800,
@@ -1719,8 +1719,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     const SizedBox(height: 2),
                     Text(
                       isDriverMode
-                          ? 'Receiving trip dispatches & telemetry'
-                          : 'Browsing super-app verticals & hailing rides',
+                          ? 'Managing commercial fleet, vans & heavy haulage'
+                          : 'Browsing properties, showroom vehicles & logistics',
                       style: const TextStyle(
                         fontSize: 11,
                         color: AppColors.textSecondary,
@@ -1738,7 +1738,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  isDriverMode ? 'DRIVER' : 'CLIENT',
+                  isDriverMode ? 'FLEET' : 'CLIENT',
                   style: const TextStyle(
                     color: AppColors.white,
                     fontSize: 10,
@@ -1767,7 +1767,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           context.read<AuthBloc>().add(const SwitchUserModeEvent('passenger'));
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                              content: Text('Switched to Passenger Mode'),
+                              content: Text('Switched to Client Mode'),
                               backgroundColor: AppColors.obsidian,
                               behavior: SnackBarBehavior.floating,
                               duration: Duration(seconds: 2),
@@ -1803,7 +1803,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                               const SizedBox(width: 6),
                               Text(
-                                'Passenger Mode',
+                                'Client Mode',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: !isDriverMode ? FontWeight.w800 : FontWeight.w600,
@@ -1823,7 +1823,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           context.read<AuthBloc>().add(const SwitchUserModeEvent('driver'));
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                              content: Text('Switched to Driver Workspace'),
+                              content: Text('Switched to Fleet Operator Mode'),
                               backgroundColor: AppColors.emerald,
                               behavior: SnackBarBehavior.floating,
                               duration: Duration(seconds: 2),
@@ -1853,13 +1853,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                Icons.local_taxi_rounded,
+                                Icons.local_shipping_rounded,
                                 size: 16,
                                 color: isDriverMode ? AppColors.white : AppColors.gray500,
                               ),
                               const SizedBox(width: 6),
                               Text(
-                                'Driver Workspace',
+                                'Fleet Operator',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: isDriverMode ? FontWeight.w800 : FontWeight.w600,
@@ -1891,7 +1891,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     icon: const Icon(Icons.app_registration_rounded, size: 16),
                     label: const Text(
-                      'Register Vehicle to Drive',
+                      'Register Commercial Vehicle',
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
                     ),
                     onPressed: () async {
@@ -2329,7 +2329,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             const SizedBox(height: 6),
             const Text(
-              'Submit your dealership registration to list cars for sale, kekes, and fleet rentals.',
+              'Submit your dealership registration to list cars for sale, delivery vans, and fleet rentals.',
               style: TextStyle(fontSize: 13, color: AppColors.gray500),
             ),
             const SizedBox(height: 16),

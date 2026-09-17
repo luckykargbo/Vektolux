@@ -26,6 +26,29 @@ class ConvexUploadResult {
   });
 }
 
+/// Represents a media item in the multi-image staging pipeline.
+class StagedMediaItem {
+  final String id;
+  final String slotLabel;
+  final Uint8List? localBytes;
+  final String? localPath;
+  String? storageId;
+  String? remoteUrl;
+  bool isUploading;
+  String? error;
+
+  StagedMediaItem({
+    required this.id,
+    required this.slotLabel,
+    this.localBytes,
+    this.localPath,
+    this.storageId,
+    this.remoteUrl,
+    this.isUploading = false,
+    this.error,
+  });
+}
+
 /// Image source selection options.
 enum ImageSourceOption { camera, gallery, multiGallery }
 

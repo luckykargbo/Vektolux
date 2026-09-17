@@ -1,8 +1,8 @@
 // lib/features/mobility/presentation/views/auto_marketplace_screen.dart
 // ═══════════════════════════════════════════════════════════════════════
-// VEKTOLUX — Auto Sales & Car Rental Vertical Marketplace
-// Filter tabs (Buy Cars, Rentals, Kekes, Heavy Duty), vehicle specs,
-// verified dealer credentials, and full vehicle detail & escrow routing.
+// VEKTOLUX — Auto Sales, Car Rental & Commercial Fleet Marketplace
+// Filter tabs (All, Car Sales, Rentals, Delivery Vans, Sand Dump Trucks, Container Freight),
+// vehicle specs, verified dealer credentials, and full vehicle detail & escrow routing.
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
@@ -44,10 +44,11 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
 
   final List<String> _tabs = [
     'All Vehicles',
-    'Buy Cars',
+    'Car Sales',
     'Car Rentals',
-    'Tricycles / Kekes',
-    'Heavy Duty / Vans',
+    'Delivery Vans',
+    'Sand Dump Trucks',
+    'Container Freight',
   ];
 
   @override
@@ -101,6 +102,7 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
         _allVehicles = cached
             .map((v) => {
                   '_id': v.id,
+                  'title': '${v.year} ${v.make} ${v.model}',
                   'make': v.make,
                   'model': v.model,
                   'year': v.year,
@@ -110,6 +112,7 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                       v.primaryImageUrl != null ? [v.primaryImageUrl!] : [],
                   'vehicleType': v.vehicleType,
                   'listingIntent': v.listingIntent,
+                  'category': v.listingIntent == 'rental' ? 'car_rental' : 'car_sale',
                   'transmission': 'Automatic',
                   'fuelType': 'Petrol',
                 })
@@ -124,44 +127,60 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
     final query = _searchController.text.trim().toLowerCase();
 
     return _allVehicles.where((item) {
+      final category = (item['category'] as String? ?? '').toLowerCase();
+      final title = (item['title'] as String? ?? '').toLowerCase();
       final make = (item['make'] as String? ?? '').toLowerCase();
       final model = (item['model'] as String? ?? '').toLowerCase();
+      final capacity = (item['capacity'] as String? ?? '').toLowerCase();
+      final location = (item['location'] as String? ?? '').toLowerCase();
       final type = (item['vehicleType'] as String? ?? '').toLowerCase();
       final intent = (item['listingIntent'] as String? ?? '').toLowerCase();
-      final hasRental = item['pricePerDay'] != null;
 
       // 1. Tab filter
       if (tabIndex == 1) {
-        // Buy Cars: sale intent & car/taxi
-        if (intent == 'rental' || type == 'bike' || type == 'delivery_van') {
+        // Car Sales
+        if (category.isNotEmpty) {
+          if (category != 'car_sale') return false;
+        } else if (intent == 'rental' || type == 'delivery_van' || type == 'truck') {
           return false;
         }
       } else if (tabIndex == 2) {
-        // Car Rentals: rental intent or has daily rate
-        if (!hasRental && intent != 'rental') return false;
+        // Car Rentals
+        if (category.isNotEmpty) {
+          if (category != 'car_rental') return false;
+        } else if (intent != 'rental') {
+          return false;
+        }
       } else if (tabIndex == 3) {
-        // Tricycles / Kekes
-        if (!model.contains('keke') &&
-            !model.contains('re') &&
-            !make.contains('bajaj') &&
-            !model.contains('okada') &&
-            !model.contains('boxer') &&
-            type != 'bike') {
+        // Delivery Vans
+        if (category.isNotEmpty) {
+          if (category != 'delivery_van') return false;
+        } else if (type != 'delivery_van' && !title.contains('van') && !model.contains('van')) {
           return false;
         }
       } else if (tabIndex == 4) {
-        // Heavy Duty / Vans
-        if (type != 'delivery_van' &&
-            type != 'truck' &&
-            !model.contains('van') &&
-            !model.contains('hiace')) {
+        // Sand Dump Trucks
+        if (category.isNotEmpty) {
+          if (category != 'sand_dump_truck') return false;
+        } else if (!title.contains('tipper') && !title.contains('dump') && !title.contains('sand') && !model.contains('tipper') && type != 'truck') {
+          return false;
+        }
+      } else if (tabIndex == 5) {
+        // Container Freight Trucks
+        if (category.isNotEmpty) {
+          if (category != 'container_freight_truck') return false;
+        } else if (!title.contains('container') && !title.contains('flatbed') && !title.contains('freight')) {
           return false;
         }
       }
 
       // 2. Search query filter
       if (query.isNotEmpty) {
-        if (!make.contains(query) && !model.contains(query)) {
+        if (!title.contains(query) &&
+            !make.contains(query) &&
+            !model.contains(query) &&
+            !capacity.contains(query) &&
+            !location.contains(query)) {
           return false;
         }
       }
@@ -358,20 +377,46 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
   }
 
   Widget _buildVehicleListItem(Map<String, dynamic> item) {
+    final category = item['category'] as String? ?? 'car_sale';
+    final title = (item['title'] as String? ?? '').isNotEmpty
+        ? item['title'] as String
+        : '${item['year'] ?? 2022} ${item['make'] ?? "Toyota"} ${item['model'] ?? "RAV4"}';
     final make = item['make'] as String? ?? 'Toyota';
     final model = item['model'] as String? ?? 'RAV4';
-    final year = item['year'] as int? ?? 2021;
-    final price = (item['salePrice'] as num?)?.toDouble() ?? 145000.0;
+    final year = item['year'] as int? ?? 2022;
+    final price = (item['price'] as num?)?.toDouble() ??
+        (item['salePrice'] as num?)?.toDouble() ??
+        145000.0;
     final dailyRate = (item['pricePerDay'] as num?)?.toDouble();
-    final images = (item['imageUrls'] as List?)?.cast<String>() ?? [];
+    final pricingType = item['pricingType'] as String? ??
+        (dailyRate != null && dailyRate > 0 ? 'per_day' : 'total_sale');
+    final capacity = item['capacity'] as String?;
+    final images = (item['images'] as List?)?.cast<String>() ??
+        (item['imageUrls'] as List?)?.cast<String>() ??
+        [];
     final imageUrl = images.isNotEmpty ? images.first : null;
     final transmission = item['transmission'] as String? ?? 'Automatic';
     final fuel = item['fuelType'] as String? ?? 'Petrol';
-    final vehicleType = item['vehicleType'] as String? ?? 'taxi';
     final ownerId = item['ownerId'] as String?;
-    final isDeliveryVan = vehicleType == 'delivery_van' ||
-        model.toLowerCase().contains('van') ||
-        model.toLowerCase().contains('hiace');
+    final isDeliveryVan = category == 'delivery_van';
+
+    String priceText;
+    if (pricingType == 'per_trip') {
+      priceText = 'SLE ${_currencyFormat.format(price)} / trip';
+    } else if (pricingType == 'per_day' || (dailyRate != null && dailyRate > 0)) {
+      priceText = 'SLE ${_currencyFormat.format(dailyRate ?? price)} / day';
+    } else {
+      priceText = 'SLE ${_currencyFormat.format(price)} Total';
+    }
+
+    final categoryLabel = switch (category) {
+      'car_sale' => 'CAR SALE',
+      'car_rental' => 'CAR RENTAL',
+      'delivery_van' => 'DELIVERY VAN',
+      'sand_dump_truck' => 'SAND TIPPER',
+      'container_freight_truck' => 'CONTAINER TRUCK',
+      _ => 'COMMERCIAL',
+    };
 
     return GestureDetector(
       onTap: () {
@@ -382,10 +427,10 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
               make: make,
               model: model,
               year: year,
-              vehicleType: item['vehicleType'] as String? ?? 'taxi',
-              listingIntent: item['listingIntent'] as String? ?? 'sale',
+              vehicleType: category,
+              listingIntent: pricingType == 'per_day' ? 'rental' : 'sale',
               salePrice: price,
-              pricePerDay: dailyRate,
+              pricePerDay: dailyRate ?? (pricingType == 'per_day' ? price : null),
               imageUrls: images,
               ownerId: item['ownerId'] as String?,
               ownerName: item['ownerName'] as String?,
@@ -423,8 +468,8 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                     height: 180,
                     width: double.infinity,
                     fit: BoxFit.cover,
-                    fallbackIcon: Icons.directions_car_rounded,
-                    fallbackLabel: 'VEKTOLUX FLEET',
+                    fallbackIcon: Icons.local_shipping_rounded,
+                    fallbackLabel: 'VEKTOLUX COMMERCIAL',
                   ),
                 ),
                 // Price Chip
@@ -439,9 +484,7 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      dailyRate != null && dailyRate > 0
-                          ? 'SLE ${_currencyFormat.format(dailyRate)} / day'
-                          : 'SLE ${_currencyFormat.format(price)}',
+                      priceText,
                       style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
@@ -450,7 +493,7 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                     ),
                   ),
                 ),
-                // Year Tag
+                // Category Tag
                 Positioned(
                   top: 12,
                   right: 12,
@@ -458,15 +501,16 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                     padding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.6),
+                      color: AppColors.emeraldDark.withValues(alpha: 0.85),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
-                      '$year MODEL',
+                      categoryLabel,
                       style: const TextStyle(
                         fontSize: 10,
-                        fontWeight: FontWeight.w700,
+                        fontWeight: FontWeight.w800,
                         color: Colors.white,
+                        letterSpacing: 0.5,
                       ),
                     ),
                   ),
@@ -481,7 +525,7 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '$year $make $model',
+                    title,
                     style: const TextStyle(
                       fontFamily: 'Poppins',
                       fontSize: 16,
@@ -492,12 +536,14 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 6),
-                  Row(
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
                     children: [
+                      if (capacity != null && capacity.isNotEmpty)
+                        _buildSpecChip(Icons.scale_rounded, capacity),
                       _buildSpecChip(Icons.settings_outlined, transmission),
-                      const SizedBox(width: 8),
                       _buildSpecChip(Icons.local_gas_station_outlined, fuel),
-                      const SizedBox(width: 8),
                       _buildSpecChip(Icons.verified_outlined, 'Inspected'),
                     ],
                   ),

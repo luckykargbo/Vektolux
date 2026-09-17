@@ -386,21 +386,6 @@ async function updateBookingPaymentStatus(
       }
       break;
     }
-    case "ride_hailing":
-    case "ride": {
-      const rId = ctx.db.normalizeId("rideRequests", referenceId);
-      if (rId) {
-        const ride = await ctx.db.get(rId);
-        if (ride) {
-          await ctx.db.patch(ride._id, {
-            paymentStatus: "completed",
-            paymentReference,
-            updatedAt: now,
-          });
-        }
-      }
-      break;
-    }
     default:
       break;
   }

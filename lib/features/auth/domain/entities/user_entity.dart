@@ -7,27 +7,27 @@ import 'package:equatable/equatable.dart';
 
 /// User roles available in the Vektolux platform.
 enum UserRole {
-  client,     // Regular Client / Traveler
+  client,     // Regular Client / Buyer
   agent,      // Real Estate Agent / Property Owner
-  merchant,   // Vehicle Merchant / Fleet Operator
-  driver,     // On-demand ride-hailing Driver Node
+  merchant,   // Vehicle Merchant / Auto Dealership
+  driver,     // Commercial Fleet & Logistics Operator
   admin,      // Platform administrator
 }
 
 extension UserRoleX on UserRole {
   String get displayName => switch (this) {
-    UserRole.client => 'Client / Traveler',
+    UserRole.client => 'Client / Buyer',
     UserRole.agent => 'Real Estate Agent',
     UserRole.merchant => 'Vehicle Merchant',
-    UserRole.driver => 'Driver Node',
+    UserRole.driver => 'Fleet & Logistics Operator',
     UserRole.admin => 'Administrator',
   };
 
   String get description => switch (this) {
-    UserRole.client => 'Book rides, guest houses, buy items',
+    UserRole.client => 'Explore properties, buy vehicles & book logistics',
     UserRole.agent => 'List houses for sale, rent, or hourly guest houses',
-    UserRole.merchant => 'List cars/trucks for sale or rental',
-    UserRole.driver => 'Accept ride-hailing requests',
+    UserRole.merchant => 'List cars, vans & trucks for sale or rental',
+    UserRole.driver => 'Manage commercial delivery vans & heavy trucks',
     UserRole.admin => 'Platform management',
   };
 
@@ -35,7 +35,7 @@ extension UserRoleX on UserRole {
     UserRole.client => 'person',
     UserRole.agent => 'home_work',
     UserRole.merchant => 'directions_car',
-    UserRole.driver => 'local_taxi',
+    UserRole.driver => 'local_shipping',
     UserRole.admin => 'admin_panel_settings',
   };
 

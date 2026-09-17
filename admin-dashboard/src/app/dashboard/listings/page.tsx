@@ -91,7 +91,11 @@ export default function ListingsPage() {
   const filterOptions = [
     { value: "all", label: "All" },
     { value: "property", label: "Properties" },
-    { value: "vehicle", label: "Vehicles" },
+    { value: "car_sale", label: "Car Sales" },
+    { value: "car_rental", label: "Auto Rentals" },
+    { value: "delivery_van", label: "Delivery Vans" },
+    { value: "sand_dump_truck", label: "Sand Dump Trucks" },
+    { value: "container_freight_truck", label: "Container Freight" },
   ];
 
   return (

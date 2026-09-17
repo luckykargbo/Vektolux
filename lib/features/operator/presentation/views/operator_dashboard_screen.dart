@@ -16,7 +16,6 @@ import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../auth/presentation/bloc/auth_event.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
-import '../../../mobility/presentation/views/driver_portal_screen.dart';
 import '../../../mobility/presentation/views/driver_vehicle_registration_screen.dart';
 
 class OperatorDashboardScreen extends StatefulWidget {
@@ -126,7 +125,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                         ),
                         child: Icon(
                           currentWorkspace == UserRole.driver
-                              ? Icons.local_taxi_rounded
+                              ? Icons.local_shipping_rounded
                               : currentWorkspace == UserRole.agent
                                   ? Icons.apartment_rounded
                                   : Icons.directions_car_filled_rounded,
@@ -150,7 +149,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                             const SizedBox(height: 4),
                             Text(
                               currentWorkspace == UserRole.driver
-                                  ? 'Accept on-demand rides & track SLE earnings'
+                                  ? 'Manage delivery vans, tippers & container freight'
                                   : currentWorkspace == UserRole.agent
                                       ? 'Manage property listings & schedule visits'
                                       : 'Manage showroom inventory & fleet rentals',
@@ -205,7 +204,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                       _buildWorkspaceTile(
                         icon: Icons.person_outline_rounded,
                         title: 'Client Discovery Mode',
-                        subtitle: 'Browse rides, properties, and vehicles',
+                        subtitle: 'Browse properties, commercial vehicles & equipment',
                         isActive: false,
                         onTap: () => Navigator.of(context).pop(),
                       ),
@@ -229,14 +228,14 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  //                      DRIVER WORKSPACE
+  //             COMMERCIAL FLEET & LOGISTICS WORKSPACE
   // ═══════════════════════════════════════════════════════════════════
 
   Widget _buildDriverSection(UserEntity? user) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildSectionHeader('LIVE DISPATCH RADAR'),
+        _buildSectionHeader('COMMERCIAL FLEET & FREIGHT DISPATCH'),
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -259,7 +258,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                   ),
                   const SizedBox(width: 8),
                   const Text(
-                    'DISPATCH BRIDGE READY',
+                    'LOGISTICS HUB ACTIVE',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w800,
@@ -271,7 +270,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
               ),
               const SizedBox(height: 10),
               const Text(
-                'Open your full-screen driver dispatch radar to toggle online, receive live ride broadcasts from passengers in Freetown, and navigate via GPS.',
+                'Register and manage commercial logistics assets: Delivery Vans, Sand/Dump Tipper Trucks, and Container Freight Trucks for commercial haulage across Sierra Leone.',
                 style: TextStyle(fontSize: 13, color: AppColors.gray600, height: 1.4),
               ),
               const SizedBox(height: 16),
@@ -286,21 +285,19 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  icon: const Icon(Icons.radar_rounded),
+                  icon: const Icon(Icons.add_circle_outline_rounded),
                   label: const Text(
-                    'Open Driver Dispatch Radar',
+                    'Register Commercial Vehicle / Truck',
                     style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
                   ),
                   onPressed: () {
-                    if (user != null) {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => DriverPortalScreen(
-                            currentUserId: user.id,
-                          ),
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => DriverVehicleRegistrationScreen(
+                          driverId: user?.id ?? '',
                         ),
-                      );
-                    }
+                      ),
+                    );
                   },
                 ),
               ),
@@ -308,11 +305,26 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
           ),
         ),
         const SizedBox(height: 16),
-        _buildSectionHeader('VEHICLE MANAGEMENT'),
+        _buildSectionHeader('FLEET CATEGORIES & CAPACITY'),
         _buildActionTile(
-          icon: Icons.directions_car_filled_rounded,
-          title: 'Update Vehicle & Documents',
-          subtitle: 'Keke, Okada, Taxi, or Van registration',
+          icon: Icons.local_shipping_rounded,
+          title: 'Sand / Dump Tipper Trucks',
+          subtitle: 'Quarry sand, aggregate & construction materials haulage',
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => DriverVehicleRegistrationScreen(
+                  driverId: user?.id ?? '',
+                ),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        _buildActionTile(
+          icon: Icons.airport_shuttle_rounded,
+          title: 'Cargo & Delivery Vans',
+          subtitle: 'Light & medium freight moving and courier logistics',
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute(
@@ -592,8 +604,8 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
         children: [
           _buildWorkspaceTabItem(
             role: UserRole.driver,
-            icon: Icons.local_taxi_rounded,
-            label: 'Driver',
+            icon: Icons.local_shipping_rounded,
+            label: 'Logistics',
             isSelected: activeWorkspace == UserRole.driver,
           ),
           _buildWorkspaceTabItem(

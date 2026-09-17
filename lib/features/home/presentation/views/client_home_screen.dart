@@ -1125,7 +1125,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'We couldn\'t find any listings or places matching "$query". Try searching for "Lumley", "Wilkinson", "Toyota", "Guesthouse", or "Keke".',
+                    'We couldn\'t find any listings or places matching "$query". Try searching for "Lumley", "Wilkinson", "Toyota", "Guesthouse", or "Dump Truck".',
                     textAlign: TextAlign.center,
                     style: const TextStyle(fontSize: 12, color: AppColors.gray500, height: 1.4),
                   ),
@@ -1332,18 +1332,18 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
             crossAxisSpacing: 12,
             childAspectRatio: 1.55,
             children: [
-              // 🛺 1. Ride Hail
+              // 🚚 1. Commercial Fleet & Freight
               _buildServiceCard(
-                title: 'Ride Hail',
-                subtitle: 'Keke • Okada • Taxi',
-                badgeText: 'INSTANT',
-                icon: Icons.local_taxi_rounded,
+                title: 'Fleet & Freight',
+                subtitle: 'Vans • Tippers • Trucks',
+                badgeText: 'LOGISTICS',
+                icon: Icons.local_shipping_rounded,
                 accentColor: AppColors.emerald,
                 gradientColors: [
                   const Color(0xFF065F46),
                   const Color(0xFF047857),
                 ],
-                onTap: () => MainNavigationShell.switchToTab(context, 1),
+                onTap: () => MainNavigationShell.switchToTab(context, 3),
               ),
 
               // 🏡 2. Real Estate
@@ -1734,9 +1734,9 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      SizedBox(height: 2),
-                      Text(
-                        'Cars, kekes & vans from verified Sierra Leone dealers',
+                      const SizedBox(height: 2),
+                      const Text(
+                        'Cars, vans & tipper trucks from verified Sierra Leone dealers',
                         style: TextStyle(fontSize: 12, color: AppColors.gray500),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,

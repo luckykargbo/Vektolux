@@ -325,8 +325,25 @@ export const quickSeedListings = mutation({
 
       for (const item of itemsToSeed) {
         const geohash = encodeGeohash(item.latitude, item.longitude, 7);
+        const category = (item.listingIntent === "rental" ? "car_rental" :
+          (item.vehicleType as string) === "delivery_van" ? "delivery_van" :
+          (item.vehicleType as string) === "truck" ? "sand_dump_truck" : "car_sale") as
+          "car_sale" | "car_rental" | "delivery_van" | "sand_dump_truck" | "container_freight_truck";
+        const pricingType = category === "car_sale" ? "total_sale" : category === "car_rental" ? "per_day" : "per_trip";
+        const price = item.salePrice ?? item.pricePerDay ?? 50000;
+        const title = `${item.year} ${item.make} ${item.model}`;
+
         await ctx.db.insert("vehicleListings", {
           ownerId: adminUser._id,
+          title,
+          category,
+          price,
+          pricingType,
+          capacity: item.vehicleType === "delivery_van" ? "2 Tons Payload" : item.vehicleType === "truck" ? "20 Tons Tipper" : undefined,
+          location: `${targetCity}, Sierra Leone`,
+          images: item.imageUrls,
+          status: "AVAILABLE",
+          createdAt: now,
           vehicleType: item.vehicleType,
           listingIntent: item.listingIntent,
           make: item.make,
@@ -364,7 +381,7 @@ export const quickSeedListings = mutation({
 
 export const getAdminListings = query({
   args: {
-    vertical: v.optional(v.union(v.literal("property"), v.literal("vehicle"), v.literal("all"))),
+    vertical: v.optional(v.string()),
   },
   returns: v.array(
     v.object({
@@ -395,7 +412,9 @@ export const getAdminListings = query({
     }> = [];
 
     const fetchProperties = !args.vertical || args.vertical === "property" || args.vertical === "all";
-    const fetchVehicles = !args.vertical || args.vertical === "vehicle" || args.vertical === "all";
+    const fetchVehicles = !args.vertical || args.vertical === "vehicle" || args.vertical === "all" ||
+      args.vertical === "car_sale" || args.vertical === "car_rental" || args.vertical === "delivery_van" ||
+      args.vertical === "sand_dump_truck" || args.vertical === "container_freight_truck";
 
     if (fetchProperties) {
       const properties = await ctx.db.query("realEstateListings").order("desc").take(50);
@@ -418,17 +437,27 @@ export const getAdminListings = query({
     if (fetchVehicles) {
       const vehicles = await ctx.db.query("vehicleListings").order("desc").take(50);
       for (const v of vehicles) {
+        if (args.vertical && ["car_sale", "car_rental", "delivery_van", "sand_dump_truck", "container_freight_truck"].includes(args.vertical)) {
+          if (v.category !== args.vertical) continue;
+        }
+        const img = (v.images && v.images[0]) || (v.imageUrls && v.imageUrls[0]) || "";
+        const categoryLabel = (v.category ?? v.vehicleType ?? "commercial")
+          .replace(/_/g, " ")
+          .replace(/\b\w/g, (c: string) => c.toUpperCase());
+        const pricingLabel = v.pricingType ? ` • ${v.pricingType.replace(/_/g, " ")}` : "";
+        const capacityLabel = v.capacity ? ` • ${v.capacity}` : "";
+
         results.push({
           id: v._id as string,
           type: "vehicle",
-          title: `${v.year} ${v.make} ${v.model}`,
-          subtitle: `${v.vehicleType} • ${v.listingIntent}`,
-          price: v.salePrice ?? v.pricePerDay ?? 0,
+          title: v.title || `${v.year ?? 2024} ${v.make ?? ""} ${v.model ?? ""}`.trim(),
+          subtitle: `${categoryLabel}${capacityLabel}${pricingLabel}`,
+          price: v.price ?? v.salePrice ?? v.pricePerDay ?? 0,
           currency: v.currency ?? "SLE",
-          city: "Sierra Leone",
-          isPublished: v.isPublished ?? true,
-          imageUrl: v.imageUrls[0] ?? "",
-          createdAt: v._creationTime,
+          city: v.location || "Sierra Leone",
+          isPublished: v.isPublished ?? (v.status === "AVAILABLE"),
+          imageUrl: img,
+          createdAt: v.createdAt ?? v._creationTime,
         });
       }
     }

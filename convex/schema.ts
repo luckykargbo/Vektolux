@@ -79,6 +79,27 @@ export const listingIntent = v.union(
   v.literal("sale")
 );
 
+export const commercialVehicleCategory = v.union(
+  v.literal("car_sale"),
+  v.literal("car_rental"),
+  v.literal("delivery_van"),
+  v.literal("sand_dump_truck"),
+  v.literal("container_freight_truck")
+);
+
+export const commercialPricingType = v.union(
+  v.literal("total_sale"),
+  v.literal("per_day"),
+  v.literal("per_trip")
+);
+
+export const commercialVehicleStatus = v.union(
+  v.literal("AVAILABLE"),
+  v.literal("BOOKED"),
+  v.literal("SOLD"),
+  v.literal("TAKEN_DOWN")
+);
+
 export const rideStatus = v.union(
   v.literal("requested"),
   v.literal("accepted"),
@@ -352,102 +373,60 @@ export default defineSchema({
     .index("by_listing_time", ["listingId", "startTime"])
     .index("by_buyer_status", ["buyerId", "paymentStatus"]),
 
-  // ─── VEHICLE LISTINGS ─────────────────────────────────────────────
+  // ─── VEHICLE LISTINGS (COMMERCIAL FLEET & DEALERSHIP) ──────────────
   vehicleListings: defineTable({
     ownerId: v.id("users"),
-    vehicleType: vehicleType,
-    listingIntent: listingIntent,
+    title: v.string(),
+    category: commercialVehicleCategory,
+    price: v.number(),
+    pricingType: commercialPricingType,
+    capacity: v.optional(v.string()), // e.g. "20 Tons", "12 Cubic Meters", "2.5 Tons Payload"
+    location: v.string(),
+    images: v.array(v.string()),
+    status: commercialVehicleStatus,
+    createdAt: v.number(),
 
-    // Vehicle details
-    make: v.string(),
-    model: v.string(),
-    year: v.number(),
+    // Detailed vehicle specs & options
+    make: v.optional(v.string()),
+    model: v.optional(v.string()),
+    year: v.optional(v.number()),
     color: v.optional(v.string()),
     licensePlate: v.optional(v.string()),
-    imageUrls: v.array(v.string()),
+    mileage: v.optional(v.string()),
+    transmission: v.optional(v.string()), // Automatic | Manual
+    fuelType: v.optional(v.string()), // Petrol | Diesel | Electric | Hybrid
+    serviceArea: v.optional(v.string()),
+    description: v.optional(v.string()),
+    contactPhone: v.optional(v.string()),
+    privateContactPhone: v.optional(v.string()),
+    currency: v.optional(v.string()),
 
-    // Pricing
+    // Backwards compatibility fields
+    vehicleType: v.optional(v.string()),
+    listingIntent: v.optional(v.string()),
+    imageUrls: v.optional(v.array(v.string())),
     pricePerKm: v.optional(v.number()),
     pricePerDay: v.optional(v.number()),
     salePrice: v.optional(v.number()),
-    currency: v.string(),
-
-    // Location
-    latitude: v.number(),
-    longitude: v.number(),
-    geohash: v.string(),
-
-    // Status
-    availabilityStatus: availabilityStatus,
+    latitude: v.optional(v.number()),
+    longitude: v.optional(v.number()),
+    geohash: v.optional(v.string()),
+    availabilityStatus: v.optional(v.string()),
     isPublished: v.optional(v.boolean()),
-    privateContactPhone: v.optional(v.string()),
     isDeleted: v.optional(v.boolean()),
 
     // Metadata
     updatedAt: v.number(),
   })
     .index("by_owner", ["ownerId"])
-    .index("by_type_intent", ["vehicleType", "listingIntent"])
-    .index("by_geohash", ["geohash"])
-    .index("by_availability_intent", ["availabilityStatus", "listingIntent"])
-    .index("by_type_availability", ["vehicleType", "availabilityStatus"])
-    .index("by_published", ["isPublished", "availabilityStatus"])
-    .searchIndex("search_vehicle", {
-      searchField: "make",
-      filterFields: ["vehicleType", "listingIntent", "availabilityStatus"],
-    }),
-
-  // ─── RIDE REQUESTS ────────────────────────────────────────────────
-  rideRequests: defineTable({
-    passengerId: v.id("users"),
-    driverId: v.optional(v.id("users")),
-    vehicleId: v.optional(v.id("vehicleListings")),
-
-    // Pickup
-    pickupLat: v.number(),
-    pickupLng: v.number(),
-    pickupGeohash: v.string(),
-    pickupAddress: v.optional(v.string()),
-
-    // Dropoff
-    dropoffLat: v.number(),
-    dropoffLng: v.number(),
-    dropoffAddress: v.optional(v.string()),
-
-    // Fare
-    distanceKm: v.number(),
-    estimatedDurationMin: v.number(),
-    fareAmount: v.number(),
-    currency: v.string(),
-    platformFee: v.number(),
-    driverPayout: v.number(),
-
-    // Status
-    status: rideStatus,
-    paymentStatus: paymentStatus,
-    paymentReference: v.optional(v.string()),
-
-    // Blockchain
-    blockchainLogHash: v.optional(v.string()),
-
-    // Timestamps
-    acceptedAt: v.optional(v.number()),
-    arrivedAt: v.optional(v.number()),
-    startedAt: v.optional(v.number()),
-    completedAt: v.optional(v.number()),
-    cancelledAt: v.optional(v.number()),
-    cancelReason: v.optional(v.string()),
-
-    // Metadata
-    updatedAt: v.number(),
-  })
-    .index("by_passenger", ["passengerId"])
-    .index("by_driver", ["driverId"])
+    .index("by_category", ["category"])
     .index("by_status", ["status"])
-    .index("by_driver_status", ["driverId", "status"])
-    .index("by_passenger_status", ["passengerId", "status"])
-    .index("by_pickup_geohash", ["pickupGeohash"])
-    .index("by_payment_status", ["paymentStatus"]),
+    .index("by_category_status", ["category", "status"])
+    .index("by_published", ["isPublished", "status"])
+    .searchIndex("search_vehicle", {
+      searchField: "title",
+      filterFields: ["category", "status"],
+    }),
 
   // ─── WALLET BALANCES ──────────────────────────────────────────────
   walletBalances: defineTable({
@@ -655,107 +634,6 @@ export default defineSchema({
     .index("by_idempotency_key", ["idempotencyKey"])
     .index("by_user", ["userId"])
     .index("by_check", ["checkId"]),
-
-  // ─── ON-DEMAND RIDE-HAILING & DELIVERY ENGINE ───────────────────────
-
-  // 1. Driver Profiles (Real-time availability, tracking, and services)
-  driver_profiles: defineTable({
-    userId: v.id("users"),
-    isOnline: v.boolean(),
-    isAvailable: v.boolean(),
-    driver_status: v.optional(v.union(v.literal("offline"), v.literal("online"), v.literal("busy"))),
-    serviceType: serviceTypeEnum, // "ride" | "delivery" | "both"
-    currentLat: v.number(),
-    currentLng: v.number(),
-    heading: v.optional(v.number()),
-    speed: v.optional(v.number()),
-    currentGeohash: v.string(), // Spatial indexing cell (precision 5 or 6)
-    lastLocationUpdate: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_user", ["userId"])
-    .index("by_geohash", ["currentGeohash"])
-    .index("by_online_available", ["isOnline", "isAvailable"])
-    .index("by_service_status", ["serviceType", "isOnline", "isAvailable"]),
-
-  // 2. Driver Vehicles (Registered vehicle metadata, categories & verification)
-  driver_vehicles: defineTable({
-    driverId: v.string(), // Can be driver_profile ID or user ID
-    vehicleType: v.optional(v.string()), // "keke" | "okada" | "car" | "van"
-    make: v.string(),
-    model: v.string(),
-    year: v.number(),
-    color: v.string(),
-    licensePlate: v.string(),
-    category: vehicleCategoryEnum,
-    verificationStatus: v.union(
-      v.literal("pending"),
-      v.literal("approved"),
-      v.literal("rejected")
-    ),
-    isVerified: v.boolean(),
-    licenseFrontUrl: v.optional(v.string()),
-    licenseBackUrl: v.optional(v.string()),
-    registrationDocUrl: v.optional(v.string()),
-    insuranceDocUrl: v.optional(v.string()),
-    inspectionPhotoUrl: v.optional(v.string()), // Private for admin only
-    documentUrls: v.optional(v.record(v.string(), v.string())),
-    rejectionReason: v.optional(v.string()),
-    approvedAt: v.optional(v.number()),
-    updatedAt: v.number(),
-  })
-    .index("by_driver", ["driverId"])
-    .index("by_license_plate", ["licensePlate"])
-    .index("by_category", ["category"])
-    .index("by_verification_status", ["verificationStatus"]),
-
-  // 3. Trips & Deliveries (Lifecycle bookings for rides & package couriers)
-  trips_deliveries: defineTable({
-    passengerId: v.id("users"),
-    driverId: v.optional(v.id("driver_profiles")),
-    vehicleId: v.optional(v.id("driver_vehicles")),
-    serviceType: v.union(v.literal("ride"), v.literal("delivery")),
-    pickupLat: v.number(),
-    pickupLng: v.number(),
-    pickupAddressText: v.string(),
-    pickupGeohash: v.string(),
-    dropoffLat: v.number(),
-    dropoffLng: v.number(),
-    dropoffAddressText: v.string(),
-    status: tripDeliveryStatusEnum,
-    fareAmount: v.number(),
-    currency: v.string(),
-    paymentMethod: paymentMethodEnum,
-    distanceKm: v.number(),
-    durationMins: v.number(),
-    deliveryPackageDetails: v.optional(
-      v.object({
-        recipientName: v.string(),
-        recipientPhone: v.string(),
-        packageDescription: v.optional(v.string()),
-        packageSize: v.optional(v.string()),
-        isFragile: v.optional(v.boolean()),
-      })
-    ),
-    verificationPin: v.optional(v.string()),
-    pickupPin: v.optional(v.string()),
-    driverPayout: v.optional(v.number()),
-    passengerRating: v.optional(v.number()),
-    driverRating: v.optional(v.number()),
-    ratingNotes: v.optional(v.string()),
-    arrivedAt: v.optional(v.number()),
-    startedAt: v.optional(v.number()),
-    completedAt: v.optional(v.number()),
-    declinedDriverIds: v.optional(v.array(v.string())),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_passenger", ["passengerId"])
-    .index("by_driver", ["driverId"])
-    .index("by_status", ["status"])
-    .index("by_pickup_geohash", ["pickupGeohash"])
-    .index("by_service_status", ["serviceType", "status"]),
-
   // ─── ROLE & OPERATOR APPLICATIONS ──────────────────────────────
   role_applications: defineTable({
     userId: v.id("users"),
