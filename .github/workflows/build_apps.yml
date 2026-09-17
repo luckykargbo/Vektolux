@@ -105,9 +105,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Vektolux Latest Mobile Release (v1.0.8)"
+          name: "Vektolux Latest Mobile Release (v1.0.9)"
           body: |
-            ## Vektolux Mobile App Builds (v1.0.8) — Multi-Vertical Super App
+            ## Vektolux Mobile App Builds (v1.0.9) — Multi-Tier Escrow & Settlements Release
 
             ### Direct Downloads:
             - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
@@ -115,23 +115,18 @@ jobs:
             - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
               * Direct sideload / install on any Android device.
 
-            ### What's New in this Build (v1.0.8):
-            - **Dedicated Administrator Portal & Direct Login**:
-              * Added dedicated `AdminLoginScreen` with high-security obsidian/emerald design and instant routing to Admin Dev Tools.
-              * Integrated "Admin Portal" action directly in standard `LoginScreen` header with `👑 Administrator` quick-fill demo chip.
-              * Pre-seeded administrator credentials (`admin@vektolux.sl`) on Convex backend.
-            - **Post Management & Listings Cleanup Tools**:
-              * Added 1-click `Clear All Listings` capability in Admin Dev Tools to purge test listings from the database.
-            - **Manual Business Verification Pipeline & Agent Sandbox**:
-              * Dedicated `PendingVerificationScreen` sandboxing newly registered Real Estate Agents and Vehicle Merchants.
-              * Real-time 30-second polling for approval/rejection updates with instant auto-transition upon admin approval.
-              * Integrated in-app resubmission form with strict validation (PDF/JPEG/PNG ≤ 5MB) and rejection reason feedback.
-            - **Admin Verification Queue & Review Tools**:
-              * 5-tab Dev Tools queue (`pending`, `approved`, `rejected`, `all`) with signed proof document preview.
-              * One-tap approvals with audit logging (admin ID, timestamps) and reason-mandated rejection dialogs.
-            - **Marketplace Listing Creation Gate**:
-              * Unverified or pending business accounts are strictly prohibited from publishing listings until approved.
-              * Verification status cards and quick navigation buttons integrated directly on the Profile screen.
+            ### What's New in this Build (v1.0.9):
+            - **Multi-Tier Real Estate Escrow System (Sierra Leone SLE)**:
+              * **Anti-Bypass Inspection Pass**: Micro-escrow booking fee (SLE 50-100), mutual 4-digit verification OTP & QR hash, 85% instant payout to field agents, unmasks landlord contact upon arrival.
+              * **Short-Term Guest Stays**: 24-hour host release hold after check-in, segregated refundable caution/kitchen deposit vault.
+              * **Long-Term Tenancy Leases**: 10% statutory agency commission split (85% net to agent, 15% platform fee) with locked caution deposit vault.
+              * **Land & House Outright Purchases**: 10/40/50 gated milestones (OARG title clearance → Ministry survey verification → Conveyance deed registration).
+            - **Production Vehicle Escrow & Settlement Engine**:
+              * 60/40 rental split handoff release with 6-photo pre-trip and post-trip digital vehicle inspections.
+              * Sierra Leone Road Safety Authority (SLRSA) Form C and Blue Book title transfer verification for outright vehicle purchases.
+            - **Mobile Escrow Console & Agent Portal**:
+              * Dedicated screens: `InspectionPassModal`, `InspectionPassVerificationScreen`, `RealEstateEscrowCheckoutScreen`, `RealEstateEscrowTrackingScreen`, and `MyRealEstateEscrowsScreen`.
+              * Full Orange Money SL and Africell Afrimoney SL mobile payment rail support.
           files: |
             release-assets/Vektolux.ipa
             release-assets/app-release.apk
