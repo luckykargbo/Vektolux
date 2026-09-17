@@ -222,8 +222,6 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     if (state.user != null) {
       final updatedUser = state.user!.copyWith(
         role: event.newRole,
-        isVerified: true,
-        verificationStatus: 'verified',
       );
       emit(state.copyWith(user: updatedUser));
       _log.i('User role updated in state: ${event.newRole.displayName}');

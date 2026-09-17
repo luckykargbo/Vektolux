@@ -15,6 +15,7 @@ import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
 import '../../../auth/domain/entities/user_entity.dart';
+import '../../../auth/domain/repositories/auth_repository.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../auth/presentation/bloc/auth_event.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
@@ -222,10 +223,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
               });
               try {
                 final convexClient = context.read<ConvexClientWrapper>();
+                final authRepo = context.read<AuthRepository>();
                 final publicUrl = await ImageUploadService.uploadImageToConvex(
                   convexClient: convexClient,
                   imageBytes: pickedBytes!,
                 );
+
+                // Ensure avatar is synced and confirmed on Convex backend
+                final userId = user?.id;
+                if (userId != null && userId.isNotEmpty) {
+                  await authRepo.updateUserProfile(
+                    userId: userId,
+                    avatarUrl: publicUrl,
+                  );
+                }
+
                 if (modalCtx.mounted) {
                   context.read<AuthBloc>().add(
                         UpdateUserProfileEvent(avatarUrl: publicUrl),
@@ -233,7 +245,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   Navigator.of(modalCtx).pop();
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Profile photo uploaded and synced successfully!'),
+                      content: Text('Profile photo uploaded and synced to cloud!'),
                       backgroundColor: AppColors.emerald,
                       behavior: SnackBarBehavior.floating,
                     ),
@@ -404,17 +416,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         OutlinedButton(
                           onPressed: isUploading
                               ? null
-                              : () {
-                                  context.read<AuthBloc>().add(
-                                        const UpdateUserProfileEvent(avatarUrl: ''),
+                              : () async {
+                                  try {
+                                    final userId = user?.id;
+                                    if (userId != null && userId.isNotEmpty) {
+                                      final authRepo = context.read<AuthRepository>();
+                                      await authRepo.updateUserProfile(
+                                        userId: userId,
+                                        avatarUrl: '',
                                       );
-                                  Navigator.of(modalCtx).pop();
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Profile photo removed.'),
-                                      behavior: SnackBarBehavior.floating,
-                                    ),
-                                  );
+                                    }
+                                    if (modalCtx.mounted) {
+                                      context.read<AuthBloc>().add(
+                                            const UpdateUserProfileEvent(avatarUrl: ''),
+                                          );
+                                      Navigator.of(modalCtx).pop();
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Profile photo removed.'),
+                                          behavior: SnackBarBehavior.floating,
+                                        ),
+                                      );
+                                    }
+                                  } catch (e) {
+                                    setModalState(() {
+                                      uploadError = 'Failed to remove photo: $e';
+                                    });
+                                  }
                                 },
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppColors.error,
@@ -688,30 +716,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 const SizedBox(width: 6),
                                 GestureDetector(
                                   onTap: () => _showVerificationInfoDialog(context, user),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.emeraldSurface,
-                                      borderRadius: BorderRadius.circular(4),
-                                      border: Border.all(color: AppColors.emerald.withValues(alpha: 0.3)),
-                                    ),
-                                    child: const Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(Icons.check_circle_rounded, size: 12, color: AppColors.emeraldDark),
-                                        SizedBox(width: 3),
-                                        Text(
-                                          'VERIFIED',
-                                          style: TextStyle(
-                                            fontSize: 9,
-                                            fontWeight: FontWeight.w800,
-                                            color: AppColors.emeraldDark,
-                                            letterSpacing: 0.3,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
+                                  child: _buildVerificationBadge(user),
                                 ),
                               ],
                             ),
@@ -3019,7 +3024,82 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Widget _buildVerificationBadge(UserEntity? user) {
+    final bool isVerified = user?.isVerified == true || user?.isApprovedVerification == true;
+    final bool isPending = user?.isPendingVerification == true ||
+        user?.kycStatus == 'pending' ||
+        user?.kycStatus == 'PENDING_VERIFICATION';
+    final bool isRejected = user?.isRejectedVerification == true ||
+        user?.kycStatus == 'rejected' ||
+        user?.kycStatus == 'REJECTED';
+
+    Color bgColor;
+    Color borderColor;
+    Color textColor;
+    IconData icon;
+    String label;
+
+    if (isVerified) {
+      bgColor = AppColors.emeraldSurface;
+      borderColor = AppColors.emerald.withValues(alpha: 0.3);
+      textColor = AppColors.emeraldDark;
+      icon = Icons.check_circle_rounded;
+      label = 'VERIFIED';
+    } else if (isPending) {
+      bgColor = AppColors.amberSurface;
+      borderColor = AppColors.amber.withValues(alpha: 0.4);
+      textColor = AppColors.amberDark;
+      icon = Icons.schedule_rounded;
+      label = 'PENDING REVIEW';
+    } else if (isRejected) {
+      bgColor = AppColors.errorLight;
+      borderColor = AppColors.error.withValues(alpha: 0.3);
+      textColor = AppColors.error;
+      icon = Icons.cancel_rounded;
+      label = 'REJECTED';
+    } else {
+      bgColor = AppColors.gray100;
+      borderColor = AppColors.gray300;
+      textColor = AppColors.gray600;
+      icon = Icons.shield_outlined;
+      label = 'UNVERIFIED';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: textColor),
+          const SizedBox(width: 3),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+              color: textColor,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showVerificationInfoDialog(BuildContext context, UserEntity? user) {
+    final bool isVerified = user?.isVerified == true || user?.isApprovedVerification == true;
+    final bool isPending = user?.isPendingVerification == true ||
+        user?.kycStatus == 'pending' ||
+        user?.kycStatus == 'PENDING_VERIFICATION';
+    final bool isRejected = user?.isRejectedVerification == true ||
+        user?.kycStatus == 'rejected' ||
+        user?.kycStatus == 'REJECTED';
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -3033,51 +3113,107 @@ class _ProfileScreenState extends State<ProfileScreen> {
               children: [
                 Container(
                   padding: const EdgeInsets.all(8),
-                  decoration: const BoxDecoration(
-                    color: AppColors.emeraldSurface,
+                  decoration: BoxDecoration(
+                    color: isVerified
+                        ? AppColors.emeraldSurface
+                        : isPending
+                            ? AppColors.amberSurface
+                            : isRejected
+                                ? AppColors.errorLight
+                                : AppColors.gray100,
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.verified_rounded,
-                      color: AppColors.emeraldDark, size: 24),
+                  child: Icon(
+                    isVerified
+                        ? Icons.verified_rounded
+                        : isPending
+                            ? Icons.pending_actions_rounded
+                            : isRejected
+                                ? Icons.cancel_rounded
+                                : Icons.shield_outlined,
+                    color: isVerified
+                        ? AppColors.emeraldDark
+                        : isPending
+                            ? AppColors.amberDark
+                            : isRejected
+                                ? AppColors.error
+                                : AppColors.gray600,
+                    size: 24,
+                  ),
                 ),
                 const SizedBox(width: 10),
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'Verified Trust Credentials',
-                    style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.obsidian),
+                    isVerified
+                        ? 'Verified Trust Credentials'
+                        : isPending
+                            ? 'Verification Under Review'
+                            : isRejected
+                                ? 'Verification Rejected'
+                                : 'Unverified Account',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.obsidian,
+                    ),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 14),
-            const Text(
-              'This account has completed authentic KYC verification for Sierra Leone:',
-              style: TextStyle(fontSize: 12, color: AppColors.gray600),
+            Text(
+              isVerified
+                  ? 'This account has completed authentic KYC verification for Sierra Leone:'
+                  : isPending
+                      ? 'Your verification documents have been submitted and are under active review by the Vektolux compliance team:'
+                      : isRejected
+                          ? (user?.rejectionReason != null && user!.rejectionReason!.isNotEmpty
+                              ? 'Your KYC documents were rejected for the following reason: "${user.rejectionReason}"'
+                              : 'Your KYC documents were rejected. Please update your business details and re-apply.')
+                          : 'This account has not completed official Sierra Leone KYC identity verification. Complete KYC to list vehicles or properties.',
+              style: const TextStyle(fontSize: 12, color: AppColors.gray600),
             ),
             const SizedBox(height: 12),
-            _buildTrustBadgeItem(Icons.badge_outlined, 'National ID (NIN)',
-                'Identity verified with NCRA standard'),
-            _buildTrustBadgeItem(Icons.receipt_long_outlined, 'NRA Tax ID (TIN)',
-                'Registered tax entity in Sierra Leone'),
-            _buildTrustBadgeItem(Icons.phone_android_outlined, 'Mobile Money KYC',
-                'Orange Money & Africell SIM match'),
-            _buildTrustBadgeItem(Icons.lock_clock_outlined,
-                'Vektolux Escrow Shield', 'Transactions covered by 60/40 split guarantee'),
+            if (isVerified) ...[
+              _buildTrustBadgeItem(Icons.badge_outlined, 'National ID (NIN)',
+                  'Identity verified with NCRA standard', color: AppColors.emerald),
+              _buildTrustBadgeItem(Icons.receipt_long_outlined, 'NRA Tax ID (TIN)',
+                  'Registered tax entity in Sierra Leone', color: AppColors.emerald),
+              _buildTrustBadgeItem(Icons.phone_android_outlined, 'Mobile Money KYC',
+                  'Orange Money & Africell SIM match', color: AppColors.emerald),
+              _buildTrustBadgeItem(Icons.lock_clock_outlined,
+                  'Vektolux Escrow Shield', 'Transactions covered by 60/40 split guarantee', color: AppColors.emerald),
+            ] else if (isPending) ...[
+              _buildTrustBadgeItem(Icons.hourglass_top_rounded, 'Document Review in Progress',
+                  'Target turnaround: within 24 business hours', color: AppColors.amberDark),
+              _buildTrustBadgeItem(Icons.admin_panel_settings_outlined, 'Compliance Audit',
+                  'Admin team verifying document authenticity', color: AppColors.amberDark),
+              _buildTrustBadgeItem(Icons.notifications_active_outlined, 'Notification on Complete',
+                  'You will receive an in-app and SMS alert once approved', color: AppColors.amberDark),
+            ] else ...[
+              _buildTrustBadgeItem(Icons.shield_outlined, 'Identity Protection',
+                  'Prevent identity fraud and chargebacks', color: AppColors.gray600),
+              _buildTrustBadgeItem(Icons.storefront_outlined, 'Vendor Privileges',
+                  'Post real estate and vehicle listings', color: AppColors.gray600),
+              _buildTrustBadgeItem(Icons.account_balance_wallet_outlined, 'Higher Limits',
+                  'Access high-volume transactions in SLE', color: AppColors.gray600),
+            ],
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.emerald,
+                  backgroundColor: isVerified
+                      ? AppColors.emerald
+                      : isPending
+                          ? AppColors.amber
+                          : AppColors.obsidian,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10)),
                 ),
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('Understood'),
+                child: Text(isVerified ? 'Understood' : 'Close'),
               ),
             ),
           ],
@@ -3086,13 +3222,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildTrustBadgeItem(IconData icon, String title, String subtitle) {
+  Widget _buildTrustBadgeItem(IconData icon, String title, String subtitle, {Color? color}) {
+    final effectiveColor = color ?? AppColors.emerald;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 16, color: AppColors.emerald),
+          Icon(icon, size: 16, color: effectiveColor),
           const SizedBox(width: 8),
           Expanded(
             child: Column(

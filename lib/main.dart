@@ -70,15 +70,18 @@ class VektoluxApp extends StatelessWidget {
         RepositoryProvider<AppDatabase>.value(value: database),
         RepositoryProvider<ConvexClientWrapper>.value(value: convexClient),
         RepositoryProvider<OfflineSyncEngine>.value(value: syncEngine),
+        RepositoryProvider<AuthRepository>(
+          create: (ctx) => AuthRepositoryImpl(
+            convexClient: convexClient,
+            usersDao: database.cachedUsersDao,
+          ),
+        ),
       ],
       child: MultiBlocProvider(
         providers: [
           BlocProvider<AuthBloc>(
             create: (context) => AuthBloc(
-              repository: AuthRepositoryImpl(
-                convexClient: convexClient,
-                usersDao: database.cachedUsersDao,
-              ),
+              repository: context.read<AuthRepository>(),
             ),
           ),
           BlocProvider<MobilityBloc>(

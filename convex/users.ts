@@ -116,32 +116,92 @@ export const updateUserProfile = mutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    try {
-      let userDoc = null;
-      const normalized = ctx.db.normalizeId("users", args.userId);
-      if (normalized) {
-        userDoc = await ctx.db.get(normalized);
-      }
-      if (!userDoc) {
-        // Fallback: search by email/phone or string id
-        userDoc = await ctx.db
-          .query("users")
-          .filter((q) => q.eq(q.field("_id"), args.userId))
-          .first();
-      }
-      if (!userDoc) return false;
-
-      const updates: Record<string, unknown> = { updatedAt: Date.now() };
-      if (args.name !== undefined) updates.name = args.name;
-      if (args.phone !== undefined) updates.phone = args.phone;
-      if (args.avatarUrl !== undefined) updates.avatarUrl = args.avatarUrl;
-      if (args.bio !== undefined) updates.bio = args.bio;
-
-      await ctx.db.patch(userDoc._id, updates);
-      return true;
-    } catch {
-      return false;
+    let userDoc = null;
+    const normalized = ctx.db.normalizeId("users", args.userId);
+    if (normalized) {
+      userDoc = await ctx.db.get(normalized);
     }
+    if (!userDoc) {
+      userDoc = await ctx.db
+        .query("users")
+        .withIndex("by_sessionToken", (q) => q.eq("sessionToken", args.userId))
+        .first();
+    }
+    if (!userDoc) {
+      userDoc = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", args.userId))
+        .first();
+    }
+    if (!userDoc) {
+      userDoc = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", args.userId))
+        .first();
+    }
+    if (!userDoc) {
+      throw new Error(`User not found with identifier: ${args.userId}`);
+    }
+
+    const updates: Record<string, unknown> = { updatedAt: Date.now() };
+    if (args.name !== undefined) updates.name = args.name;
+    if (args.phone !== undefined) updates.phone = args.phone;
+    if (args.avatarUrl !== undefined) updates.avatarUrl = args.avatarUrl;
+    if (args.bio !== undefined) updates.bio = args.bio;
+
+    await ctx.db.patch(userDoc._id, updates);
+    return true;
+  },
+});
+
+export const updateAvatar = mutation({
+  args: {
+    userId: v.string(),
+    avatarUrl: v.string(),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    userId: v.string(),
+    avatarUrl: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    let userDoc = null;
+    const normalized = ctx.db.normalizeId("users", args.userId);
+    if (normalized) {
+      userDoc = await ctx.db.get(normalized);
+    }
+    if (!userDoc) {
+      userDoc = await ctx.db
+        .query("users")
+        .withIndex("by_sessionToken", (q) => q.eq("sessionToken", args.userId))
+        .first();
+    }
+    if (!userDoc) {
+      userDoc = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", args.userId))
+        .first();
+    }
+    if (!userDoc) {
+      userDoc = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", args.userId))
+        .first();
+    }
+    if (!userDoc) {
+      throw new Error(`User not found with identifier: ${args.userId}`);
+    }
+
+    await ctx.db.patch(userDoc._id, {
+      avatarUrl: args.avatarUrl,
+      updatedAt: Date.now(),
+    });
+
+    return {
+      success: true,
+      userId: userDoc._id as string,
+      avatarUrl: args.avatarUrl,
+    };
   },
 });
 

@@ -360,6 +360,7 @@ export default defineSchema({
     .index("by_geohash", ["currentGeohash"])
     .index("by_verification_status", ["verificationStatus"])
     .index("by_role_verification", ["role", "verificationStatus"])
+    .index("by_sessionToken", ["sessionToken"])
     .searchIndex("search_name", {
       searchField: "name",
       filterFields: ["role", "isActive"],

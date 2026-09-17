@@ -122,6 +122,21 @@ export default function UsersDirectoryPage() {
 
   useEffect(() => {
     loadUsers();
+
+    // Periodic 12-second live sync with Convex database
+    const interval = setInterval(() => {
+      loadUsers();
+    }, 12000);
+
+    const onFocus = () => {
+      loadUsers();
+    };
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [loadUsers]);
 
   // Purge Mock Accounts
@@ -479,10 +494,24 @@ export default function UsersDirectoryPage() {
                     {/* User Profile */}
                     <td>
                       <div className={styles.userCell}>
+                        {u.avatarUrl ? (
+                          <img
+                            src={u.avatarUrl}
+                            alt={u.name}
+                            className={styles.avatarImg}
+                            onError={(e) => {
+                              const img = e.currentTarget;
+                              img.style.display = "none";
+                              const fallback = img.nextElementSibling as HTMLElement;
+                              if (fallback) fallback.style.display = "flex";
+                            }}
+                          />
+                        ) : null}
                         <div
                           className={styles.avatar}
                           style={{
                             background: `linear-gradient(135deg, ${roleConfig.color}, #0f172a)`,
+                            display: u.avatarUrl ? "none" : "flex",
                           }}
                         >
                           {u.name?.charAt(0).toUpperCase() || "?"}
@@ -652,7 +681,61 @@ export default function UsersDirectoryPage() {
                 <>
                   {/* Account Overview */}
                   <div className={styles.modalSection}>
-                    <div className={styles.modalSectionTitle}>
+                    <div className={styles.modalProfileHeader}>
+                      {inspectingDetails.user.avatarUrl ? (
+                        <img
+                          src={inspectingDetails.user.avatarUrl}
+                          alt={inspectingDetails.user.name}
+                          className={styles.modalAvatarImg}
+                          onError={(e) => {
+                            const img = e.currentTarget;
+                            img.style.display = "none";
+                            const fallback = img.nextElementSibling as HTMLElement;
+                            if (fallback) fallback.style.display = "flex";
+                          }}
+                        />
+                      ) : null}
+                      <div
+                        className={styles.modalAvatarPlaceholder}
+                        style={{
+                          display: inspectingDetails.user.avatarUrl ? "none" : "flex",
+                        }}
+                      >
+                        {inspectingDetails.user.name?.charAt(0).toUpperCase() || "?"}
+                      </div>
+                      <div className={styles.modalProfileMeta}>
+                        <div className={styles.modalProfileName}>{inspectingDetails.user.name}</div>
+                        <div className={styles.modalProfileRole}>
+                          <span style={{ textTransform: "capitalize" }}>{inspectingDetails.user.role}</span>
+                          {" • "}
+                          <span
+                            style={{
+                              color:
+                                inspectingDetails.user.verificationStatus === "verified" ||
+                                inspectingDetails.user.kycStatus === "VERIFIED"
+                                  ? "#10b981"
+                                  : "#f59e0b",
+                              fontWeight: 700,
+                            }}
+                          >
+                            {(inspectingDetails.user.verificationStatus || inspectingDetails.user.kycStatus || "UNVERIFIED").toUpperCase()}
+                          </span>
+                        </div>
+                        {inspectingDetails.user.avatarUrl && (
+                          <a
+                            href={inspectingDetails.user.avatarUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={styles.avatarUrlLink}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <ExternalLink size={12} /> View Avatar Image Asset
+                          </a>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className={styles.modalSectionTitle} style={{ marginTop: 18 }}>
                       <User size={16} /> Personal Information
                     </div>
                     <div className={styles.infoGrid}>

@@ -259,19 +259,22 @@ class AuthRepositoryImpl implements AuthRepository {
       throw Exception('No active session found.');
     }
 
-    try {
-      await _convexClient.mutation(
-        'users:updateUserProfile',
-        args: {
-          'userId': userId,
-          if (name != null) 'name': name,
-          if (phone != null) 'phone': phone,
-          if (avatarUrl != null) 'avatarUrl': avatarUrl,
-          if (bio != null) 'bio': bio,
-        },
-      );
-    } catch (e) {
-      _log.w('Could not sync profile update to Convex (offline mode?): $e');
+    final result = await _convexClient.mutation(
+      'users:updateUserProfile',
+      args: {
+        'userId': userId,
+        if (name != null) 'name': name,
+        if (phone != null) 'phone': phone,
+        if (avatarUrl != null) 'avatarUrl': avatarUrl,
+        if (bio != null) 'bio': bio,
+      },
+    );
+
+    if (!result.success) {
+      throw Exception(result.errorMessage ?? 'Failed to update profile on Convex cloud');
+    }
+    if (result.value == false) {
+      throw Exception('Profile update was rejected by Convex server');
     }
 
     final updated = current.copyWith(
@@ -282,7 +285,7 @@ class AuthRepositoryImpl implements AuthRepository {
     );
 
     await _cacheUser(updated);
-    _log.i('Profile updated and cached: ${updated.name}');
+    _log.i('Profile updated on Convex and locally cached: ${updated.name}');
     return updated;
   }
 
