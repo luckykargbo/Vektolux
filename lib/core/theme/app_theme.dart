@@ -182,6 +182,13 @@ abstract final class AppTheme {
         ),
       ),
 
+      // ── Text Selection & Cursor ────────────────────────────────
+      textSelectionTheme: const TextSelectionThemeData(
+        cursorColor: AppColors.emerald,
+        selectionColor: Color(0x3310B981),
+        selectionHandleColor: AppColors.emerald,
+      ),
+
       // ── Input Fields ────────────────────────────────────────────
       inputDecorationTheme: _inputDecorationTheme,
 
@@ -411,6 +418,12 @@ abstract final class AppTheme {
         ),
       ),
 
+      textSelectionTheme: const TextSelectionThemeData(
+        cursorColor: AppColors.emerald,
+        selectionColor: Color(0x3310B981),
+        selectionHandleColor: AppColors.emerald,
+      ),
+
       inputDecorationTheme: _inputDecorationTheme,
 
       snackBarTheme: light.snackBarTheme.copyWith(
@@ -450,7 +463,7 @@ abstract final class AppTheme {
       borderSide: const BorderSide(color: AppColors.error, width: 1.8),
     ),
     hintStyle: const TextStyle(
-      color: Color(0xFF64748B),
+      color: Color(0xFF94A3B8), // #94A3B8 placeholder medium gray
       fontSize: 14,
       fontWeight: FontWeight.normal,
     ),
@@ -458,6 +471,11 @@ abstract final class AppTheme {
       color: Color(0xFF64748B),
       fontSize: 14,
       fontWeight: FontWeight.w500,
+    ),
+    floatingLabelStyle: const TextStyle(
+      color: Color(0xFF10B981),
+      fontSize: 14,
+      fontWeight: FontWeight.w600,
     ),
     errorStyle: AppTypography.textTheme.bodySmall?.copyWith(
       color: AppColors.error,

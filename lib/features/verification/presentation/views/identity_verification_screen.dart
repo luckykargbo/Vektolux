@@ -478,16 +478,24 @@ class _IdentityVerificationScreenState
 
           TextFormField(
             controller: _idNumberController,
+            style: const TextStyle(
+              color: Color(0xFF0F172A),
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+            cursorColor: const Color(0xFF10B981),
             decoration: InputDecoration(
               filled: true,
               fillColor: const Color(0xFFF8FAFC),
               labelText: 'ID / NIN Document Number *',
+              labelStyle: const TextStyle(color: Color(0xFF64748B)),
               hintText: switch (_selectedDocType) {
                 IdDocumentType.nationalId => 'e.g. 1029384756 or SL8849201',
                 IdDocumentType.voterId => 'e.g. VTR-89201948',
                 IdDocumentType.driverLicense => 'e.g. DL-4820194',
                 _ => 'Enter document number',
               },
+              hintStyle: const TextStyle(color: Color(0xFF94A3B8)),
               prefixIcon: const Icon(Icons.pin_rounded, color: Color(0xFF64748B)),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             ),
@@ -497,11 +505,19 @@ class _IdentityVerificationScreenState
             const SizedBox(height: 16),
             TextFormField(
               controller: _businessNameController,
+              style: const TextStyle(
+                color: Color(0xFF0F172A),
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+              cursorColor: const Color(0xFF10B981),
               decoration: InputDecoration(
                 filled: true,
                 fillColor: const Color(0xFFF8FAFC),
                 labelText: 'Registered Business Name *',
+                labelStyle: const TextStyle(color: Color(0xFF64748B)),
                 hintText: 'e.g. Salone Prime Properties Ltd',
+                hintStyle: const TextStyle(color: Color(0xFF94A3B8)),
                 prefixIcon: const Icon(Icons.domain_rounded, color: Color(0xFF64748B)),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
@@ -509,11 +525,19 @@ class _IdentityVerificationScreenState
             const SizedBox(height: 16),
             TextFormField(
               controller: _tinController,
+              style: const TextStyle(
+                color: Color(0xFF0F172A),
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+              cursorColor: const Color(0xFF10B981),
               decoration: InputDecoration(
                 filled: true,
                 fillColor: const Color(0xFFF8FAFC),
                 labelText: 'Tax Identification Number (TIN) *',
+                labelStyle: const TextStyle(color: Color(0xFF64748B)),
                 hintText: 'e.g. TIN-00293847-1',
+                hintStyle: const TextStyle(color: Color(0xFF94A3B8)),
                 prefixIcon: const Icon(Icons.badge_rounded, color: Color(0xFF64748B)),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),

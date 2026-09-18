@@ -259,9 +259,15 @@ class _DriverTripLifecyclePanelState extends State<DriverTripLifecyclePanel> {
                 TextField(
                   controller: _reviewNotesController,
                   maxLines: 2,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF0F172A),
+                  ),
+                  cursorColor: const Color(0xFF10B981),
                   decoration: InputDecoration(
                     hintText: 'Optional passenger feedback (polite, on-time, etc.)',
-                    hintStyle: const TextStyle(fontSize: 12, color: AppColors.gray400),
+                    hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
                     filled: true,
                     fillColor: AppColors.gray50,
                     border: OutlineInputBorder(

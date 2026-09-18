@@ -651,20 +651,36 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
 
                   TextField(
                     controller: businessController,
+                    style: const TextStyle(
+                      color: Color(0xFF0F172A),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    cursorColor: const Color(0xFF10B981),
                     decoration: const InputDecoration(
                       labelText: 'Business / Company Name',
+                      labelStyle: TextStyle(color: Color(0xFF64748B)),
                       hintText: 'e.g. Sierra Prime Properties',
-                      prefixIcon: Icon(Icons.business_outlined),
+                      hintStyle: TextStyle(color: Color(0xFF94A3B8)),
+                      prefixIcon: Icon(Icons.business_outlined, color: Color(0xFF64748B)),
                     ),
                   ),
                   const SizedBox(height: 14),
 
                   TextField(
                     controller: tinController,
+                    style: const TextStyle(
+                      color: Color(0xFF0F172A),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    cursorColor: const Color(0xFF10B981),
                     decoration: const InputDecoration(
                       labelText: 'TIN / Business Registration #',
+                      labelStyle: TextStyle(color: Color(0xFF64748B)),
                       hintText: 'e.g. 10098234-1',
-                      prefixIcon: Icon(Icons.badge_outlined),
+                      hintStyle: TextStyle(color: Color(0xFF94A3B8)),
+                      prefixIcon: Icon(Icons.badge_outlined, color: Color(0xFF64748B)),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -1055,11 +1071,17 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         child: TextField(
           controller: _searchController,
           onChanged: (val) => setState(() {}),
+          style: const TextStyle(
+            color: Color(0xFF0F172A),
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+          cursorColor: const Color(0xFF10B981),
           decoration: InputDecoration(
             hintText: 'Search homes, cars, or destinations in Sierra Leone...',
             hintStyle: const TextStyle(
               fontSize: 13,
-              color: AppColors.gray400,
+              color: Color(0xFF94A3B8),
               fontWeight: FontWeight.w400,
             ),
             prefixIcon: Icon(
