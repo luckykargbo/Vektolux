@@ -71,3 +71,39 @@ export interface UserRecord {
   updatedAt?: number;
 }
 
+export type PaymentProvider =
+  | "ORANGE_MONEY"
+  | "AFRICELL_AFRIMONEY"
+  | "QMONEY"
+  | "SLCB_BANK"
+  | "ROKEL_BANK";
+
+export interface SavedPaymentMethod {
+  id: string;
+  userId: string;
+  provider: PaymentProvider;
+  providerName: string;
+  accountNumber: string;
+  maskedNumber: string;
+  isDefault: boolean;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export interface PaymentMethodRecord extends SavedPaymentMethod {}
+
+export interface EscrowWalletSummary {
+  userId: string;
+  availableBalance: number;
+  lockedEscrowBalance: number;
+  currency: string;
+  activeDealsCount: number;
+  isProtected: boolean;
+  isPinSet: boolean;
+  biometricEnabled: boolean;
+  updatedAt: number;
+}
+
+export interface EscrowWalletBalance extends EscrowWalletSummary {}
+

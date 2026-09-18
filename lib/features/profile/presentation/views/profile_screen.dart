@@ -29,6 +29,46 @@ import '../../../auth/presentation/views/pending_verification_screen.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+class SavedPaymentMethodItem {
+  final String id;
+  final String providerName;
+  final String providerCode; // 'orange', 'africell', 'qmoney', 'slcb'
+  final String accountNumber;
+  final String maskedNumber;
+  final bool isDefault;
+  final bool isActive;
+
+  const SavedPaymentMethodItem({
+    required this.id,
+    required this.providerName,
+    required this.providerCode,
+    required this.accountNumber,
+    required this.maskedNumber,
+    this.isDefault = false,
+    this.isActive = true,
+  });
+
+  SavedPaymentMethodItem copyWith({
+    String? id,
+    String? providerName,
+    String? providerCode,
+    String? accountNumber,
+    String? maskedNumber,
+    bool? isDefault,
+    bool? isActive,
+  }) {
+    return SavedPaymentMethodItem(
+      id: id ?? this.id,
+      providerName: providerName ?? this.providerName,
+      providerCode: providerCode ?? this.providerCode,
+      accountNumber: accountNumber ?? this.accountNumber,
+      maskedNumber: maskedNumber ?? this.maskedNumber,
+      isDefault: isDefault ?? this.isDefault,
+      isActive: isActive ?? this.isActive,
+    );
+  }
+}
+
 class ProfileScreen extends StatefulWidget {
   final String? currentUserId;
   final bool showBackButton;
@@ -46,7 +86,10 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   bool _pushNotifications = true;
   bool _smsAlerts = true;
-  bool _biometricAuth = false;
+  bool _isBalanceVisible = true;
+  bool _escrowBiometricEnabled = true;
+  double _escrowBalance = 3500.00;
+  List<SavedPaymentMethodItem>? _savedPaymentMethods;
 
   @override
   void initState() {
@@ -945,6 +988,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
             role == UserRole.driver ||
             role == UserRole.admin;
 
+        _initPaymentMethods(user);
+
         return Scaffold(
           backgroundColor: AppColors.gray50,
           appBar: AppBar(
@@ -1532,8 +1577,95 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                 const SizedBox(height: 18),
 
-                // ── 4. Payment & Mobile Money Wallets ───────────────
-                _buildSectionHeader('PAYMENT, QR CODES & ESCROW WALLETS'),
+                // ── 4. Escrow Wallet Hero Card ───────────────────────
+                _buildSectionHeader('ESCROW WALLET & BALANCES'),
+                _buildEscrowWalletHeroCard(context, user),
+
+                const SizedBox(height: 18),
+
+                // ── 4B. Saved Payment Methods ────────────────────────
+                _buildSectionHeader('SAVED PAYMENT METHODS'),
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Column(
+                    children: [
+                      if (_savedPaymentMethods == null || _savedPaymentMethods!.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.all(20),
+                          child: Center(
+                            child: Text(
+                              'No payment methods linked yet.',
+                              style: TextStyle(color: AppColors.gray500, fontSize: 13),
+                            ),
+                          ),
+                        )
+                      else
+                        for (int i = 0; i < _savedPaymentMethods!.length; i++) ...[
+                          if (i > 0) const Divider(height: 1, indent: 68),
+                          _buildPaymentMethodTile(_savedPaymentMethods![i]),
+                        ],
+                      const Divider(height: 1),
+                      InkWell(
+                        onTap: () => _showAddPaymentMethodSheet(context),
+                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(18)),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: AppColors.emeraldSurface,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(Icons.add_rounded, color: AppColors.emeraldDark, size: 20),
+                              ),
+                              const SizedBox(width: 12),
+                              const Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Add Payment Method',
+                                      style: TextStyle(
+                                        color: AppColors.emeraldDark,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 13.5,
+                                      ),
+                                    ),
+                                    SizedBox(height: 2),
+                                    Text(
+                                      'Link Orange Money, Afrimoney, QMoney, or SLCB Bank',
+                                      style: TextStyle(
+                                        color: AppColors.gray500,
+                                        fontSize: 11.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Icon(
+                                Icons.arrow_forward_ios_rounded,
+                                size: 13,
+                                color: AppColors.emeraldDark,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 18),
+
+                // ── 4C. Wallet Security & Preferences ────────────────
+                _buildSectionHeader('WALLET SECURITY & PREFERENCES'),
                 Container(
                   decoration: BoxDecoration(
                     color: AppColors.white,
@@ -1543,32 +1675,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: Column(
                     children: [
                       _buildSettingsTile(
-                        icon: Icons.qr_code_2_rounded,
-                        title: 'My Account QR Code',
-                        subtitle: 'Display personal QR to receive payments & transfers',
-                        trailing: const Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          size: 14,
-                          color: AppColors.gray400,
-                        ),
-                        onTap: () => _showMyQrCodeModal(context, user),
-                      ),
-                      const Divider(height: 1, indent: 56),
-                      _buildSettingsTile(
-                        icon: Icons.qr_code_scanner_rounded,
-                        title: 'Scan to Pay / Transfer',
-                        subtitle: 'Scan vendor, driver, or merchant QR code',
-                        trailing: const Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          size: 14,
-                          color: AppColors.gray400,
-                        ),
-                        onTap: () => _showScanQrModal(context, user),
-                      ),
-                      const Divider(height: 1, indent: 56),
-                      _buildSettingsTile(
                         icon: Icons.lock_outline_rounded,
-                        title: 'Wallet Security PIN',
+                        title: 'Escrow Security PIN',
                         subtitle: '4-digit authorization PIN for escrow payouts',
                         trailing: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1588,88 +1696,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         onTap: () => _showWalletPinModal(context, user),
                       ),
                       const Divider(height: 1, indent: 56),
-                      _buildSettingsTile(
-                        icon: Icons.phone_android_outlined,
-                        title: 'Orange Money Sierra Leone',
-                        subtitle: '$displayPhone • Active',
-                        trailing: const Icon(
-                          Icons.check_circle_rounded,
-                          color: AppColors.emerald,
-                          size: 18,
-                        ),
-                        onTap: () {},
+                      SwitchListTile(
+                        secondary: const Icon(Icons.fingerprint_rounded, color: AppColors.gray600),
+                        title: const Text('Biometric / FaceID Authorization', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                        subtitle: const Text('Require FaceID / TouchID to authorize escrow transactions', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
+                        value: _escrowBiometricEnabled,
+                        activeThumbColor: AppColors.emerald,
+                        onChanged: (val) => setState(() => _escrowBiometricEnabled = val),
                       ),
                       const Divider(height: 1, indent: 56),
                       _buildSettingsTile(
-                        icon: Icons.signal_cellular_alt_rounded,
-                        title: 'Africell Afrimoney',
-                        subtitle: 'Linked Mobile Money account • Dial *161#',
+                        icon: Icons.qr_code_2_rounded,
+                        title: 'Receive Payment QR',
+                        subtitle: 'Display personal QR code to receive payments & transfers',
                         trailing: const Icon(
                           Icons.arrow_forward_ios_rounded,
                           size: 14,
                           color: AppColors.gray400,
                         ),
-                        onTap: () {
-                          _showInfoSheet(
-                            context,
-                            'Africell Afrimoney (*161#)',
-                            'Deposit and release escrow milestones using your Afrimoney wallet. For direct over-the-counter payments at an authorized cash agent or teller, use Vektolux Merchant / Agent Code: 001.',
-                          );
-                        },
-                      ),
-                      const Divider(height: 1, indent: 56),
-                      _buildSettingsTile(
-                        icon: Icons.cell_tower_rounded,
-                        title: 'QCell QMoney Sierra Leone',
-                        subtitle: 'Linked Mobile Money account • Dial *345#',
-                        trailing: const Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          size: 14,
-                          color: AppColors.gray400,
-                        ),
-                        onTap: () {
-                          _showInfoSheet(
-                            context,
-                            'QCell QMoney (*345#)',
-                            'Pay and receive marketplace disbursements directly via QCell QMoney. For direct cashier or merchant payment, use Vektolux Merchant / Agent Code: 001 with your order reference.',
-                          );
-                        },
-                      ),
-                      const Divider(height: 1, indent: 56),
-                      _buildSettingsTile(
-                        icon: Icons.account_balance_rounded,
-                        title: 'Commercial Bank & Wire (SL)',
-                        subtitle: 'Sierra Leone Commercial Bank (SLCB) & Rokel',
-                        trailing: const Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          size: 14,
-                          color: AppColors.gray400,
-                        ),
-                        onTap: () {
-                          _showInfoSheet(
-                            context,
-                            'Bank Transfer & Escrow Custody',
-                            'Direct ACH / RTGS wire transfers to the Vektolux Segregated Escrow Trust Account at Sierra Leone Commercial Bank (SLCB) or Rokel Commercial Bank. Funds are locked under multi-signatory escrow protocols until physical milestone satisfaction.',
-                          );
-                        },
-                      ),
-                      const Divider(height: 1, indent: 56),
-                      _buildSettingsTile(
-                        icon: Icons.account_balance_wallet_outlined,
-                        title: 'Vektolux Escrow Wallet',
-                        subtitle: 'Balance: SLE 3,500.00 (60/40 Protected)',
-                        trailing: TextButton(
-                          onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Wallet top-up via Mobile Money is ready.'),
-                                behavior: SnackBarBehavior.floating,
-                              ),
-                            );
-                          },
-                          child: const Text('Top Up'),
-                        ),
-                        onTap: () {},
+                        onTap: () => _showMyQrCodeModal(context, user),
                       ),
                     ],
                   ),
@@ -1677,8 +1722,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                 const SizedBox(height: 18),
 
-                // ── 5. App Preferences & Security ───────────────────
-                _buildSectionHeader('APP PREFERENCES & SECURITY'),
+                // ── 5. App Preferences & Notifications ──────────────
+                _buildSectionHeader('APP PREFERENCES & NOTIFICATIONS'),
                 Container(
                   decoration: BoxDecoration(
                     color: AppColors.white,
@@ -1703,15 +1748,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         value: _smsAlerts,
                         activeThumbColor: AppColors.emerald,
                         onChanged: (val) => setState(() => _smsAlerts = val),
-                      ),
-                      const Divider(height: 1, indent: 56),
-                      SwitchListTile(
-                        secondary: const Icon(Icons.fingerprint_rounded, color: AppColors.gray500),
-                        title: const Text('Biometric / PIN Screen Lock', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                        subtitle: const Text('Require fingerprint/face lock before checkout', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
-                        value: _biometricAuth,
-                        activeThumbColor: AppColors.emerald,
-                        onChanged: (val) => setState(() => _biometricAuth = val),
                       ),
                       const Divider(height: 1, indent: 56),
                       _buildSettingsTile(
@@ -3308,6 +3344,906 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               style: TextStyle(
                                   fontWeight: FontWeight.w700, fontSize: 14),
                             ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _initPaymentMethods(UserEntity? user) {
+    if (_savedPaymentMethods != null) return;
+    final phone = (user?.phone.isNotEmpty == true) ? user!.phone : '+232 76 108 761';
+    _savedPaymentMethods = [
+      SavedPaymentMethodItem(
+        id: 'pm_default_orange',
+        providerName: 'Orange Money Sierra Leone',
+        providerCode: 'orange',
+        accountNumber: phone,
+        maskedNumber: _maskAccountNumber(phone),
+        isDefault: true,
+        isActive: true,
+      ),
+    ];
+  }
+
+  String _maskAccountNumber(String raw) {
+    final clean = raw.trim();
+    if (clean.isEmpty) return '••••';
+    final digits = clean.replaceAll(RegExp(r'\D'), '');
+    if (digits.startsWith('232') && digits.length >= 8) {
+      final prefix = digits.length >= 5 ? digits.substring(3, 5) : digits.substring(3);
+      final suffix = digits.substring(digits.length - 3);
+      return '+232 $prefix ••• $suffix';
+    } else if (clean.startsWith('+232') && clean.length >= 7) {
+      final parts = clean.split(' ');
+      if (parts.length >= 3) {
+        return '${parts[0]} ${parts[1]} ••• ${parts.last}';
+      }
+    }
+    if (clean.length > 6) {
+      return '${clean.substring(0, 3)} ••• ${clean.substring(clean.length - 3)}';
+    }
+    return clean;
+  }
+
+  Widget _buildProviderIcon(String providerCode) {
+    IconData iconData;
+    Color bgColor;
+    Color iconColor;
+
+    switch (providerCode) {
+      case 'orange':
+        iconData = Icons.phone_android_rounded;
+        bgColor = const Color(0xFFFFF3E0);
+        iconColor = const Color(0xFFFF6600);
+        break;
+      case 'africell':
+        iconData = Icons.signal_cellular_alt_rounded;
+        bgColor = const Color(0xFFFCE4EC);
+        iconColor = const Color(0xFFE91E63);
+        break;
+      case 'qmoney':
+        iconData = Icons.cell_tower_rounded;
+        bgColor = const Color(0xFFE8F5E9);
+        iconColor = const Color(0xFF2E7D32);
+        break;
+      case 'slcb':
+      default:
+        iconData = Icons.account_balance_rounded;
+        bgColor = const Color(0xFFE3F2FD);
+        iconColor = const Color(0xFF1565C0);
+        break;
+    }
+
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(iconData, color: iconColor, size: 20),
+    );
+  }
+
+  Widget _buildEscrowWalletHeroCard(BuildContext context, UserEntity? user) {
+    final balanceText = _isBalanceVisible
+        ? 'SLE ${_escrowBalance.toStringAsFixed(2)}'
+        : 'SLE ••••••';
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFF0F172A),
+            Color(0xFF1E293B),
+            Color(0xFF064E3B),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.25),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+        border: Border.all(
+          color: AppColors.emerald.withValues(alpha: 0.35),
+          width: 1.2,
+        ),
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: AppColors.emerald.withValues(alpha: 0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.shield_rounded,
+                      size: 14,
+                      color: AppColors.emerald,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'VEKTOLUX ESCROW WALLET',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                ],
+              ),
+              IconButton(
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                icon: Icon(
+                  _isBalanceVisible
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                  color: Colors.white70,
+                  size: 20,
+                ),
+                tooltip: _isBalanceVisible ? 'Hide Balance' : 'Show Balance',
+                onPressed: () => setState(() => _isBalanceVisible = !_isBalanceVisible),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            balanceText,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 30,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.emerald.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: AppColors.emerald.withValues(alpha: 0.4),
+                width: 1,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF34D399),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const Text(
+                  'Escrow Protected • 2 Active Deals',
+                  style: TextStyle(
+                    color: Color(0xFF6EE7B7),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: _buildEscrowActionButton(
+                  icon: Icons.add_circle_outline_rounded,
+                  label: 'Top Up',
+                  onTap: () => _showTopUpEscrowSheet(context, user),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildEscrowActionButton(
+                  icon: Icons.arrow_circle_up_rounded,
+                  label: 'Withdraw',
+                  onTap: () => _showWithdrawEscrowSheet(context, user),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildEscrowActionButton(
+                  icon: Icons.qr_code_scanner_rounded,
+                  label: 'Scan QR',
+                  onTap: () => _showScanQrModal(context, user),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEscrowActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.15),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: Colors.white, size: 16),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPaymentMethodTile(SavedPaymentMethodItem method) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          _buildProviderIcon(method.providerCode),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  method.providerName,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.obsidian,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Text(
+                      method.maskedNumber,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.gray600,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    if (method.isDefault) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.emeraldSurface,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'Default',
+                          style: TextStyle(
+                            color: AppColors.emeraldDark,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (method.isActive) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.gray100,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'Active',
+                          style: TextStyle(
+                            color: AppColors.gray700,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded, size: 18, color: AppColors.gray400),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            onSelected: (action) {
+              if (action == 'default') {
+                setState(() {
+                  _savedPaymentMethods = _savedPaymentMethods?.map((m) {
+                    return m.copyWith(isDefault: m.id == method.id);
+                  }).toList();
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('${method.providerName} set as default payment method.'),
+                    backgroundColor: AppColors.emeraldDark,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              } else if (action == 'delete') {
+                setState(() {
+                  _savedPaymentMethods?.removeWhere((m) => m.id == method.id);
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('${method.providerName} removed.'),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
+            itemBuilder: (ctx) => [
+              if (!method.isDefault)
+                const PopupMenuItem(
+                  value: 'default',
+                  child: Row(
+                    children: [
+                      Icon(Icons.check_circle_outline_rounded, size: 16, color: AppColors.emeraldDark),
+                      SizedBox(width: 8),
+                      Text('Set as Default', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+              const PopupMenuItem(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_outline_rounded, size: 16, color: Colors.red),
+                    SizedBox(width: 8),
+                    Text('Remove', style: TextStyle(fontSize: 13, color: Colors.red, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAddPaymentMethodSheet(BuildContext context) {
+    String selectedProvider = 'orange';
+    final accountCtrl = TextEditingController();
+    bool setAsDefault = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (modalCtx, setModalState) {
+            final isBank = selectedProvider == 'slcb';
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.gray300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Row(
+                    children: [
+                      Icon(Icons.account_balance_wallet_outlined, color: AppColors.emeraldDark, size: 22),
+                      SizedBox(width: 8),
+                      Text(
+                        'Link Payment Method',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.obsidian,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Connect a Mobile Money wallet or Commercial Bank account.',
+                    style: TextStyle(fontSize: 12.5, color: AppColors.gray500),
+                  ),
+                  const SizedBox(height: 18),
+                  const Text(
+                    'Select Provider',
+                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedProvider,
+                    decoration: InputDecoration(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'orange',
+                        child: Text('Orange Money Sierra Leone'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'africell',
+                        child: Text('Africell Afrimoney'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'qmoney',
+                        child: Text('QCell QMoney'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'slcb',
+                        child: Text('Sierra Leone Commercial Bank (SLCB)'),
+                      ),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) {
+                        setModalState(() => selectedProvider = val);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    isBank ? 'Account Number' : 'Mobile Money Phone Number',
+                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                  ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: accountCtrl,
+                    keyboardType: isBank ? TextInputType.text : TextInputType.phone,
+                    decoration: InputDecoration(
+                      hintText: isBank ? 'e.g. 003-010-984210' : 'e.g. +232 76 123 456',
+                      prefixIcon: Icon(isBank ? Icons.account_balance_rounded : Icons.phone_android_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Set as default payment method', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    value: setAsDefault,
+                    activeThumbColor: AppColors.emerald,
+                    onChanged: (val) => setModalState(() => setAsDefault = val),
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.emerald,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () {
+                        final rawNumber = accountCtrl.text.trim();
+                        if (rawNumber.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Please enter an account or phone number.')),
+                          );
+                          return;
+                        }
+
+                        String pName;
+                        switch (selectedProvider) {
+                          case 'orange':
+                            pName = 'Orange Money Sierra Leone';
+                            break;
+                          case 'africell':
+                            pName = 'Africell Afrimoney';
+                            break;
+                          case 'qmoney':
+                            pName = 'QCell QMoney';
+                            break;
+                          case 'slcb':
+                          default:
+                            pName = 'Sierra Leone Commercial Bank (SLCB)';
+                            break;
+                        }
+
+                        final newItem = SavedPaymentMethodItem(
+                          id: 'pm_${DateTime.now().millisecondsSinceEpoch}',
+                          providerName: pName,
+                          providerCode: selectedProvider,
+                          accountNumber: rawNumber,
+                          maskedNumber: _maskAccountNumber(rawNumber),
+                          isDefault: setAsDefault || (_savedPaymentMethods?.isEmpty ?? true),
+                          isActive: true,
+                        );
+
+                        setState(() {
+                          final current = _savedPaymentMethods ?? [];
+                          if (newItem.isDefault) {
+                            _savedPaymentMethods = [
+                              ...current.map((m) => m.copyWith(isDefault: false)),
+                              newItem,
+                            ];
+                          } else {
+                            _savedPaymentMethods = [...current, newItem];
+                          }
+                        });
+
+                        Navigator.of(modalCtx).pop();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('$pName linked successfully!'),
+                            backgroundColor: AppColors.emeraldDark,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      },
+                      child: const Text('Link Payment Method', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showTopUpEscrowSheet(BuildContext context, UserEntity? user) {
+    final amountCtrl = TextEditingController(text: '500');
+    bool isProcessing = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (modalCtx, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.gray300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Row(
+                    children: [
+                      Icon(Icons.add_circle_outline_rounded, color: AppColors.emeraldDark, size: 22),
+                      SizedBox(width: 8),
+                      Text(
+                        'Top Up Escrow Wallet',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.obsidian,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Deposit funds into escrow protection via Mobile Money.',
+                    style: TextStyle(fontSize: 12.5, color: AppColors.gray500),
+                  ),
+                  const SizedBox(height: 16),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [250, 500, 1000, 2500].map((amt) {
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ActionChip(
+                            label: Text('SLE $amt', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                            backgroundColor: amountCtrl.text == amt.toString() ? AppColors.emeraldSurface : AppColors.gray100,
+                            side: BorderSide(
+                              color: amountCtrl.text == amt.toString() ? AppColors.emerald : Colors.transparent,
+                            ),
+                            onPressed: () {
+                              setModalState(() {
+                                amountCtrl.text = amt.toString();
+                              });
+                            },
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    controller: amountCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Deposit Amount (SLE)',
+                      prefixText: 'SLE ',
+                      prefixStyle: TextStyle(fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.emerald,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: isProcessing
+                          ? null
+                          : () async {
+                              final amt = double.tryParse(amountCtrl.text.trim()) ?? 0;
+                              if (amt <= 0) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Please enter a valid amount.')),
+                                );
+                                return;
+                              }
+
+                              setModalState(() => isProcessing = true);
+                              await Future.delayed(const Duration(milliseconds: 600));
+
+                              setState(() {
+                                _escrowBalance += amt;
+                              });
+
+                              if (modalCtx.mounted) {
+                                Navigator.of(modalCtx).pop();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Deposited SLE ${amt.toStringAsFixed(2)} into Escrow Wallet!'),
+                                    backgroundColor: AppColors.emeraldDark,
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              }
+                            },
+                      child: isProcessing
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            )
+                          : const Text('Confirm Deposit', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showWithdrawEscrowSheet(BuildContext context, UserEntity? user) {
+    final amountCtrl = TextEditingController(text: '500');
+    bool isProcessing = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (modalCtx, setModalState) {
+            final activeMethod = _savedPaymentMethods?.firstWhere(
+              (m) => m.isDefault,
+              orElse: () => _savedPaymentMethods!.first,
+            );
+
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.gray300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Row(
+                    children: [
+                      Icon(Icons.arrow_circle_up_rounded, color: AppColors.emeraldDark, size: 22),
+                      SizedBox(width: 8),
+                      Text(
+                        'Withdraw Escrow Funds',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.obsidian,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Available for payout: SLE ${_escrowBalance.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 12.5, color: AppColors.gray600, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: amountCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Withdraw Amount (SLE)',
+                      prefixText: 'SLE ',
+                      prefixStyle: TextStyle(fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  if (activeMethod != null) ...[
+                    const Text(
+                      'Destination Account',
+                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.gray50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        children: [
+                          _buildProviderIcon(activeMethod.providerCode),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(activeMethod.providerName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                                Text(activeMethod.maskedNumber, style: const TextStyle(color: AppColors.gray600, fontSize: 11.5)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.emerald,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: isProcessing
+                          ? null
+                          : () async {
+                              final amt = double.tryParse(amountCtrl.text.trim()) ?? 0;
+                              if (amt <= 0) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Please enter a valid payout amount.')),
+                                );
+                                return;
+                              }
+                              if (amt > _escrowBalance) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Withdrawal amount exceeds available escrow balance.')),
+                                );
+                                return;
+                              }
+
+                              setModalState(() => isProcessing = true);
+                              await Future.delayed(const Duration(milliseconds: 600));
+
+                              setState(() {
+                                _escrowBalance -= amt;
+                              });
+
+                              if (modalCtx.mounted) {
+                                Navigator.of(modalCtx).pop();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Payout of SLE ${amt.toStringAsFixed(2)} processed successfully!'),
+                                    backgroundColor: AppColors.emeraldDark,
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              }
+                            },
+                      child: isProcessing
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            )
+                          : const Text('Authorize & Withdraw', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                     ),
                   ),
                 ],
