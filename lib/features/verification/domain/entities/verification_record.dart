@@ -34,8 +34,34 @@ extension VerificationStatusX on VerificationStatus {
   }
 }
 
+enum AccountType {
+  individual,
+  business,
+}
+
+extension AccountTypeX on AccountType {
+  String get displayName => switch (this) {
+        AccountType.individual => 'Individual Agent / Owner',
+        AccountType.business => 'Registered Company / Agency',
+      };
+
+  String get convexKey => switch (this) {
+        AccountType.individual => 'INDIVIDUAL',
+        AccountType.business => 'BUSINESS',
+      };
+
+  static AccountType fromString(String? value) {
+    return switch (value?.toUpperCase()) {
+      'BUSINESS' => AccountType.business,
+      _ => AccountType.individual,
+    };
+  }
+}
+
 enum IdDocumentType {
   nationalId,
+  voterId,
+  driverLicense,
   ecowasCard,
   passport,
 }
@@ -43,14 +69,18 @@ enum IdDocumentType {
 extension IdDocumentTypeX on IdDocumentType {
   String get displayName => switch (this) {
         IdDocumentType.nationalId => 'Sierra Leone National ID (NIN)',
+        IdDocumentType.voterId => 'Sierra Leone Voter ID Card',
+        IdDocumentType.driverLicense => 'SLRSA Driver License',
         IdDocumentType.ecowasCard => 'ECOWAS Biometric Card',
         IdDocumentType.passport => 'International Passport',
       };
 
   String get convexKey => switch (this) {
-        IdDocumentType.nationalId => 'national_id',
-        IdDocumentType.ecowasCard => 'ecowas_card',
-        IdDocumentType.passport => 'passport',
+        IdDocumentType.nationalId => 'NATIONAL_ID',
+        IdDocumentType.voterId => 'VOTER_ID',
+        IdDocumentType.driverLicense => 'DRIVER_LICENSE',
+        IdDocumentType.ecowasCard => 'national_id',
+        IdDocumentType.passport => 'national_id',
       };
 }
 

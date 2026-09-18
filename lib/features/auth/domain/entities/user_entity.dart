@@ -47,8 +47,9 @@ extension UserRoleX on UserRole {
 
   /// Parse from Convex string value.
   static UserRole fromConvex(String value) {
+    final normalized = value.toLowerCase().trim();
     return UserRole.values.firstWhere(
-      (r) => r.name == value,
+      (r) => r.name == normalized,
       orElse: () => UserRole.client,
     );
   }

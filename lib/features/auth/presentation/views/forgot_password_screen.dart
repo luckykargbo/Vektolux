@@ -79,11 +79,12 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   Future<void> _handleSendOtp() async {
-    final id = _identifierController.text.trim();
-    if (id.isEmpty) {
+    final raw = _identifierController.text.trim();
+    if (raw.isEmpty) {
       setState(() => _errorMessage = 'Please enter your phone number or email address');
       return;
     }
+    final id = raw.contains('@') ? raw.toLowerCase() : raw;
 
     setState(() {
       _isSubmitting = true;
@@ -105,6 +106,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       }
 
       final data = result.value as Map<String, dynamic>;
+      if (data['success'] == false) {
+        throw Exception(data['message']?.toString() ?? 'Failed to send reset code');
+      }
+
       setState(() {
         _isSubmitting = false;
         _currentStep = 1;
@@ -126,6 +131,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   Future<void> _handleVerifyAndReset() async {
+    final raw = _identifierController.text.trim();
+    final id = raw.contains('@') ? raw.toLowerCase() : raw;
     final otp = _otpController.text.trim();
     final newPass = _newPasswordController.text;
     final confirmPass = _confirmPasswordController.text;
@@ -153,7 +160,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       final result = await convexClient.mutation(
         'auth:verifyResetOtpAndSetPassword',
         args: {
-          'identifier': _identifierController.text.trim(),
+          'identifier': id,
           'otpCode': otp,
           'newPassword': newPass,
         },
@@ -161,6 +168,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
       if (!result.success || result.value == null) {
         throw Exception(result.errorMessage ?? 'Verification failed');
+      }
+
+      final data = result.value as Map<String, dynamic>;
+      if (data['success'] == false) {
+        throw Exception(data['message']?.toString() ?? 'Verification failed');
       }
 
       if (mounted) {
@@ -339,6 +351,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 // Identifier Input
                 TextFormField(
                   controller: _identifierController,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  textCapitalization: TextCapitalization.none,
                   keyboardType: _deliveryChannel == 'email'
                       ? TextInputType.emailAddress
                       : TextInputType.phone,

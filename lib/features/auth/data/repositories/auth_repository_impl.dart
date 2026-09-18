@@ -96,10 +96,14 @@ class AuthRepositoryImpl implements AuthRepository {
     required String identifier,
     required String password,
   }) async {
+    final sanitizedIdentifier = identifier.trim().contains('@')
+        ? identifier.trim().toLowerCase()
+        : identifier.trim();
+
     final result = await _convexClient.mutation(
       'auth:loginWithPhoneOrEmail',
       args: {
-        'identifier': identifier,
+        'identifier': sanitizedIdentifier,
         'password': password,
       },
     );

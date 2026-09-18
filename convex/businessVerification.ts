@@ -7,6 +7,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
+import { accountTypeEnum, idTypeEnum } from "./schema";
 
 // ═══════════════════════════════════════════════════════════════════════
 //                     GENERATE UPLOAD URL (STORAGE)
@@ -16,6 +17,145 @@ export const generateUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
     return await ctx.storage.generateUploadUrl();
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//            SUBMIT TIERED VENDOR VERIFICATION & BIOMETRICS
+// ═══════════════════════════════════════════════════════════════════════
+
+export const submitTieredVerification = mutation({
+  args: {
+    userId: v.string(),
+    sessionToken: v.optional(v.string()),
+    accountType: accountTypeEnum,
+    idType: idTypeEnum,
+    idNumber: v.string(),
+    idPhotoStorageId: v.id("_storage"),
+    selfieStorageId: v.id("_storage"),
+    businessName: v.optional(v.string()),
+    tin: v.optional(v.string()),
+    livenessScore: v.optional(v.number()),
+    faceMatchScore: v.optional(v.number()),
+    livenessPassed: v.boolean(),
+    faceMatchPassed: v.boolean(),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    status: v.string(),
+    errorMessage: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    const userDocId = ctx.db.normalizeId("users", args.userId);
+    if (!userDocId) {
+      return { success: false, status: "REJECTED", errorMessage: "User not found." };
+    }
+
+    const user = await ctx.db.get(userDocId);
+    if (!user || !user.isActive) {
+      return { success: false, status: "REJECTED", errorMessage: "User account is invalid or inactive." };
+    }
+
+    if (args.sessionToken && user.sessionToken && user.sessionToken !== args.sessionToken) {
+      return { success: false, status: "REJECTED", errorMessage: "Invalid session. Please authenticate again." };
+    }
+
+    // 1. Validate Business tier requirements
+    if (args.accountType === "BUSINESS") {
+      if (!args.businessName || !args.businessName.trim()) {
+        return { success: false, status: "REJECTED", errorMessage: "Registered business name is required for company verification." };
+      }
+      if (!args.tin || !args.tin.trim()) {
+        return { success: false, status: "REJECTED", errorMessage: "Tax Identification Number (TIN) is required for company verification." };
+      }
+    }
+
+    // 2. Resolve image URLs from storage
+    const idPhotoUrl = (await ctx.storage.getUrl(args.idPhotoStorageId)) ?? "";
+    const selfieUrl = (await ctx.storage.getUrl(args.selfieStorageId)) ?? "";
+    const now = Date.now();
+
+    // 3. Biometric Liveness & Face Match Check: Auto-reject if failed
+    if (!args.livenessPassed || !args.faceMatchPassed) {
+      const rejectionReason = "Automated biometric verification failed: Live face scan did not pass liveness detection or failed to match the National ID document photo. Please retake your photos in a well-lit environment.";
+      
+      await ctx.db.patch(userDocId, {
+        accountType: args.accountType,
+        idType: args.idType,
+        idNumber: args.idNumber.trim(),
+        idPhotoUrl,
+        idPhotoStorageId: args.idPhotoStorageId,
+        selfieUrl,
+        selfieStorageId: args.selfieStorageId,
+        businessName: args.businessName?.trim(),
+        tin: args.tin?.trim(),
+        tinNumber: args.tin?.trim(),
+        verificationStatus: "REJECTED",
+        isVerified: false,
+        rejectionReason,
+        updatedAt: now,
+      });
+
+      return {
+        success: false,
+        status: "REJECTED",
+        errorMessage: rejectionReason,
+      };
+    }
+
+    // 4. Biometrics Passed -> Transition to PENDING_REVIEW for Admin Audit
+    const cleanBusinessName = args.accountType === "BUSINESS" ? args.businessName?.trim() : undefined;
+    const cleanTin = args.accountType === "BUSINESS" ? args.tin?.trim() : undefined;
+
+    await ctx.db.patch(userDocId, {
+      accountType: args.accountType,
+      idType: args.idType,
+      idNumber: args.idNumber.trim(),
+      idPhotoUrl,
+      idPhotoStorageId: args.idPhotoStorageId,
+      selfieUrl,
+      selfieStorageId: args.selfieStorageId,
+      documentUrl: idPhotoUrl,
+      documentStorageId: args.idPhotoStorageId,
+      businessName: cleanBusinessName,
+      tin: cleanTin,
+      tinNumber: cleanTin,
+      verificationStatus: "PENDING_REVIEW",
+      isVerified: false,
+      rejectionReason: undefined,
+      updatedAt: now,
+    });
+
+    // 5. Update or create merchant_profile
+    const existingMerchantProfile = await ctx.db
+      .query("merchant_profiles")
+      .withIndex("by_user", (q) => q.eq("userId", userDocId))
+      .first();
+
+    if (existingMerchantProfile) {
+      await ctx.db.patch(existingMerchantProfile._id, {
+        businessName: cleanBusinessName,
+        tinNumber: cleanTin,
+        documentUrl: idPhotoUrl,
+        verificationStatus: "pending",
+        reviewNotes: undefined,
+        updatedAt: now,
+      });
+    } else if (user.role === "agent" || user.role === "merchant" || args.accountType === "BUSINESS") {
+      await ctx.db.insert("merchant_profiles", {
+        userId: userDocId,
+        businessName: cleanBusinessName,
+        tinNumber: cleanTin,
+        documentUrl: idPhotoUrl,
+        verificationStatus: "pending",
+        updatedAt: now,
+      });
+    }
+
+    return {
+      success: true,
+      status: "PENDING_REVIEW",
+    };
   },
 });
 
@@ -201,55 +341,90 @@ export const getVerificationQueue = query({
       throw new Error("Unauthorized: Invalid session token.");
     }
 
-    // 2. Fetch users with role 'agent' (or agents and merchants)
+    // 2. Fetch users based on filter
     const filter = args.statusFilter ?? "pending";
 
-    let agentsQuery;
-    if (filter !== "all") {
-      agentsQuery = await ctx.db
-        .query("users")
-        .withIndex("by_role_verification", (q) =>
-          q.eq("role", "agent").eq("verificationStatus", filter as any)
-        )
-        .take(100);
-    } else {
-      agentsQuery = await ctx.db
-        .query("users")
-        .withIndex("by_role", (q) => q.eq("role", "agent"))
-        .take(100);
-    }
+    const allUsers = await ctx.db.query("users").take(200);
 
-    // Also include any user who has businessName or documentStorageId submitted if filter matches
-    const allMatching = agentsQuery;
+    const filtered = allUsers.filter((u) => {
+      const status = (u.verificationStatus as string | undefined) ?? (u.isVerified ? "approved" : "unverified");
+      const normStatus = status.toLowerCase();
 
-    // Resolve documents into short-lived signed URLs for admin review
+      // Check if user submitted any verification artifacts
+      const hasSubmission = Boolean(
+        u.idPhotoStorageId ||
+        u.selfieStorageId ||
+        u.documentStorageId ||
+        u.documentUrl ||
+        u.idPhotoUrl ||
+        u.selfieUrl ||
+        u.tinNumber ||
+        u.tin ||
+        u.businessName ||
+        u.accountType
+      );
+
+      if (filter === "all") {
+        return hasSubmission || u.role === "agent" || u.role === "merchant";
+      }
+      if (filter === "pending") {
+        return (normStatus === "pending" || normStatus === "pending_review") && hasSubmission;
+      }
+      if (filter === "approved") {
+        return (normStatus === "approved" || normStatus === "verified") && hasSubmission;
+      }
+      if (filter === "rejected") {
+        return normStatus === "rejected";
+      }
+      return false;
+    });
+
+    // Resolve documents and selfies into signed URLs for admin review
     const results = await Promise.all(
-      allMatching.map(async (agent) => {
-        let signedUrl: string | undefined = undefined;
-        if (agent.documentStorageId) {
+      filtered.map(async (u) => {
+        let idPhotoUrl: string | undefined = undefined;
+        if (u.idPhotoStorageId) {
           try {
-            signedUrl = (await ctx.storage.getUrl(agent.documentStorageId)) ?? undefined;
-          } catch {
-            signedUrl = agent.documentUrl;
-          }
-        } else if (agent.documentUrl) {
-          signedUrl = agent.documentUrl;
+            idPhotoUrl = (await ctx.storage.getUrl(u.idPhotoStorageId)) ?? undefined;
+          } catch {}
+        } else if (u.documentStorageId) {
+          try {
+            idPhotoUrl = (await ctx.storage.getUrl(u.documentStorageId)) ?? undefined;
+          } catch {}
         }
+        if (!idPhotoUrl) idPhotoUrl = u.idPhotoUrl || u.documentUrl;
+
+        let selfieUrl: string | undefined = undefined;
+        if (u.selfieStorageId) {
+          try {
+            selfieUrl = (await ctx.storage.getUrl(u.selfieStorageId)) ?? undefined;
+          } catch {}
+        }
+        if (!selfieUrl) selfieUrl = u.selfieUrl;
+
+        const isBusiness = u.accountType === "BUSINESS" || Boolean(u.tinNumber && u.tinNumber !== "N/A" && u.tinNumber.length > 2);
+        const accountType = u.accountType ?? (isBusiness ? "BUSINESS" : "INDIVIDUAL");
 
         return {
-          userId: agent._id as string,
-          name: agent.name,
-          email: agent.email,
-          phone: agent.phone,
-          businessName: agent.businessName || "Unnamed Business",
-          tinNumber: agent.tinNumber || "N/A",
-          documentUrl: signedUrl,
-          documentStorageId: agent.documentStorageId ? (agent.documentStorageId as string) : undefined,
-          verificationStatus: agent.verificationStatus ?? (agent.isVerified ? "verified" : "unverified"),
-          rejectionReason: agent.rejectionReason,
-          verifiedAt: agent.verifiedAt,
-          createdAt: agent._creationTime,
-          updatedAt: agent.updatedAt,
+          userId: u._id as string,
+          name: u.name,
+          email: u.email,
+          phone: u.phone,
+          accountType,
+          idType: u.idType ?? (u.idDocumentType as any) ?? "NATIONAL_ID",
+          idNumber: u.idNumber || "N/A",
+          idPhotoUrl,
+          selfieUrl,
+          businessName: u.businessName || (accountType === "BUSINESS" ? "Registered Company" : "Individual Agent / Owner"),
+          tin: u.tin || u.tinNumber || "N/A",
+          tinNumber: u.tinNumber || u.tin || "N/A",
+          documentUrl: idPhotoUrl,
+          documentStorageId: u.idPhotoStorageId ? (u.idPhotoStorageId as string) : (u.documentStorageId ? (u.documentStorageId as string) : undefined),
+          verificationStatus: u.verificationStatus ?? (u.isVerified ? "approved" : "pending"),
+          rejectionReason: u.rejectionReason,
+          verifiedAt: u.verifiedAt,
+          createdAt: u._creationTime,
+          updatedAt: u.updatedAt,
         };
       })
     );
@@ -301,6 +476,7 @@ export const approveAgent = mutation({
     // 3. Set approved status and log audit metadata
     await ctx.db.patch(targetAgentId, {
       verificationStatus: "approved",
+      verificationBadge: "GREEN_TICK",
       isVerified: true,
       isVerifiedAgent: true,
       verifiedAt: now,

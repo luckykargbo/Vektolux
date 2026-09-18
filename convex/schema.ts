@@ -17,10 +17,38 @@ export const userRole = v.union(
   v.literal("buyer"),
   v.literal("seller"),
   v.literal("property_owner"),
-  v.literal("admin")
+  v.literal("admin"),
+  v.literal("Merchant"),
+  v.literal("Client"),
+  v.literal("Agent"),
+  v.literal("Driver"),
+  v.literal("Admin"),
+  v.literal("MERCHANT"),
+  v.literal("CLIENT"),
+  v.literal("AGENT"),
+  v.literal("DRIVER"),
+  v.literal("ADMIN")
+);
+
+export const accountTypeEnum = v.union(
+  v.literal("INDIVIDUAL"),
+  v.literal("BUSINESS")
+);
+
+export const idTypeEnum = v.union(
+  v.literal("NATIONAL_ID"),
+  v.literal("VOTER_ID"),
+  v.literal("DRIVER_LICENSE"),
+  v.literal("national_id"),
+  v.literal("ecowas_card"),
+  v.literal("passport")
 );
 
 export const verificationStatusEnum = v.union(
+  v.literal("UNVERIFIED"),
+  v.literal("PENDING_REVIEW"),
+  v.literal("VERIFIED"),
+  v.literal("REJECTED"),
   v.literal("unverified"),
   v.literal("pending"),
   v.literal("verified"),
@@ -32,7 +60,10 @@ export const verificationStatusEnum = v.union(
 export const idDocumentTypeEnum = v.union(
   v.literal("national_id"),
   v.literal("ecowas_card"),
-  v.literal("passport")
+  v.literal("passport"),
+  v.literal("NATIONAL_ID"),
+  v.literal("VOTER_ID"),
+  v.literal("DRIVER_LICENSE")
 );
 
 export const verificationBadgeEnum = v.union(
@@ -315,7 +346,17 @@ export default defineSchema({
     idDocumentType: v.optional(idDocumentTypeEnum),
     verificationReferenceId: v.optional(v.string()),
     rejectionReason: v.optional(v.string()),
+
+    // Tiered Vendor Verification & Biometrics
+    accountType: v.optional(accountTypeEnum),
+    idType: v.optional(idTypeEnum),
+    idNumber: v.optional(v.string()),
+    idPhotoUrl: v.optional(v.string()),
+    idPhotoStorageId: v.optional(v.id("_storage")),
+    selfieUrl: v.optional(v.string()),
+    selfieStorageId: v.optional(v.id("_storage")),
     businessName: v.optional(v.string()),
+    tin: v.optional(v.string()),
     tinNumber: v.optional(v.string()),
     documentUrl: v.optional(v.string()),
     documentStorageId: v.optional(v.id("_storage")),
@@ -379,6 +420,7 @@ export default defineSchema({
     .index("by_geohash", ["currentGeohash"])
     .index("by_verification_status", ["verificationStatus"])
     .index("by_role_verification", ["role", "verificationStatus"])
+    .index("by_account_verification", ["accountType", "verificationStatus"])
     .index("by_sessionToken", ["sessionToken"])
     .searchIndex("search_name", {
       searchField: "name",

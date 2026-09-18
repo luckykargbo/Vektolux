@@ -98,6 +98,135 @@ function generateSessionToken(): string {
     .join("");
 }
 
+// ─── Multi-Format Phone Candidates Generator ────────────────────────
+export function getPhoneCandidates(raw: string): string[] {
+  const trimmed = raw.trim();
+  const cleaned = trimmed.replace(/[^\d+]/g, "");
+  const digits = cleaned.replace(/\D/g, "");
+  if (!digits) return [trimmed];
+
+  const candidates = new Set<string>();
+  candidates.add(trimmed);
+  candidates.add(cleaned);
+  candidates.add(digits);
+  candidates.add(`+${digits}`);
+
+  if (digits.startsWith("232")) {
+    const national = digits.slice(3); // e.g. "0010819"
+    candidates.add(national);
+    candidates.add(`+232${national}`);
+    candidates.add(`232${national}`);
+    candidates.add(`0${national}`);
+    const stripped = national.replace(/^0+/, "");
+    if (stripped) {
+      candidates.add(stripped);
+      candidates.add(`+232${stripped}`);
+      candidates.add(`232${stripped}`);
+      candidates.add(`0${stripped}`);
+    }
+  } else {
+    const stripped = digits.replace(/^0+/, "");
+    candidates.add(`+232${digits}`);
+    candidates.add(`232${digits}`);
+    candidates.add(`0${digits}`);
+    if (stripped) {
+      candidates.add(stripped);
+      candidates.add(`+232${stripped}`);
+      candidates.add(`232${stripped}`);
+      candidates.add(`0${stripped}`);
+    }
+  }
+
+  return Array.from(candidates);
+}
+
+// ─── Case-Insensitive & Format-Agnostic User Lookup ──────────────────
+export async function findUserByIdentifier(ctx: any, identifier: string) {
+  const raw = identifier.trim();
+  if (!raw) return null;
+
+  const isEmail = raw.includes("@");
+
+  if (isEmail) {
+    const lower = raw.toLowerCase();
+
+    // 1. Exact index match on lowercase email
+    let user = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q: any) => q.eq("email", lower))
+      .first();
+    if (user) return user;
+
+    // 2. Exact index match on raw casing
+    if (raw !== lower) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q: any) => q.eq("email", raw))
+        .first();
+      if (user) return user;
+    }
+
+    // 3. Fallback scan matching normalized email
+    const allUsers = await ctx.db.query("users").collect();
+    const matched = allUsers.find(
+      (u: any) => u.email && u.email.trim().toLowerCase() === lower
+    );
+    if (matched) return matched;
+  } else {
+    // Phone lookup
+    const candidates = getPhoneCandidates(raw);
+
+    // 1. Try index query with each candidate variation
+    for (const cand of candidates) {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q: any) => q.eq("phone", cand))
+        .first();
+      if (user) return user;
+    }
+
+    // 2. Fallback scan matching normalized digits
+    const targetDigits = raw.replace(/\D/g, "");
+    if (targetDigits.length >= 6) {
+      const allUsers = await ctx.db.query("users").collect();
+      const matched = allUsers.find((u: any) => {
+        if (!u.phone) return false;
+        const uDigits = u.phone.replace(/\D/g, "");
+        if (uDigits === targetDigits) return true;
+        const targetSuffix = targetDigits.replace(/^232/, "");
+        const uSuffix = uDigits.replace(/^232/, "");
+        if (
+          targetSuffix &&
+          uSuffix &&
+          (targetSuffix === uSuffix ||
+            targetSuffix.endsWith(uSuffix) ||
+            uSuffix.endsWith(targetSuffix))
+        ) {
+          return true;
+        }
+        return false;
+      });
+      if (matched) return matched;
+    }
+  }
+
+  // Cross-lookup fallback (e.g. user typed email without @ or digits that match phone)
+  const lower = raw.toLowerCase();
+  let fallbackUser = await ctx.db
+    .query("users")
+    .withIndex("by_email", (q: any) => q.eq("email", lower))
+    .first();
+  if (fallbackUser) return fallbackUser;
+
+  fallbackUser = await ctx.db
+    .query("users")
+    .withIndex("by_phone", (q: any) => q.eq("phone", raw))
+    .first();
+  if (fallbackUser) return fallbackUser;
+
+  return null;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //                        REGISTER USER
 // ═══════════════════════════════════════════════════════════════════════
@@ -127,11 +256,11 @@ export const registerUser = mutation({
     avatarUrl: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
-    // 1. Check for duplicate email
-    const existingByEmail = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", args.email))
-      .first();
+    const normalizedEmail = args.email.trim().toLowerCase();
+    const normalizedPhone = args.phone.trim();
+
+    // 1. Check for duplicate email (case-insensitive)
+    const existingByEmail = await findUserByIdentifier(ctx, normalizedEmail);
     if (existingByEmail) {
       return {
         success: false,
@@ -140,10 +269,7 @@ export const registerUser = mutation({
     }
 
     // 2. Check for duplicate phone
-    const existingByPhone = await ctx.db
-      .query("users")
-      .withIndex("by_phone", (q) => q.eq("phone", args.phone))
-      .first();
+    const existingByPhone = await findUserByIdentifier(ctx, normalizedPhone);
     if (existingByPhone) {
       return {
         success: false,
@@ -156,14 +282,15 @@ export const registerUser = mutation({
     const sessionToken = generateSessionToken();
     const now = Date.now();
 
-    const isRestrictedRole = args.role === "agent" || args.role === "merchant";
+    const normalizedRole = args.role.toLowerCase();
+    const isRestrictedRole = normalizedRole === "agent" || normalizedRole === "merchant";
     const verificationStatus = isRestrictedRole ? "pending" : "unverified";
 
     // 4. Insert user record
     const userId = await ctx.db.insert("users", {
-      name: args.name,
-      email: args.email,
-      phone: args.phone,
+      name: args.name.trim(),
+      email: normalizedEmail,
+      phone: normalizedPhone,
       role: args.role,
       avatarUrl: args.avatarUrl,
       passwordHash,
@@ -256,101 +383,99 @@ export const loginWithPhoneOrEmail = mutation({
     driver_status: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
-    // Try email first, then phone
-    let user = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", args.identifier))
-      .first();
+    try {
+      const sanitizedId = args.identifier.trim();
+      let user = await findUserByIdentifier(ctx, sanitizedId);
 
-    if (!user) {
-      user = await ctx.db
-        .query("users")
-        .withIndex("by_phone", (q) => q.eq("phone", args.identifier))
-        .first();
-    }
-
-    if (!user) {
-      return {
-        success: false,
-        errorMessage: "No account found with that email or phone number.",
-      };
-    }
-
-    if (!user.isActive) {
-      return {
-        success: false,
-        errorMessage: "This account has been deactivated. Please contact support.",
-      };
-    }
-
-    // Auto-heal admin credentials if passwordHash is missing or needs sync
-    if (user.email === "admin@vektolux.sl" && args.password === "password123") {
-      const valid = user.passwordHash ? await verifyPassword(args.password, user.passwordHash) : false;
-      if (!valid) {
-        const freshHash = await hashPassword("password123");
-        await ctx.db.patch(user._id, {
-          passwordHash: freshHash,
-          role: "admin",
-          isActive: true,
-          isVerified: true,
-          updatedAt: Date.now(),
-        });
-        user = (await ctx.db.get(user._id))!;
+      if (!user) {
+        return {
+          success: false,
+          errorMessage: "No account found with that email or phone number. Please check your credentials or register.",
+        };
       }
-    }
 
-    if (!user.passwordHash) {
+      if (!user.isActive) {
+        return {
+          success: false,
+          errorMessage: "This account has been deactivated. Please contact support.",
+        };
+      }
+
+      // Auto-heal admin credentials if passwordHash is missing or needs sync
+      if (user.email?.toLowerCase() === "admin@vektolux.sl" && args.password === "password123") {
+        const valid = user.passwordHash ? await verifyPassword(args.password, user.passwordHash) : false;
+        if (!valid) {
+          const freshHash = await hashPassword("password123");
+          await ctx.db.patch(user._id, {
+            passwordHash: freshHash,
+            role: "admin",
+            isActive: true,
+            isVerified: true,
+            updatedAt: Date.now(),
+          });
+          user = (await ctx.db.get(user._id))!;
+        }
+      }
+
+      if (!user.passwordHash) {
+        return {
+          success: false,
+          errorMessage: "Password not set for this account. Please use 'Forgot Password' to set your password.",
+        };
+      }
+
+      // Verify password
+      const isPasswordValid = await verifyPassword(args.password, user.passwordHash);
+      if (!isPasswordValid) {
+        return {
+          success: false,
+          errorMessage: "Invalid email/phone or password. Please try again or use 'Forgot Password' to reset.",
+        };
+      }
+
+      // Generate new session token
+      const sessionToken = generateSessionToken();
+      await ctx.db.patch(user._id, {
+        sessionToken,
+        updatedAt: Date.now(),
+      });
+
+      const isDriverVerified = Boolean(
+        user.is_driver_verified ?? user.isVerifiedDriver ?? (user.role?.toLowerCase() === "driver")
+      );
+      const activeMode = user.active_mode ?? (user.activeRole === "driver" ? "driver" : "passenger");
+      const driverStatus = user.driver_status ?? (user.role?.toLowerCase() === "driver" ? "online" : "offline");
+
+      return {
+        success: true,
+        userId: user._id as string,
+        sessionToken,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        isVerified: user.isVerified,
+        verificationStatus: user.verificationStatus ?? (user.isVerified ? "verified" : "unverified"),
+        businessName: user.businessName,
+        tinNumber: user.tinNumber,
+        documentUrl: user.documentUrl,
+        rejectionReason: user.rejectionReason,
+        verifiedAt: user.verifiedAt,
+        avatarUrl: user.avatarUrl,
+        walletAddress: user.walletAddress,
+        bio: user.bio,
+        kycStatus: user.kycStatus,
+        active_mode: activeMode,
+        is_driver_verified: isDriverVerified,
+        driver_status: driverStatus,
+      };
+    } catch (err: any) {
+      console.error("[loginWithPhoneOrEmail] error:", err);
       return {
         success: false,
-        errorMessage: "Password not set for this account. Please use external login.",
+        errorMessage: err?.message ?? "An error occurred during login. Please try again.",
       };
     }
-
-    // Verify password
-    const isPasswordValid = await verifyPassword(args.password, user.passwordHash);
-    if (!isPasswordValid) {
-      return {
-        success: false,
-        errorMessage: "Invalid password. Please try again.",
-      };
-    }
-
-    // Generate new session token
-    const sessionToken = generateSessionToken();
-    await ctx.db.patch(user._id, {
-      sessionToken,
-      updatedAt: Date.now(),
-    });
-
-    const isDriverVerified = Boolean(
-      user.is_driver_verified ?? user.isVerifiedDriver ?? (user.role === "driver")
-    );
-    const activeMode = user.active_mode ?? (user.activeRole === "driver" ? "driver" : "passenger");
-    const driverStatus = user.driver_status ?? (user.role === "driver" ? "online" : "offline");
-
-    return {
-      success: true,
-      userId: user._id as string,
-      sessionToken,
-      name: user.name,
-      email: user.email,
-      phone: user.phone,
-      role: user.role,
-      isVerified: user.isVerified,
-      verificationStatus: user.verificationStatus ?? (user.isVerified ? "verified" : "unverified"),
-      businessName: user.businessName,
-      tinNumber: user.tinNumber,
-      documentUrl: user.documentUrl,
-      rejectionReason: user.rejectionReason,
-      verifiedAt: user.verifiedAt,
-      avatarUrl: user.avatarUrl,
-      walletAddress: user.walletAddress,
-      bio: user.bio,
-      kycStatus: user.kycStatus,
-      active_mode: activeMode,
-      is_driver_verified: isDriverVerified,
-      driver_status: driverStatus,
-    };
   },
 });
 
@@ -549,78 +674,106 @@ export const sendPasswordResetOtp = mutation({
     demoCode: v.optional(v.string()), // Returned in dev/sandbox for instant testing
   }),
   handler: async (ctx, args) => {
-    const rawId = args.identifier.trim();
-    if (!rawId) {
-      throw new Error("Phone number or email is required");
-    }
+    try {
+      const rawId = args.identifier.trim();
+      if (!rawId) {
+        return {
+          success: false,
+          message: "Phone number or email is required",
+          expiresInSeconds: 0,
+        };
+      }
 
-    // Check if user exists by email or phone
-    const user = await ctx.db
-      .query("users")
-      .filter((q) =>
-        q.or(
-          q.eq(q.field("email"), rawId),
-          q.eq(q.field("phone"), rawId),
-          q.eq(q.field("phone"), rawId.startsWith("+") ? rawId : `+232${rawId.replace(/^0+/, "")}`)
-        )
-      )
-      .first();
+      // Check if user exists by email or phone (case-insensitive & format-agnostic)
+      const user = await findUserByIdentifier(ctx, rawId);
 
-    if (!user) {
-      throw new Error("No account registered with that email or phone number");
-    }
+      if (!user) {
+        return {
+          success: false,
+          message: "No account registered with that email or phone number",
+          expiresInSeconds: 0,
+        };
+      }
 
-    const now = Date.now();
-    const expiresInSeconds = 600; // 10 minutes
-    const expiresAt = now + expiresInSeconds * 1000;
+      const now = Date.now();
+      const expiresInSeconds = 600; // 10 minutes
+      const expiresAt = now + expiresInSeconds * 1000;
 
-    // Generate secure 6-digit numeric OTP
-    const otpCode = (100000 + Math.floor(Math.random() * 900000)).toString();
+      // Generate secure 6-digit numeric OTP
+      const otpCode = (100000 + Math.floor(Math.random() * 900000)).toString();
 
-    // Invalidate previous active OTPs for this identifier
-    const existingOtps = await ctx.db
-      .query("password_resets")
-      .withIndex("by_identifier", (q) => q.eq("identifier", rawId))
-      .filter((q) => q.eq(q.field("isUsed"), false))
-      .collect();
+      // Normalize key for storing OTP
+      const normalizedKey = rawId.includes("@")
+        ? rawId.toLowerCase()
+        : (user.email ? user.email.toLowerCase() : rawId);
 
-    for (const oldOtp of existingOtps) {
-      await ctx.db.patch(oldOtp._id, { isUsed: true });
-    }
+      // Invalidate previous active OTPs for this identifier (both raw and normalized)
+      const existingOtps = await ctx.db
+        .query("password_resets")
+        .withIndex("by_identifier", (q) => q.eq("identifier", normalizedKey))
+        .filter((q) => q.eq(q.field("isUsed"), false))
+        .collect();
 
-    // Insert new OTP record
-    await ctx.db.insert("password_resets", {
-      identifier: rawId,
-      deliveryChannel: args.deliveryChannel,
-      otpCode,
-      expiresAt,
-      isUsed: false,
-      createdAt: now,
-    });
+      for (const oldOtp of existingOtps) {
+        await ctx.db.patch(oldOtp._id, { isUsed: true });
+      }
 
-    // Dispatch real email via Resend if email channel or email identifier
-    if (args.deliveryChannel === "email" || rawId.includes("@")) {
-      const emailTarget = rawId.includes("@") ? rawId : user.email;
-      await ctx.scheduler.runAfter(0, internal.emails.sendOtpEmail, {
-        to: emailTarget,
+      if (rawId !== normalizedKey) {
+        const altOtps = await ctx.db
+          .query("password_resets")
+          .withIndex("by_identifier", (q) => q.eq("identifier", rawId))
+          .filter((q) => q.eq(q.field("isUsed"), false))
+          .collect();
+        for (const oldOtp of altOtps) {
+          await ctx.db.patch(oldOtp._id, { isUsed: true });
+        }
+      }
+
+      // Insert new OTP record
+      await ctx.db.insert("password_resets", {
+        identifier: normalizedKey,
+        deliveryChannel: args.deliveryChannel,
         otpCode,
-        recipientName: user.name,
+        expiresAt,
+        isUsed: false,
+        createdAt: now,
       });
+
+      // Dispatch real email via Resend if email channel or email identifier
+      if (args.deliveryChannel === "email" || rawId.includes("@")) {
+        const emailTarget = rawId.includes("@") ? rawId.toLowerCase() : (user.email || rawId);
+        try {
+          await ctx.scheduler.runAfter(0, internal.emails.sendOtpEmail, {
+            to: emailTarget,
+            otpCode,
+            recipientName: user.name ?? "User",
+          });
+        } catch (emailErr) {
+          console.warn("[sendPasswordResetOtp] Email dispatch warning:", emailErr);
+        }
+      }
+
+      const channelName =
+        args.deliveryChannel === "whatsapp"
+          ? "WhatsApp message"
+          : args.deliveryChannel === "sms"
+          ? "SMS text"
+          : "Email";
+
+      return {
+        success: true,
+        message: `Reset code dispatched via ${channelName} to ${rawId}`,
+        expiresInSeconds,
+        demoCode: otpCode, // Test code for zero-friction verification
+      };
+    } catch (err: any) {
+      console.error("[sendPasswordResetOtp] unhandled error:", err);
+      return {
+        success: false,
+        message: err?.message ?? "An unexpected server error occurred while sending the reset code.",
+        expiresInSeconds: 0,
+      };
     }
-
-    const channelName =
-      args.deliveryChannel === "whatsapp"
-        ? "WhatsApp message"
-        : args.deliveryChannel === "sms"
-        ? "SMS text"
-        : "Email";
-
-    return {
-      success: true,
-      message: `Reset code dispatched via ${channelName} to ${rawId}`,
-      expiresInSeconds,
-      demoCode: otpCode, // Test code for zero-friction verification
-    };
   },
 });
 
@@ -635,63 +788,114 @@ export const verifyResetOtpAndSetPassword = mutation({
     message: v.string(),
   }),
   handler: async (ctx, args) => {
-    const rawId = args.identifier.trim();
-    const code = args.otpCode.trim();
+    try {
+      const rawId = args.identifier.trim();
+      const code = args.otpCode.trim();
 
-    if (!code || code.length !== 6) {
-      throw new Error("Please enter a valid 6-digit verification code");
-    }
-    if (!args.newPassword || args.newPassword.length < 6) {
-      throw new Error("New password must be at least 6 characters long");
-    }
+      if (!code || code.length !== 6) {
+        return {
+          success: false,
+          message: "Please enter a valid 6-digit verification code",
+        };
+      }
+      if (!args.newPassword || args.newPassword.length < 6) {
+        return {
+          success: false,
+          message: "New password must be at least 6 characters long",
+        };
+      }
 
-    const now = Date.now();
+      const now = Date.now();
 
-    // Query active OTP
-    const resetRecord = await ctx.db
-      .query("password_resets")
-      .withIndex("by_identifier_code", (q) =>
-        q.eq("identifier", rawId).eq("otpCode", code)
-      )
-      .first();
+      // Find the user first
+      const user = await findUserByIdentifier(ctx, rawId);
+      if (!user) {
+        return {
+          success: false,
+          message: "Associated user account not found",
+        };
+      }
 
-    if (!resetRecord || resetRecord.isUsed || resetRecord.expiresAt < now) {
-      throw new Error("Invalid or expired verification code. Please request a new one.");
-    }
+      const normalizedKey = rawId.includes("@")
+        ? rawId.toLowerCase()
+        : (user.email ? user.email.toLowerCase() : rawId);
 
-    // Find the user
-    const user = await ctx.db
-      .query("users")
-      .filter((q) =>
-        q.or(
-          q.eq(q.field("email"), rawId),
-          q.eq(q.field("phone"), rawId),
-          q.eq(q.field("phone"), rawId.startsWith("+") ? rawId : `+232${rawId.replace(/^0+/, "")}`)
+      // Query active OTP with normalized key
+      let resetRecord = await ctx.db
+        .query("password_resets")
+        .withIndex("by_identifier_code", (q) =>
+          q.eq("identifier", normalizedKey).eq("otpCode", code)
         )
-      )
-      .first();
+        .first();
 
-    if (!user) {
-      throw new Error("Associated user account not found");
+      if (!resetRecord && rawId !== normalizedKey) {
+        resetRecord = await ctx.db
+          .query("password_resets")
+          .withIndex("by_identifier_code", (q) =>
+            q.eq("identifier", rawId).eq("otpCode", code)
+          )
+          .first();
+      }
+
+      if (!resetRecord || resetRecord.isUsed || resetRecord.expiresAt < now) {
+        return {
+          success: false,
+          message: "Invalid or expired verification code. Please request a new one.",
+        };
+      }
+
+      // Re-hash new password using PBKDF2
+      const passwordHash = await hashPassword(args.newPassword);
+      const newSessionToken = generateSessionToken();
+
+      // Update user record and invalidate older sessions
+      await ctx.db.patch(user._id, {
+        passwordHash,
+        sessionToken: newSessionToken,
+        updatedAt: now,
+      });
+
+      // Mark OTP used
+      await ctx.db.patch(resetRecord._id, { isUsed: true });
+
+      return {
+        success: true,
+        message: "Password has been successfully updated! You can now sign in.",
+      };
+    } catch (err: any) {
+      console.error("[verifyResetOtpAndSetPassword] error:", err);
+      return {
+        success: false,
+        message: err?.message ?? "Failed to verify code and reset password.",
+      };
     }
+  },
+});
 
-    // Re-hash new password using PBKDF2
-    const passwordHash = await hashPassword(args.newPassword);
-    const newSessionToken = generateSessionToken();
+// ═══════════════════════════════════════════════════════════════════════
+//                 DIAGNOSTIC QUERY: USER AUTH STATUS
+// ═══════════════════════════════════════════════════════════════════════
 
-    // Update user record and invalidate older sessions
-    await ctx.db.patch(user._id, {
-      passwordHash,
-      sessionToken: newSessionToken,
-      updatedAt: now,
-    });
-
-    // Mark OTP used
-    await ctx.db.patch(resetRecord._id, { isUsed: true });
-
+export const checkUserAuthStatus = query({
+  args: { identifier: v.string() },
+  handler: async (ctx, args) => {
+    const user = await findUserByIdentifier(ctx, args.identifier);
+    if (!user) return { exists: false };
     return {
-      success: true,
-      message: "Password has been successfully updated! You can now sign in.",
+      exists: true,
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      hasPasswordHash: !!user.passwordHash,
+      passwordHashType: user.passwordHash
+        ? user.passwordHash.includes(":")
+          ? "PBKDF2"
+          : "legacy/sha256"
+        : "none",
+      isVerified: user.isVerified,
+      isActive: user.isActive,
     };
   },
 });

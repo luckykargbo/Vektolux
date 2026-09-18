@@ -1,6 +1,6 @@
 "use client";
 // src/app/dashboard/verifications/page.tsx — Agent Verification Queue
-import { Clock, CheckCircle2, XCircle, ClipboardList, RefreshCcw, AlertTriangle, Mailbox, Mail, Phone, Building, Fingerprint, FileText } from "lucide-react";
+import { Clock, CheckCircle2, XCircle, ClipboardList, RefreshCcw, AlertTriangle, Mailbox, Mail, Phone, Building, Fingerprint, FileText, Camera, ShieldCheck, User } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 import type { AdminSession, VerificationEntry, VerificationStatus } from "@/lib/types";
 import styles from "./verifications.module.css";
@@ -135,7 +135,7 @@ export default function VerificationsPage() {
         <div>
           <h1 className={styles.title}>Verification Queue</h1>
           <p className={styles.subtitle}>
-            Review agent and merchant identity documents. Approve or reject applications.
+            Review agent and merchant identity documents with live biometric face matching. Approve or reject applications.
           </p>
         </div>
         <button onClick={() => loadQueue()} className={styles.refreshBtn} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -178,95 +178,170 @@ export default function VerificationsPage() {
       {/* Entry Cards */}
       {!loading && entries.length > 0 && (
         <div className={styles.entries}>
-          {entries.map((entry) => (
-            <div key={entry.userId} className={styles.entryCard}>
-              <div className={styles.entryTop}>
-                {/* Avatar */}
-                <div className={styles.avatar}>
-                  {(entry.name ?? "?").charAt(0).toUpperCase()}
-                </div>
+          {entries.map((entry) => {
+            const isBusiness = entry.accountType === "BUSINESS" || !!entry.businessName;
+            const docUrl = entry.idPhotoUrl || entry.documentUrl;
+            const selfieUrl = entry.selfieUrl;
 
-                {/* Info */}
-                <div className={styles.entryInfo}>
-                  <div className={styles.entryName}>{entry.name}</div>
-                  <div className={styles.entryMeta}>
-                    {entry.email && <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Mail size={14} /> {entry.email}</span>}
-                    {entry.phone && <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Phone size={14} /> {entry.phone}</span>}
+            return (
+              <div key={entry.userId} className={styles.entryCard}>
+                <div className={styles.entryTop}>
+                  {/* Avatar */}
+                  <div className={styles.avatar}>
+                    {(entry.name ?? "?").charAt(0).toUpperCase()}
                   </div>
-                  <div className={styles.entryMeta}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Building size={14} /> {entry.businessName}</span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Fingerprint size={14} /> TIN: {entry.tinNumber}</span>
-                  </div>
-                  {entry.documentType && (
-                    <div className={styles.entryMeta} style={{ marginTop: 4 }}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#e2e8f0', padding: '2px 8px', borderRadius: '12px', fontSize: '12px' }}>
-                         Type: {entry.documentType.replace('_', ' ').toUpperCase()}
+
+                  {/* Info */}
+                  <div className={styles.entryInfo}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span className={styles.entryName}>{entry.name}</span>
+                      <span className={`${styles.tierBadge} ${isBusiness ? styles.tierBusiness : styles.tierIndividual}`}>
+                        {isBusiness ? <Building size={12} /> : <User size={12} />}
+                        {isBusiness ? "REGISTERED BUSINESS" : "INDIVIDUAL AGENT"}
                       </span>
                     </div>
+
+                    <div className={styles.entryMeta}>
+                      {entry.email && <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Mail size={14} /> {entry.email}</span>}
+                      {entry.phone && <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Phone size={14} /> {entry.phone}</span>}
+                    </div>
+
+                    <div className={styles.entryMeta}>
+                      {isBusiness ? (
+                        <>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Building size={14} /> {entry.businessName || "Registered Agency"}</span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Fingerprint size={14} /> TIN: {entry.tinNumber || entry.tin || "Not Provided"}</span>
+                        </>
+                      ) : (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#94a3b8' }}>
+                          <ShieldCheck size={14} color="#60a5fa" /> Individual Identity Verified (No TIN required)
+                        </span>
+                      )}
+                    </div>
+
+                    {(entry.idType || entry.documentType || entry.idNumber) && (
+                      <div className={styles.entryMeta} style={{ marginTop: 4 }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#1e293b', border: '1px solid #334155', padding: '2px 8px', borderRadius: '12px', fontSize: '12px', color: '#cbd5e1' }}>
+                          <FileText size={12} /> {(entry.idType || entry.documentType || "ID").replace(/_/g, ' ').toUpperCase()} {entry.idNumber ? `• #${entry.idNumber}` : ''}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Status */}
+                  <div className={styles.entryStatus}>
+                    {statusBadge(entry.verificationStatus)}
+                  </div>
+                </div>
+
+                {/* Dates & Rejection Reason */}
+                <div className={styles.entryDates}>
+                  <span>Submitted: <strong>{formatDate(entry.createdAt)}</strong></span>
+                  {entry.verifiedAt && (
+                    <span>Reviewed: <strong>{formatDate(entry.verifiedAt)}</strong></span>
+                  )}
+                  {entry.rejectionReason && (
+                    <span className={styles.rejectReason}>
+                      Reason: "{entry.rejectionReason}"
+                    </span>
                   )}
                 </div>
 
-                {/* Status */}
-                <div className={styles.entryStatus}>
-                  {statusBadge(entry.verificationStatus)}
-                </div>
-              </div>
+                {/* Biometric Comparison Grid: Live Face Scan vs ID Document */}
+                {(selfieUrl || docUrl) ? (
+                  <div className={styles.biometricGrid}>
+                    {/* Left: Live Face Scan */}
+                    <div className={styles.biometricCard}>
+                      <div className={styles.biometricCardHeader}>
+                        <span className={styles.biometricTitle}>
+                          <Camera size={14} /> Live Face Scan
+                        </span>
+                        <span style={{ fontSize: 11, color: '#10b981', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}>
+                          <CheckCircle2 size={12} /> Liveness Verified {entry.livenessScore ? `(${Math.round(entry.livenessScore * 100)}%)` : ''}
+                        </span>
+                      </div>
+                      <div className={styles.biometricPreview}>
+                        {selfieUrl ? (
+                          <img src={selfieUrl} alt="Live Face Scan" className={styles.biometricImg} />
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, color: '#64748b', fontSize: 12 }}>
+                            <Camera size={24} />
+                            <span>No selfie recorded</span>
+                          </div>
+                        )}
+                      </div>
+                      {entry.faceMatchScore && (
+                        <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                          Facial Match Confidence: <strong>{(entry.faceMatchScore * 100).toFixed(1)}%</strong>
+                        </div>
+                      )}
+                    </div>
 
-              {/* Dates */}
-              <div className={styles.entryDates}>
-                <span>Submitted: <strong>{formatDate(entry.createdAt)}</strong></span>
-                {entry.verifiedAt && (
-                  <span>Reviewed: <strong>{formatDate(entry.verifiedAt)}</strong></span>
-                )}
-                {entry.rejectionReason && (
-                  <span className={styles.rejectReason}>
-                    Reason: "{entry.rejectionReason}"
-                  </span>
-                )}
-              </div>
-
-              {/* Document & Actions */}
-              <div className={styles.entryActions}>
-                {entry.documentUrl ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <img src={entry.documentUrl} alt="KYC Document" style={{ maxWidth: '200px', maxHeight: '150px', borderRadius: '8px', objectFit: 'cover' }} />
-                    <a
-                      href={entry.documentUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={styles.viewDocBtn}
-                      style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-                    >
-                      <FileText size={16} /> View Full Document
-                    </a>
+                    {/* Right: ID Document */}
+                    <div className={styles.biometricCard}>
+                      <div className={styles.biometricCardHeader}>
+                        <span className={styles.biometricTitle}>
+                          <FileText size={14} /> {(entry.idType || entry.documentType || "National ID").replace(/_/g, ' ')}
+                        </span>
+                        {entry.idNumber && (
+                          <span style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>
+                            #{entry.idNumber}
+                          </span>
+                        )}
+                      </div>
+                      <div className={styles.biometricPreview}>
+                        {docUrl ? (
+                          <img src={docUrl} alt="ID Document" className={styles.biometricImg} />
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, color: '#64748b', fontSize: 12 }}>
+                            <FileText size={24} />
+                            <span>No ID document</span>
+                          </div>
+                        )}
+                      </div>
+                      {docUrl && (
+                        <a
+                          href={docUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={styles.viewDocBtn}
+                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                        >
+                          <FileText size={14} /> View High-Res Document
+                        </a>
+                      )}
+                    </div>
                   </div>
                 ) : (
-                  <span className={styles.noDoc}>No document uploaded</span>
+                  <span className={styles.noDoc}>No verification documents uploaded</span>
                 )}
 
-                {entry.verificationStatus === "pending" && (
-                  <div className={styles.actionBtns}>
-                    <button
-                      onClick={() => handleApprove(entry)}
-                      disabled={actionId === entry.userId}
-                      className={styles.approveBtn}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                    >
-                      {actionId === entry.userId ? "…" : <><CheckCircle2 size={16} /> Approve</>}
-                    </button>
-                    <button
-                      onClick={() => { setRejectModal({ entry }); setRejectReason(""); }}
-                      disabled={actionId === entry.userId}
-                      className={styles.rejectBtn}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                    >
-                      <XCircle size={16} /> Reject
-                    </button>
-                  </div>
-                )}
+                {/* Actions */}
+                <div className={styles.entryActions}>
+                  {entry.verificationStatus === "pending" && (
+                    <div className={styles.actionBtns}>
+                      <button
+                        onClick={() => handleApprove(entry)}
+                        disabled={actionId === entry.userId}
+                        className={styles.approveBtn}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                      >
+                        {actionId === entry.userId ? "…" : <><CheckCircle2 size={16} /> Approve & Grant Green Tick</>}
+                      </button>
+                      <button
+                        onClick={() => { setRejectModal({ entry }); setRejectReason(""); }}
+                        disabled={actionId === entry.userId}
+                        className={styles.rejectBtn}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                      >
+                        <XCircle size={16} /> Reject
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

@@ -38,8 +38,11 @@ class _LoginScreenState extends State<LoginScreen> {
   void _onLogin() {
     if (_formKey.currentState?.validate() != true) return;
 
+    final raw = _identifierController.text.trim();
+    final identifier = raw.contains('@') ? raw.toLowerCase() : raw;
+
     context.read<AuthBloc>().add(LoginSubmittedEvent(
-      identifier: _identifierController.text.trim(),
+      identifier: identifier,
       password: _passwordController.text,
     ));
   }
@@ -133,6 +136,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextFormField(
                     controller: _identifierController,
                     keyboardType: TextInputType.emailAddress,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    textCapitalization: TextCapitalization.none,
                     style: const TextStyle(
                       color: Color(0xFF0F172A),
                       fontSize: 15,

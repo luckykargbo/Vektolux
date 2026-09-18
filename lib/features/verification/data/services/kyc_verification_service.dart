@@ -104,6 +104,12 @@ class KycVerificationServiceImpl implements KycVerificationService {
       IdDocumentType.nationalId =>
         // Sierra Leone National Identification Number (NIN): 8 to 12 alphanumeric characters
         RegExp(r'^[A-Za-z0-9]{8,12}$').hasMatch(cleaned),
+      IdDocumentType.voterId =>
+        // Sierra Leone Voter ID Card: 7 to 12 alphanumeric characters
+        RegExp(r'^[A-Za-z0-9]{7,12}$').hasMatch(cleaned),
+      IdDocumentType.driverLicense =>
+        // SLRSA Driver License: 6 to 12 alphanumeric characters
+        RegExp(r'^[A-Za-z0-9]{6,12}$').hasMatch(cleaned),
       IdDocumentType.ecowasCard =>
         // ECOWAS Biometric Card: 8 to 14 alphanumeric characters
         RegExp(r'^[A-Za-z0-9]{8,14}$').hasMatch(cleaned),
@@ -127,6 +133,10 @@ class KycVerificationServiceImpl implements KycVerificationService {
       return switch (docType) {
         IdDocumentType.nationalId =>
           'Invalid SL-NIN: Must be 8-12 alphanumeric characters (e.g. 1029384756 or SL8849201).',
+        IdDocumentType.voterId =>
+          'Invalid Voter ID: Must be 7-12 alphanumeric characters.',
+        IdDocumentType.driverLicense =>
+          'Invalid Driver License: Must be 6-12 alphanumeric characters.',
         IdDocumentType.ecowasCard =>
           'Invalid ECOWAS ID: Must be 8-14 alphanumeric characters.',
         IdDocumentType.passport =>
