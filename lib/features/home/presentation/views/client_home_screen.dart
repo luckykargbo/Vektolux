@@ -1662,8 +1662,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     final address = item['address'] as String? ?? 'Wilkinson Road, Freetown';
     final images = (item['imageUrls'] as List?)?.cast<String>() ?? [];
     final imageUrl = images.isNotEmpty ? images.first : null;
-    final beds = item['bedrooms'] as int? ?? 3;
-    final baths = item['bathrooms'] as int? ?? 2;
+    final beds = (item['bedrooms'] as num?)?.toInt() ?? 3;
+    final baths = (item['bathrooms'] as num?)?.toInt() ?? 2;
     final isGuesthouse = item['category'] == 'hourly_guesthouse';
 
     return GestureDetector(
@@ -1877,7 +1877,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   Widget _buildVehicleCard(Map<String, dynamic> item) {
     final make = item['make'] as String? ?? 'Toyota';
     final model = item['model'] as String? ?? 'RAV4';
-    final year = item['year'] as int? ?? 2021;
+    final year = (item['year'] as num?)?.toInt() ?? 2021;
     final price = (item['salePrice'] as num?)?.toDouble() ?? 145000.0;
     final images = (item['imageUrls'] as List?)?.cast<String>() ?? [];
     final imageUrl = images.isNotEmpty ? images.first : null;

@@ -162,12 +162,37 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         user: user,
         successMessage: 'Welcome back, ${user.name}!',
       ));
-    } catch (e) {
-      _log.e('Login failed: $e');
+    } on AuthException catch (e) {
+      _log.w('Credential authentication failure: ${e.message}');
       emit(state.copyWith(
         status: AuthStatus.error,
-        errorMessage: e.toString().replaceFirst('Exception: ', ''),
+        errorMessage: e.message,
       ));
+    } on NetworkException catch (e) {
+      _log.e('Network failure during login: ${e.message}');
+      emit(state.copyWith(
+        status: AuthStatus.error,
+        errorMessage: 'Network connection failed. Please check your internet connection.',
+      ));
+    } on DataParseException catch (e) {
+      _log.e('Schema parsing failure during login: ${e.message}');
+      emit(state.copyWith(
+        status: AuthStatus.error,
+        errorMessage: 'Account data format error. Please try again or contact support.',
+      ));
+    } catch (e, stack) {
+      _log.e('Login failed: $e', error: e, stackTrace: stack);
+      if (e is TypeError || e is FormatException) {
+        emit(state.copyWith(
+          status: AuthStatus.error,
+          errorMessage: 'Account data format error: $e',
+        ));
+      } else {
+        emit(state.copyWith(
+          status: AuthStatus.error,
+          errorMessage: e.toString().replaceFirst('Exception: ', ''),
+        ));
+      }
     }
   }
 

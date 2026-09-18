@@ -58,3 +58,31 @@ abstract class AuthRepository {
     required String targetMode,
   });
 }
+
+/// Authentication and credential failure exceptions (invalid password, account not found).
+class AuthException implements Exception {
+  final String message;
+  final bool isCredentialFailure;
+  const AuthException(this.message, {this.isCredentialFailure = false});
+
+  @override
+  String toString() => message;
+}
+
+/// Network and server connectivity exceptions (timeout, offline, Convex down).
+class NetworkException implements Exception {
+  final String message;
+  const NetworkException(this.message);
+
+  @override
+  String toString() => message;
+}
+
+/// Data parsing / schema mismatch exceptions (type casting, missing required payload).
+class DataParseException implements Exception {
+  final String message;
+  const DataParseException(this.message);
+
+  @override
+  String toString() => message;
+}

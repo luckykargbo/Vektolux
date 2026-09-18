@@ -10,6 +10,7 @@ import 'package:logger/logger.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/database/daos/cached_users_dao.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
+import '../../../../core/utils/safe_parser.dart';
 import '../../domain/entities/user_entity.dart';
 import '../../domain/repositories/auth_repository.dart';
 
@@ -108,41 +109,48 @@ class AuthRepositoryImpl implements AuthRepository {
       },
     );
 
-    if (!result.success || result.value == null) {
-      throw Exception(result.errorMessage ?? 'Login failed');
+    if (!result.success) {
+      throw NetworkException(result.errorMessage ?? 'Connection error. Please check your internet connection.');
     }
 
-    if (result.value is! Map<String, dynamic>) {
-      throw Exception(result.errorMessage ?? 'Invalid server response');
+    if (result.value == null || result.value is! Map<String, dynamic>) {
+      throw const DataParseException('Malformed response received from server.');
     }
 
     final data = result.value as Map<String, dynamic>;
     if (data['success'] == false || data['userId'] == null || data['sessionToken'] == null) {
-      throw Exception(data['errorMessage']?.toString() ?? result.errorMessage ?? 'Login failed: Invalid credentials');
+      final msg = data['errorMessage']?.toString() ?? result.errorMessage ?? 'No account found with that email or phone number.';
+      throw AuthException(msg, isCredentialFailure: true);
     }
 
-    final user = UserEntity(
-      id: data['userId']?.toString() ?? '',
-      name: data['name']?.toString() ?? '',
-      email: data['email']?.toString() ?? identifier,
-      phone: data['phone']?.toString() ?? identifier,
-      role: UserRoleX.fromConvex(data['role']?.toString() ?? 'client'),
-      isVerified: data['isVerified'] as bool? ?? false,
-      avatarUrl: data['avatarUrl'] as String?,
-      walletAddress: data['walletAddress'] as String?,
-      sessionToken: data['sessionToken']?.toString(),
-      activeMode: data['active_mode']?.toString() ?? 'passenger',
-      isDriverVerified: data['is_driver_verified'] as bool? ?? (data['role'] == 'driver'),
-      driverStatus: data['driver_status']?.toString() ?? 'offline',
-      verificationStatus: data['verificationStatus']?.toString() ?? (data['isVerified'] == true ? 'verified' : 'unverified'),
-      businessName: data['businessName'] as String?,
-      tinNumber: data['tinNumber'] as String?,
-      documentUrl: data['documentUrl'] as String?,
-      rejectionReason: data['rejectionReason'] as String?,
-      verifiedAt: data['verifiedAt'] as int?,
-      bio: data['bio'] as String?,
-      kycStatus: data['kycStatus'] as String?,
-    );
+    UserEntity user;
+    try {
+      user = UserEntity(
+        id: asString(data['userId']),
+        name: asString(data['name']),
+        email: asString(data['email'], identifier),
+        phone: asString(data['phone'], identifier),
+        role: UserRoleX.fromConvex(asString(data['role'], 'client')),
+        isVerified: asBool(data['isVerified']),
+        avatarUrl: data['avatarUrl'] as String?,
+        walletAddress: data['walletAddress'] as String?,
+        sessionToken: data['sessionToken']?.toString(),
+        activeMode: asString(data['active_mode'], 'passenger'),
+        isDriverVerified: asBool(data['is_driver_verified'], data['role'] == 'driver'),
+        driverStatus: asString(data['driver_status'], 'offline'),
+        verificationStatus: asString(data['verificationStatus'], asBool(data['isVerified']) ? 'verified' : 'unverified'),
+        businessName: data['businessName'] as String?,
+        tinNumber: data['tinNumber'] as String?,
+        documentUrl: data['documentUrl'] as String?,
+        rejectionReason: data['rejectionReason'] as String?,
+        verifiedAt: (data['verifiedAt'] as num?)?.toInt(),
+        bio: data['bio'] as String?,
+        kycStatus: data['kycStatus'] as String?,
+      );
+    } catch (e, stack) {
+      _log.e('Failed to parse user document on login: $e', error: e, stackTrace: stack);
+      throw DataParseException('Failed to parse user profile: $e');
+    }
 
     await _cacheUser(user);
     if (user.sessionToken != null) {
@@ -194,27 +202,28 @@ class AuthRepositoryImpl implements AuthRepository {
       );
 
       if (!result.success || result.value == null) return null;
+      if (result.value is! Map<String, dynamic>) return null;
 
       final data = result.value as Map<String, dynamic>;
       final user = UserEntity(
-        id: data['userId'] as String,
-        name: data['name'] as String,
-        email: data['email'] as String,
-        phone: data['phone'] as String,
-        role: UserRoleX.fromConvex(data['role'] as String),
-        isVerified: data['isVerified'] as bool? ?? false,
+        id: asString(data['userId']),
+        name: asString(data['name']),
+        email: asString(data['email']),
+        phone: asString(data['phone']),
+        role: UserRoleX.fromConvex(asString(data['role'], 'client')),
+        isVerified: asBool(data['isVerified']),
         avatarUrl: data['avatarUrl'] as String?,
         walletAddress: data['walletAddress'] as String?,
         sessionToken: sessionToken,
-        activeMode: data['active_mode']?.toString() ?? 'passenger',
-        isDriverVerified: data['is_driver_verified'] as bool? ?? (data['role'] == 'driver'),
-        driverStatus: data['driver_status']?.toString() ?? 'offline',
-        verificationStatus: data['verificationStatus']?.toString() ?? (data['isVerified'] == true ? 'verified' : 'unverified'),
+        activeMode: asString(data['active_mode'], 'passenger'),
+        isDriverVerified: asBool(data['is_driver_verified'], data['role'] == 'driver'),
+        driverStatus: asString(data['driver_status'], 'offline'),
+        verificationStatus: asString(data['verificationStatus'], asBool(data['isVerified']) ? 'verified' : 'unverified'),
         businessName: data['businessName'] as String?,
         tinNumber: data['tinNumber'] as String?,
         documentUrl: data['documentUrl'] as String?,
         rejectionReason: data['rejectionReason'] as String?,
-        verifiedAt: data['verifiedAt'] as int?,
+        verifiedAt: (data['verifiedAt'] as num?)?.toInt(),
         bio: data['bio'] as String?,
         kycStatus: data['kycStatus'] as String?,
       );

@@ -29,12 +29,28 @@ double asDouble(dynamic raw, [double fallback = 0.0]) {
   return fallback;
 }
 
+/// Safely casts or parses a numeric value to nullable double.
+double? asNullableDouble(dynamic raw) {
+  if (raw == null) return null;
+  if (raw is num) return raw.toDouble();
+  if (raw is String) return double.tryParse(raw.trim());
+  return null;
+}
+
 /// Safely casts or parses a numeric value to int.
 int asInt(dynamic raw, [int fallback = 0]) {
   if (raw == null) return fallback;
   if (raw is num) return raw.toInt();
   if (raw is String) return int.tryParse(raw.trim()) ?? fallback;
   return fallback;
+}
+
+/// Safely casts or parses a numeric value to nullable int.
+int? asNullableInt(dynamic raw) {
+  if (raw == null) return null;
+  if (raw is num) return raw.toInt();
+  if (raw is String) return int.tryParse(raw.trim());
+  return null;
 }
 
 /// Safely casts any dynamic value to a String.

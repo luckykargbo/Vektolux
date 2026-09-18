@@ -595,9 +595,9 @@ class _RealEstateMarketplaceScreenState
     final address = item['address'] as String? ?? 'Wilkinson Road, Freetown';
     final images = (item['imageUrls'] as List?)?.cast<String>() ?? [];
     final imageUrl = images.isNotEmpty ? images.first : null;
-    final beds = item['bedrooms'] as int? ?? 3;
-    final baths = item['bathrooms'] as int? ?? 2;
-    final area = item['areaSqM'] as int? ?? 180;
+    final beds = (item['bedrooms'] as num?)?.toInt() ?? 3;
+    final baths = (item['bathrooms'] as num?)?.toInt() ?? 2;
+    final area = (item['areaSqM'] as num?)?.toInt() ?? 180;
     final isGuesthouse = item['category'] == 'hourly_guesthouse';
     final isSale = item['category'] == 'sale';
     final ownerId = item['ownerId'] as String? ?? '';

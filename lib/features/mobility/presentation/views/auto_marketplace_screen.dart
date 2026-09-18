@@ -395,7 +395,7 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
         : '${item['year'] ?? 2022} ${item['make'] ?? "Toyota"} ${item['model'] ?? "RAV4"}';
     final make = item['make'] as String? ?? 'Toyota';
     final model = item['model'] as String? ?? 'RAV4';
-    final year = item['year'] as int? ?? 2022;
+    final year = (item['year'] as num?)?.toInt() ?? 2022;
     final price = (item['price'] as num?)?.toDouble() ??
         (item['salePrice'] as num?)?.toDouble() ??
         145000.0;
