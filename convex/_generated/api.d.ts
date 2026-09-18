@@ -22,6 +22,7 @@ import type * as lib_geo from "../lib/geo.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as middleware from "../middleware.js";
 import type * as mobility from "../mobility.js";
+import type * as notifications from "../notifications.js";
 import type * as payments from "../payments.js";
 import type * as realEstate from "../realEstate.js";
 import type * as realEstateEscrow from "../realEstateEscrow.js";
@@ -53,6 +54,7 @@ declare const fullApi: ApiFromModules<{
   "lib/validation": typeof lib_validation;
   middleware: typeof middleware;
   mobility: typeof mobility;
+  notifications: typeof notifications;
   payments: typeof payments;
   realEstate: typeof realEstate;
   realEstateEscrow: typeof realEstateEscrow;

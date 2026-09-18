@@ -8,13 +8,16 @@
 // Currency: SLE (Sierra Leone New Leones) via Orange Money & Afrimoney
 // ═══════════════════════════════════════════════════════════════════════
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
+import '../../../../core/services/payment_methods_service.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../domain/entities/property_listing_entity.dart';
 import 'real_estate_escrow_tracking_screen.dart';
@@ -56,9 +59,21 @@ class _RealEstateEscrowCheckoutScreenState
   late double _agreedPurchasePrice;
 
   // Payment rail
-  String _selectedProvider = 'ORANGE_MONEY_SL'; // ORANGE_MONEY_SL, AFRICELL_AFRIMONEY_SL, WALLET
+  String _selectedProvider = 'moneroo_auto'; // Default to automated Moneroo
   final _phoneController = TextEditingController();
+  final _txnRefController = TextEditingController();
   bool _isSubmitting = false;
+  bool _isClaimSubmitted = false;
+  bool _isEscrowLocked = false;
+  bool _isAwaitingWebhook = false;
+  String? _monerooPaymentId;
+  String? _createdContractId;
+  Timer? _webhookPollingTimer;
+
+  // Dynamic payment methods from admin config
+  List<PaymentMethod> _paymentMethods = [];
+  bool _isLoadingMethods = true;
+  PaymentMethod? _selectedPaymentMethod;
 
   @override
   void initState() {
@@ -70,11 +85,33 @@ class _RealEstateEscrowCheckoutScreenState
     if (user != null && user.phone.isNotEmpty) {
       _phoneController.text = user.phone;
     }
+    _loadPaymentMethods();
+  }
+
+  Future<void> _loadPaymentMethods() async {
+    try {
+      final methods = await PaymentMethodsService.instance.getActivePaymentMethods();
+      if (mounted) {
+        setState(() {
+          _paymentMethods = methods;
+          _isLoadingMethods = false;
+          if (methods.isNotEmpty) {
+            _selectedPaymentMethod = methods.first;
+            _selectedProvider = methods.first.providerId;
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('[RealEstateCheckout] Error loading payment methods: $e');
+      if (mounted) setState(() => _isLoadingMethods = false);
+    }
   }
 
   @override
   void dispose() {
+    _webhookPollingTimer?.cancel();
     _phoneController.dispose();
+    _txnRefController.dispose();
     super.dispose();
   }
 
@@ -206,6 +243,174 @@ class _RealEstateEscrowCheckoutScreenState
     }
   }
 
+  Future<void> _handleManualPaymentClaim() async {
+    final user = context.read<AuthBloc>().state.user;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to submit a payment claim.')),
+      );
+      return;
+    }
+
+    final txnRef = _txnRefController.text.trim();
+    if (txnRef.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please paste your Transaction ID / SMS Reference.')),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      final result = await PaymentMethodsService.instance.submitManualPaymentClaim(
+        userId: user.id,
+        amount: _totalEscrowInflow,
+        providerId: _selectedProvider,
+        transactionReference: txnRef,
+      );
+
+      if (result['success'] == true) {
+        if (mounted) {
+          setState(() => _isClaimSubmitted = true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Payment claim submitted successfully! Awaiting admin verification.'),
+              backgroundColor: AppColors.emerald,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to submit claim: ${result['error'] ?? 'Unknown error'}'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.error),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  Future<void> _handleInitiateMoneroo() async {
+    final user = context.read<AuthBloc>().state.user;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to initiate payment.')),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      final client = context.read<ConvexClientWrapper>();
+
+      // 1. Create RE escrow contract in Convex
+      final res = await client.mutation(
+        'realEstateEscrow:initiateRealEstateEscrow',
+        args: {
+          'propertyListingId': widget.listing.id,
+          'buyerOrTenantId': user.id,
+          'contractType': _convexContractType,
+          'agreedPriceOrRent': _baseAmount,
+          'cautionDeposit': _cautionDeposit,
+          'statutoryAgencyFee': _agencyCommission,
+          if (_contractType == RealEstateEscrowType.shortStay)
+            'startDate': _checkInDate.millisecondsSinceEpoch,
+          if (_contractType == RealEstateEscrowType.shortStay)
+            'endDate': _checkInDate.add(Duration(days: _stayNights)).millisecondsSinceEpoch,
+          'paymentRail': 'MONEROO_SANDBOX',
+          'paymentPhone': _phoneController.text.trim().isNotEmpty ? _phoneController.text.trim() : user.phone,
+        },
+      );
+
+      String contractId = '';
+      if (res.success && res.value != null) {
+        final contract = Map<String, dynamic>.from(res.value as Map);
+        contractId = contract['contractId']?.toString() ?? '';
+        _createdContractId = contractId;
+      }
+
+      // 2. Initialize Moneroo payment session
+      final nameParts = user.name.trim().split(' ');
+      final firstName = nameParts.isNotEmpty ? nameParts.first : 'Customer';
+      final lastName = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : 'User';
+
+      final initRes = await PaymentMethodsService.instance.initializeMonerooPayment(
+        amount: _totalEscrowInflow,
+        currency: 'SLE',
+        customerEmail: user.email.isNotEmpty ? user.email : 'customer@vektolux.com',
+        customerFirstName: firstName,
+        customerLastName: lastName,
+        customerPhone: user.phone.isNotEmpty ? user.phone : _phoneController.text.trim(),
+        userId: user.id,
+        reContractId: contractId.isNotEmpty ? contractId : null,
+        description: 'Vektolux Property Escrow: ${widget.listing.title}',
+      );
+
+      if (initRes['success'] != true) {
+        throw Exception(initRes['error'] ?? 'Failed to initialize Moneroo payment');
+      }
+
+      final checkoutUrl = initRes['checkoutUrl'] as String;
+      final paymentId = initRes['paymentId'] as String;
+
+      setState(() {
+        _monerooPaymentId = paymentId;
+        _isAwaitingWebhook = true;
+        _isSubmitting = false;
+      });
+
+      // 3. Open in-app browser
+      if (checkoutUrl.isNotEmpty) {
+        final uri = Uri.parse(checkoutUrl);
+        await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+      }
+
+      // 4. Start polling for webhook
+      _startPollingWebhook(paymentId, contractId);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Payment Error: $e'), backgroundColor: AppColors.error),
+        );
+      }
+    }
+  }
+
+  void _startPollingWebhook(String paymentId, String contractId) {
+    _webhookPollingTimer?.cancel();
+    _webhookPollingTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
+      final statusData = await PaymentMethodsService.instance.getPaymentClaimStatus(paymentId);
+      if (statusData != null && statusData['status'] == 'ESCROW_LOCKED') {
+        timer.cancel();
+        if (mounted) {
+          setState(() {
+            _isAwaitingWebhook = false;
+            _isEscrowLocked = true;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Payment Confirmed — Funds Held in Escrow!'),
+              backgroundColor: AppColors.emerald,
+            ),
+          );
+        }
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -308,53 +513,332 @@ class _RealEstateEscrowCheckoutScreenState
 
             // Payment Rail Selector
             const Text(
-              'FUNDING SOURCE (MOBILE MONEY ESCROW)',
+              'FUNDING SOURCE (DYNAMIC PAYMENT & ESCROW)',
               style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.gray500, letterSpacing: 0.8),
             ),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                _buildRailChip('ORANGE_MONEY_SL', 'Orange Money', Icons.phone_android_rounded),
-                const SizedBox(width: 8),
-                _buildRailChip('AFRICELL_AFRIMONEY_SL', 'Afrimoney', Icons.sim_card_outlined),
-                const SizedBox(width: 8),
-                _buildRailChip('WALLET', 'Wallet', Icons.account_balance_wallet_outlined),
-              ],
-            ),
 
-            if (_selectedProvider != 'WALLET') ...[
+            if (_isEscrowLocked) ...[
+              Container(
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
+                ),
+                child: Column(
+                  children: [
+                    const Icon(Icons.verified_rounded, color: AppColors.emerald, size: 48),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Payment Confirmed — Held in Escrow',
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.emeraldDark),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'SLE ${_currencyFormat.format(_totalEscrowInflow)} is now securely locked in Vektolux Real Estate Escrow.\nMilestone disbursement is activated.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 12, color: AppColors.gray700, height: 1.4),
+                    ),
+                    const SizedBox(height: 18),
+                    VxButton.primary(
+                      text: 'Track Escrow Milestones',
+                      icon: Icons.shield_rounded,
+                      onPressed: () {
+                        if (_createdContractId != null && _createdContractId!.isNotEmpty) {
+                          Navigator.of(context).pushReplacement(
+                            MaterialPageRoute(
+                              builder: (_) => RealEstateEscrowTrackingScreen(contractId: _createdContractId!),
+                            ),
+                          );
+                        } else {
+                          Navigator.of(context).pop();
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+            ] else if (_isAwaitingWebhook) ...[
+              Container(
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF93C5FD), width: 1.5),
+                ),
+                child: Column(
+                  children: [
+                    const SizedBox(
+                      width: 36,
+                      height: 36,
+                      child: CircularProgressIndicator(strokeWidth: 3, color: Color(0xFF2563EB)),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Awaiting Moneroo Payment Confirmation',
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: Color(0xFF1E40AF)),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Please complete the transaction in your checkout window.\nThis screen will automatically update to Held in Escrow once confirmed.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: Color(0xFF3B82F6), height: 1.4),
+                    ),
+                    if (_monerooPaymentId != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Reference: $_monerooPaymentId',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    TextButton.icon(
+                      onPressed: () => setState(() => _isAwaitingWebhook = false),
+                      icon: const Icon(Icons.arrow_back, size: 16, color: Color(0xFF1E40AF)),
+                      label: const Text('Change Payment Method', style: TextStyle(fontSize: 12, color: Color(0xFF1E40AF))),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+            ] else if (_isClaimSubmitted) ...[
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEFCE8),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFFDE68A)),
+                ),
+                child: Column(
+                  children: [
+                    const Icon(Icons.hourglass_top_rounded, color: Color(0xFFD97706), size: 40),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Payment Submitted',
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: Color(0xFF92400E)),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Your escrow payment claim is pending admin verification.\nYou will be notified once confirmed.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: Color(0xFFB45309)),
+                    ),
+                    const SizedBox(height: 16),
+                    VxButton.primary(
+                      text: 'Back to Property Listings',
+                      icon: Icons.arrow_back_rounded,
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
+            ] else ...[
+              if (_isLoadingMethods)
+                const Center(child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: CircularProgressIndicator(color: AppColors.emerald),
+                ))
+              else
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      ..._paymentMethods.map((m) {
+                        final isSelected = _selectedProvider == m.providerId;
+                        IconData iconData = Icons.phone_android_rounded;
+                        if (m.isAutomated) iconData = Icons.credit_card_rounded;
+                        if (m.isBankTransfer) iconData = Icons.account_balance_rounded;
+                        if (m.providerId.contains('qmoney')) iconData = Icons.cell_tower_rounded;
+                        if (m.providerId.contains('afrimoney')) iconData = Icons.sim_card_outlined;
+
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: InkWell(
+                            onTap: () => setState(() {
+                              _selectedProvider = m.providerId;
+                              _selectedPaymentMethod = m;
+                            }),
+                            borderRadius: BorderRadius.circular(10),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: isSelected ? AppColors.obsidian : AppColors.gray100,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(iconData, size: 18, color: isSelected ? AppColors.emerald : AppColors.gray600),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    m.displayName.split('(').first.trim(),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: isSelected ? Colors.white : AppColors.gray700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                      // Wallet chip
+                      InkWell(
+                        onTap: () => setState(() {
+                          _selectedProvider = 'WALLET';
+                          _selectedPaymentMethod = null;
+                        }),
+                        borderRadius: BorderRadius.circular(10),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: _selectedProvider == 'WALLET' ? AppColors.obsidian : AppColors.gray100,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.account_balance_wallet_outlined,
+                                  size: 18, color: _selectedProvider == 'WALLET' ? AppColors.emerald : AppColors.gray600),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Wallet',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: _selectedProvider == 'WALLET' ? Colors.white : AppColors.gray700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Manual provider instructions + transaction ref field
+              if (_selectedPaymentMethod != null && _selectedPaymentMethod!.isManual) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0F9FF),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF7DD3FC)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.info_outline_rounded, color: Color(0xFF0284C7), size: 18),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${_selectedPaymentMethod!.displayName} Instructions',
+                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Color(0xFF0C4A6E)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _selectedPaymentMethod!.instructions ??
+                            'Follow your provider\'s payment instructions and enter the Transaction ID below.',
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF0369A1), height: 1.5),
+                      ),
+                      if (_selectedPaymentMethod!.accountNumber != null) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: AppColors.white,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFBAE6FD)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Text('Merchant/Account: ', style: TextStyle(fontSize: 12, color: AppColors.gray600)),
+                              Text(
+                                _selectedPaymentMethod!.accountNumber!,
+                                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: AppColors.obsidian),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _txnRefController,
+                  keyboardType: TextInputType.text,
+                  decoration: InputDecoration(
+                    labelText: 'Paste Transaction ID / SMS Reference',
+                    hintText: 'e.g. TXN123456789',
+                    prefixIcon: const Icon(Icons.receipt_long_rounded, color: AppColors.gray500),
+                    filled: true,
+                    fillColor: AppColors.white,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+                  ),
+                ),
+              ],
+
+              // Phone number field for non-wallet, non-manual providers
+              if (_selectedProvider != 'WALLET' && (_selectedPaymentMethod == null || _selectedPaymentMethod!.isAutomated)) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _phoneController,
+                  keyboardType: TextInputType.phone,
+                  decoration: InputDecoration(
+                    labelText: 'Mobile Money Phone Number',
+                    hintText: 'e.g. 076 000000 or 077 000000',
+                    prefixIcon: const Icon(Icons.call_outlined, color: AppColors.gray500),
+                    filled: true,
+                    fillColor: AppColors.white,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 24),
+
+              // Submit Button
+              VxButton.primary(
+                text: _isSubmitting
+                    ? 'Processing...'
+                    : _selectedPaymentMethod != null && _selectedPaymentMethod!.isManual
+                        ? 'Submit Payment Claim'
+                        : (_selectedPaymentMethod != null && _selectedPaymentMethod!.isAutomated) || _selectedProvider == 'moneroo_auto'
+                            ? 'Pay with Moneroo (SLE ${_currencyFormat.format(_totalEscrowInflow)})'
+                            : 'Lock SLE ${_currencyFormat.format(_totalEscrowInflow)} in Escrow',
+                icon: _selectedPaymentMethod != null && _selectedPaymentMethod!.isManual
+                    ? Icons.send_rounded
+                    : (_selectedPaymentMethod != null && _selectedPaymentMethod!.isAutomated) || _selectedProvider == 'moneroo_auto'
+                        ? Icons.open_in_browser_rounded
+                        : Icons.shield_rounded,
+                onPressed: _isSubmitting
+                    ? null
+                    : _selectedPaymentMethod != null && _selectedPaymentMethod!.isManual
+                        ? _handleManualPaymentClaim
+                        : (_selectedPaymentMethod != null && _selectedPaymentMethod!.isAutomated) || _selectedProvider == 'moneroo_auto'
+                            ? _handleInitiateMoneroo
+                            : _handleInitiateEscrow,
+              ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _phoneController,
-                keyboardType: TextInputType.phone,
-                decoration: InputDecoration(
-                  labelText: 'Orange / Afrimoney Number',
-                  hintText: 'e.g. 076 000000 or 078 000000',
-                  prefixIcon: const Icon(Icons.call_outlined, color: AppColors.gray500),
-                  filled: true,
-                  fillColor: AppColors.white,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              const Center(
+                child: Text(
+                  'Funds are protected in segregated Bank of Sierra Leone compliant escrow.',
+                  style: TextStyle(fontSize: 11, color: AppColors.gray500),
                 ),
               ),
             ],
-            const SizedBox(height: 24),
-
-            // Submit Button
-            VxButton.primary(
-              text: _isSubmitting
-                  ? 'Locking Escrow Funds...'
-                  : 'Lock SLE ${_currencyFormat.format(_totalEscrowInflow)} in Escrow',
-              icon: Icons.shield_rounded,
-              onPressed: _isSubmitting ? null : _handleInitiateEscrow,
-            ),
-            const SizedBox(height: 12),
-            const Center(
-              child: Text(
-                'Funds are protected in segregated Bank of Sierra Leone compliant escrow.',
-                style: TextStyle(fontSize: 11, color: AppColors.gray500),
-              ),
-            ),
           ],
         ),
       ),
@@ -587,37 +1071,5 @@ class _RealEstateEscrowCheckoutScreenState
       ),
     );
   }
-
-  Widget _buildRailChip(String id, String label, IconData icon) {
-    final isSelected = _selectedProvider == id;
-    return Expanded(
-      child: InkWell(
-        onTap: () => setState(() => _selectedProvider = id),
-        borderRadius: BorderRadius.circular(10),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            color: isSelected ? AppColors.obsidian : AppColors.gray100,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 18, color: isSelected ? AppColors.emerald : AppColors.gray600),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: isSelected ? Colors.white : AppColors.gray700,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
+

@@ -216,6 +216,25 @@ export const paymentMethod = v.union(
   v.literal("crypto")
 );
 
+export const paymentSettingsType = v.union(
+  v.literal("AGGREGATOR_AUTO"),
+  v.literal("MANUAL_MERCHANT"),
+  v.literal("BANK_TRANSFER")
+);
+
+export const escrowClaimStatus = v.union(
+  v.literal("PENDING_PAYMENT"),
+  v.literal("PENDING_APPROVAL"),
+  v.literal("ESCROW_LOCKED"),
+  v.literal("RELEASED"),
+  v.literal("REJECTED")
+);
+
+export const escrowClaimPaymentType = v.union(
+  v.literal("AUTOMATED"),
+  v.literal("MANUAL_CLAIM")
+);
+
 export const availabilityStatus = v.union(
   v.literal("available"),
   v.literal("unavailable"),
@@ -1023,4 +1042,68 @@ export default defineSchema({
   })
     .index("by_contract", ["contractId"])
     .index("by_status", ["status"]),
+
+  // ─── PUSH & IN-APP NOTIFICATIONS ─────────────────────────────────
+  user_fcm_tokens: defineTable({
+    userId: v.string(),
+    fcmToken: v.string(),
+    deviceType: v.string(),
+    topics: v.optional(v.array(v.string())),
+    lastUpdated: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_token", ["fcmToken"]),
+
+  user_notifications: defineTable({
+    userId: v.optional(v.string()),
+    targetType: v.union(v.literal("all_users"), v.literal("single_user")),
+    title: v.string(),
+    body: v.string(),
+    deepLinkScreen: v.optional(v.string()),
+    deepLinkId: v.optional(v.string()),
+    data: v.optional(v.string()),
+    read: v.boolean(),
+    readByUsers: v.optional(v.array(v.string())),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_target_type", ["targetType"])
+    .index("by_created_at", ["createdAt"]),
+
+  // ─── DYNAMIC PAYMENT SETTINGS (Admin-Configurable) ─────────────────
+  payment_settings: defineTable({
+    providerId: v.string(), // e.g., "moneroo_auto", "qmoney_manual", "afrimoney_manual", "bank_transfer"
+    displayName: v.string(), // "Orange Money / Cards", "QCell QMoney", etc.
+    type: paymentSettingsType,
+    isEnabled: v.boolean(),
+    instructions: v.optional(v.string()), // e.g., "Dial *345#, select Pay Merchant, use code 001..."
+    accountNumber: v.optional(v.string()), // Merchant Till number, Phone number, or BBAN
+    accountName: v.optional(v.string()), // e.g., "Vektolux Escrow Services"
+    updatedAt: v.number(),
+  })
+    .index("by_providerId", ["providerId"])
+    .index("by_isEnabled", ["isEnabled"]),
+
+  // ─── ESCROW PAYMENT CLAIMS (Universal: Auto + Manual) ──────────────
+  escrow_payment_claims: defineTable({
+    bookingId: v.optional(v.string()), // Flexible reference to any booking type
+    escrowOrderId: v.optional(v.id("escrow_orders")), // Vehicle escrow link
+    reContractId: v.optional(v.id("re_escrow_contracts")), // Real estate escrow link
+    userId: v.id("users"),
+    amount: v.number(),
+    currency: v.literal("SLE"),
+    providerId: v.string(), // FK to payment_settings.providerId
+    paymentType: escrowClaimPaymentType,
+    transactionReference: v.string(), // Aggregator payment ID or user-submitted Telco TxnID
+    receiptUrl: v.optional(v.string()),
+    status: escrowClaimStatus,
+    rejectionReason: v.optional(v.string()),
+    reviewedByAdminId: v.optional(v.id("users")),
+    reviewedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_status", ["status"])
+    .index("by_providerId", ["providerId"])
+    .index("by_userId_status", ["userId", "status"]),
 });

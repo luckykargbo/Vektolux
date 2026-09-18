@@ -25,6 +25,7 @@ import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../mobility/presentation/bloc/mobility_bloc.dart';
 import '../../../mobility/presentation/bloc/mobility_event.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
+import '../../../notifications/presentation/views/notifications_screen.dart';
 
 class ClientHomeScreen extends StatefulWidget {
   final AppDatabase database;
@@ -49,6 +50,21 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   List<Map<String, dynamic>> _vehicles = [];
   bool _isLoadingProperties = true;
   bool _isLoadingVehicles = true;
+  int _unreadCount = 0;
+
+  Future<void> _loadUnreadCount([String? userId]) async {
+    try {
+      final res = await widget.convexClient.query(
+        'notifications:getUnreadNotificationCount',
+        args: {'userId': userId ?? 'guest'},
+      );
+      if (res.success && res.value != null && mounted) {
+        setState(() {
+          _unreadCount = (res.value as num).toInt();
+        });
+      }
+    } catch (_) {}
+  }
 
   final List<Map<String, dynamic>> _quickDestinations = [
     {
@@ -96,6 +112,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   }
 
   Future<void> _loadDiscoveryData() async {
+    _loadUnreadCount();
+
     // 1. Fetch properties from Convex
     try {
       final propResult = await widget.convexClient.query(
@@ -965,6 +983,78 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               ],
             ),
           ),
+
+          // Notification Bell with unread badge indicator
+          InkWell(
+            borderRadius: BorderRadius.circular(24),
+            onTap: () async {
+              final authUser = context.read<AuthBloc>().state.user;
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => NotificationsScreen(
+                    convexClient: widget.convexClient,
+                    currentUserId: authUser?.id,
+                  ),
+                ),
+              );
+              if (mounted) {
+                _loadUnreadCount(authUser?.id);
+              }
+            },
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AppColors.border),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.04),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Center(
+                    child: Icon(
+                      Icons.notifications_outlined,
+                      size: 22,
+                      color: AppColors.obsidian,
+                    ),
+                  ),
+                ),
+                if (_unreadCount > 0)
+                  Positioned(
+                    top: -2,
+                    right: -2,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.emerald,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.white, width: 1.5),
+                      ),
+                      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                      child: Center(
+                        child: Text(
+                          _unreadCount > 9 ? '9+' : '$_unreadCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
 
           // Avatar linking to Account
           GestureDetector(

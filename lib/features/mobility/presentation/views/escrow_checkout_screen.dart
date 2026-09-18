@@ -6,9 +6,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
+import 'dart:async';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
+import '../../../../core/services/payment_methods_service.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import 'escrow_tracking_screen.dart';
 
@@ -39,9 +42,21 @@ class EscrowCheckoutScreen extends StatefulWidget {
 class _EscrowCheckoutScreenState extends State<EscrowCheckoutScreen> {
   int _rentalDays = 3;
   DateTime _startDate = DateTime.now().add(const Duration(days: 1));
-  String _selectedProvider = 'ORANGE_MONEY_SL'; // ORANGE_MONEY_SL, AFRICELL_AFRIMONEY_SL, WALLET
+  String _selectedProvider = 'moneroo_auto'; // Default to automated Moneroo
   final _phoneController = TextEditingController();
+  final _txnRefController = TextEditingController();
   bool _isSubmitting = false;
+  bool _isClaimSubmitted = false;
+  bool _isEscrowLocked = false;
+  bool _isAwaitingWebhook = false;
+  String? _monerooPaymentId;
+  String? _createdOrderId;
+  Timer? _webhookPollingTimer;
+
+  // Dynamic payment methods from admin config
+  List<PaymentMethod> _paymentMethods = [];
+  bool _isLoadingMethods = true;
+  PaymentMethod? _selectedPaymentMethod;
 
   @override
   void initState() {
@@ -50,11 +65,33 @@ class _EscrowCheckoutScreenState extends State<EscrowCheckoutScreen> {
     if (user != null && user.phone.isNotEmpty) {
       _phoneController.text = user.phone;
     }
+    _loadPaymentMethods();
+  }
+
+  Future<void> _loadPaymentMethods() async {
+    try {
+      final methods = await PaymentMethodsService.instance.getActivePaymentMethods();
+      if (mounted) {
+        setState(() {
+          _paymentMethods = methods;
+          _isLoadingMethods = false;
+          if (methods.isNotEmpty) {
+            _selectedPaymentMethod = methods.first;
+            _selectedProvider = methods.first.providerId;
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('[EscrowCheckout] Error loading payment methods: $e');
+      if (mounted) setState(() => _isLoadingMethods = false);
+    }
   }
 
   @override
   void dispose() {
+    _webhookPollingTimer?.cancel();
     _phoneController.dispose();
+    _txnRefController.dispose();
     super.dispose();
   }
 
@@ -144,6 +181,174 @@ class _EscrowCheckoutScreenState extends State<EscrowCheckoutScreen> {
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
+  }
+
+  Future<void> _handleManualPaymentClaim() async {
+    final user = context.read<AuthBloc>().state.user;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to submit a payment claim.')),
+      );
+      return;
+    }
+
+    final txnRef = _txnRefController.text.trim();
+    if (txnRef.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please paste your Transaction ID / SMS Reference.')),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      final result = await PaymentMethodsService.instance.submitManualPaymentClaim(
+        userId: user.id,
+        amount: _totalEscrowInflow,
+        providerId: _selectedProvider,
+        transactionReference: txnRef,
+      );
+
+      if (result['success'] == true) {
+        if (mounted) {
+          setState(() => _isClaimSubmitted = true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Payment claim submitted successfully! Awaiting admin verification.'),
+              backgroundColor: AppColors.emerald,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to submit claim: ${result['error'] ?? 'Unknown error'}'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.error),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  Future<void> _handleInitiateMoneroo() async {
+    final user = context.read<AuthBloc>().state.user;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to initiate payment.')),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      // 1. Create/initiate the escrow order record in Convex
+      final client = context.read<ConvexClientWrapper>();
+      final endDate = _startDate.add(Duration(days: _rentalDays));
+
+      final orderRes = await client.mutation(
+        'escrow:initiateEscrowOrder',
+        args: {
+          'orderType': widget.isPurchase ? 'VEHICLE_PURCHASE' : 'VEHICLE_RENTAL',
+          'vehicleListingId': widget.vehicleListingId,
+          'renterOrBuyerId': user.id,
+          'rentalStartDate': _startDate.millisecondsSinceEpoch,
+          'rentalEndDate': endDate.millisecondsSinceEpoch,
+          'numberOfDays': _rentalDays,
+          'baseRentalAmount': _baseRentalAmount,
+          'refundableDepositAmount': _refundableDeposit,
+          'fullPurchaseAmount': widget.purchasePrice ?? _totalEscrowInflow,
+          'paymentProvider': 'MONEROO_SANDBOX',
+          'paymentPhone': _phoneController.text.trim().isNotEmpty ? _phoneController.text.trim() : user.phone,
+          'payFromWallet': false,
+        },
+      );
+
+      String orderId = '';
+      if (orderRes.success && orderRes.value is Map) {
+        orderId = (orderRes.value as Map)['escrowOrderId']?.toString() ?? '';
+        _createdOrderId = orderId;
+      }
+
+      // 2. Call initializeMonerooPayment action
+      final nameParts = user.name.trim().split(' ');
+      final firstName = nameParts.isNotEmpty ? nameParts.first : 'Customer';
+      final lastName = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : 'User';
+
+      final initRes = await PaymentMethodsService.instance.initializeMonerooPayment(
+        amount: _totalEscrowInflow,
+        currency: 'SLE',
+        customerEmail: user.email.isNotEmpty ? user.email : 'customer@vektolux.com',
+        customerFirstName: firstName,
+        customerLastName: lastName,
+        customerPhone: user.phone.isNotEmpty ? user.phone : _phoneController.text.trim(),
+        userId: user.id,
+        escrowOrderId: orderId.isNotEmpty ? orderId : null,
+        description: 'Vektolux Escrow: ${widget.vehicleTitle}',
+      );
+
+      if (initRes['success'] != true) {
+        throw Exception(initRes['error'] ?? 'Failed to initialize Moneroo payment');
+      }
+
+      final checkoutUrl = initRes['checkoutUrl'] as String;
+      final paymentId = initRes['paymentId'] as String;
+
+      setState(() {
+        _monerooPaymentId = paymentId;
+        _isAwaitingWebhook = true;
+        _isSubmitting = false;
+      });
+
+      // 3. Launch checkout URL in-app
+      if (checkoutUrl.isNotEmpty) {
+        final uri = Uri.parse(checkoutUrl);
+        await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+      }
+
+      // 4. Start polling for webhook confirmation
+      _startPollingWebhook(paymentId, orderId);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Payment Error: $e'), backgroundColor: AppColors.error),
+        );
+      }
+    }
+  }
+
+  void _startPollingWebhook(String paymentId, String orderId) {
+    _webhookPollingTimer?.cancel();
+    _webhookPollingTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
+      final statusData = await PaymentMethodsService.instance.getPaymentClaimStatus(paymentId);
+      if (statusData != null && statusData['status'] == 'ESCROW_LOCKED') {
+        timer.cancel();
+        if (mounted) {
+          setState(() {
+            _isAwaitingWebhook = false;
+            _isEscrowLocked = true;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Payment Confirmed — Funds Held in Escrow!'),
+              backgroundColor: AppColors.emerald,
+            ),
+          );
+        }
+      }
+    });
   }
 
   @override
@@ -339,75 +544,310 @@ class _EscrowCheckoutScreenState extends State<EscrowCheckoutScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Mobile Money Payment Method Selector
+            // Dynamic Payment Method Selector
             const Text('Select Payment Method', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
             const SizedBox(height: 10),
-            Container(
-              decoration: BoxDecoration(
-                color: AppColors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Column(
-                children: [
-                  RadioListTile<String>(
-                    value: 'ORANGE_MONEY_SL',
-                    groupValue: _selectedProvider,
-                    onChanged: (val) => setState(() => _selectedProvider = val!),
-                    activeColor: AppColors.emerald,
-                    title: const Text('Orange Money Sierra Leone', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                    subtitle: const Text('USSD STK Push prompt to your phone (*144#)', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
-                    secondary: const Icon(Icons.phone_android_rounded, color: Colors.deepOrange),
-                  ),
-                  const Divider(height: 1),
-                  RadioListTile<String>(
-                    value: 'AFRICELL_AFRIMONEY_SL',
-                    groupValue: _selectedProvider,
-                    onChanged: (val) => setState(() => _selectedProvider = val!),
-                    activeColor: AppColors.emerald,
-                    title: const Text('Africell Afrimoney', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                    subtitle: const Text('Instant prompt on Afrimoney wallet (*161#)', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
-                    secondary: const Icon(Icons.mobile_friendly_rounded, color: Colors.purple),
-                  ),
-                  const Divider(height: 1),
-                  RadioListTile<String>(
-                    value: 'WALLET',
-                    groupValue: _selectedProvider,
-                    onChanged: (val) => setState(() => _selectedProvider = val!),
-                    activeColor: AppColors.emerald,
-                    title: const Text('Vektolux Wallet Balance', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                    subtitle: const Text('Zero fee instant lock from available balance', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
-                    secondary: const Icon(Icons.account_balance_wallet_rounded, color: AppColors.emerald),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
 
-            if (_selectedProvider != 'WALLET') ...[
-              TextField(
-                controller: _phoneController,
-                keyboardType: TextInputType.phone,
-                decoration: InputDecoration(
-                  labelText: 'Mobile Money Phone Number',
-                  hintText: 'e.g. 076 123456 or 077 123456',
-                  prefixIcon: const Icon(Icons.phone, color: AppColors.gray500),
-                  filled: true,
-                  fillColor: AppColors.white,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+            if (_isEscrowLocked) ...[
+              // ── Payment Confirmed & Escrow Locked State ──
+              Container(
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
+                ),
+                child: Column(
+                  children: [
+                    const Icon(Icons.verified_rounded, color: AppColors.emerald, size: 48),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Payment Confirmed — Held in Escrow',
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.emeraldDark),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'SLE ${currencyFmt.format(_totalEscrowInflow)} is now securely locked in Vektolux Escrow.\nFunds are protected until inspection and milestone completion.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 12, color: AppColors.gray700, height: 1.4),
+                    ),
+                    const SizedBox(height: 18),
+                    VxButton(
+                      label: 'Track Escrow Status',
+                      icon: Icons.shield_rounded,
+                      onPressed: () {
+                        if (_createdOrderId != null && _createdOrderId!.isNotEmpty) {
+                          Navigator.of(context).pushReplacement(
+                            MaterialPageRoute(
+                              builder: (_) => EscrowTrackingScreen(escrowOrderId: _createdOrderId!),
+                            ),
+                          );
+                        } else {
+                          Navigator.of(context).pop();
+                        }
+                      },
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 24),
-            ],
+              const SizedBox(height: 20),
+            ] else if (_isAwaitingWebhook) ...[
+              // ── Awaiting Moneroo Webhook State ──
+              Container(
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF93C5FD), width: 1.5),
+                ),
+                child: Column(
+                  children: [
+                    const SizedBox(
+                      width: 36,
+                      height: 36,
+                      child: CircularProgressIndicator(strokeWidth: 3, color: Color(0xFF2563EB)),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Awaiting Moneroo Payment Confirmation',
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: Color(0xFF1E40AF)),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Please complete the transaction in your checkout window.\nThis screen will automatically update to Held in Escrow once confirmed.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: Color(0xFF3B82F6), height: 1.4),
+                    ),
+                    if (_monerooPaymentId != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Reference: $_monerooPaymentId',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    TextButton.icon(
+                      onPressed: () => setState(() => _isAwaitingWebhook = false),
+                      icon: const Icon(Icons.arrow_back, size: 16, color: Color(0xFF1E40AF)),
+                      label: const Text('Change Payment Method', style: TextStyle(fontSize: 12, color: Color(0xFF1E40AF))),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+            ] else if (_isClaimSubmitted) ...[
+              // ── Manual Payment Claim Submitted State ──
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEFCE8),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFFDE68A)),
+                ),
+                child: Column(
+                  children: [
+                    const Icon(Icons.hourglass_top_rounded, color: Color(0xFFD97706), size: 40),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Payment Submitted',
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: Color(0xFF92400E)),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Your payment claim is pending admin verification.\nYou will be notified once approved.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: Color(0xFFB45309)),
+                    ),
+                    const SizedBox(height: 16),
+                    VxButton(
+                      label: 'Back to Listings',
+                      icon: Icons.arrow_back_rounded,
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
+            ] else ...[
+              if (_isLoadingMethods)
+                const Center(child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: CircularProgressIndicator(color: AppColors.emerald),
+                ))
+              else
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Column(
+                    children: [
+                      // Dynamic methods from admin config
+                      ..._paymentMethods.asMap().entries.map((entry) {
+                        final method = entry.value;
+                        final isLast = entry.key == _paymentMethods.length - 1;
+                        return Column(
+                          children: [
+                            RadioListTile<String>(
+                              value: method.providerId,
+                              groupValue: _selectedProvider,
+                              onChanged: (val) => setState(() {
+                                _selectedProvider = val!;
+                                _selectedPaymentMethod = method;
+                              }),
+                              activeColor: AppColors.emerald,
+                              title: Text(
+                                method.displayName,
+                                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                              ),
+                              subtitle: Text(
+                                method.type == 'AGGREGATOR_AUTO'
+                                    ? 'Secure automated payment'
+                                    : method.type == 'BANK_TRANSFER'
+                                        ? 'Bank wire transfer'
+                                        : 'Mobile money merchant payment',
+                                style: const TextStyle(fontSize: 11, color: AppColors.gray500),
+                              ),
+                              secondary: Icon(
+                                method.type == 'AGGREGATOR_AUTO'
+                                    ? Icons.credit_card_rounded
+                                    : method.type == 'BANK_TRANSFER'
+                                        ? Icons.account_balance_rounded
+                                        : Icons.phone_android_rounded,
+                                color: method.type == 'AGGREGATOR_AUTO'
+                                    ? Colors.deepOrange
+                                    : method.type == 'BANK_TRANSFER'
+                                        ? AppColors.obsidian
+                                        : Colors.blueAccent,
+                              ),
+                            ),
+                            if (!isLast) const Divider(height: 1),
+                          ],
+                        );
+                      }),
+                      // Always show Wallet option as built-in
+                      const Divider(height: 1),
+                      RadioListTile<String>(
+                        value: 'WALLET',
+                        groupValue: _selectedProvider,
+                        onChanged: (val) => setState(() {
+                          _selectedProvider = val!;
+                          _selectedPaymentMethod = null;
+                        }),
+                        activeColor: AppColors.emerald,
+                        title: const Text('Vektolux Wallet Balance', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                        subtitle: const Text('Zero fee instant lock from available balance', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
+                        secondary: const Icon(Icons.account_balance_wallet_rounded, color: AppColors.emerald),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 14),
 
-            // Confirm & Lock Action
-            VxButton(
-              label: 'Lock SLE ${currencyFmt.format(_totalEscrowInflow)} in Escrow',
-              icon: Icons.lock_outline_rounded,
-              isLoading: _isSubmitting,
-              onPressed: _handleInitiateEscrow,
-            ),
-            const SizedBox(height: 20),
+              // Manual provider instructions + transaction ref field
+              if (_selectedPaymentMethod != null && _selectedPaymentMethod!.isManual) ...[
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0F9FF),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF7DD3FC)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.info_outline_rounded, color: Color(0xFF0284C7), size: 18),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${_selectedPaymentMethod!.displayName} Instructions',
+                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Color(0xFF0C4A6E)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _selectedPaymentMethod!.instructions ?? 'Follow your provider\'s payment process and enter the Transaction ID below.',
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF0369A1), height: 1.5),
+                      ),
+                      if (_selectedPaymentMethod!.accountNumber != null) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: AppColors.white,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFBAE6FD)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Text('Merchant/Account: ', style: TextStyle(fontSize: 12, color: AppColors.gray600)),
+                              Text(
+                                _selectedPaymentMethod!.accountNumber!,
+                                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: AppColors.obsidian),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _txnRefController,
+                  keyboardType: TextInputType.text,
+                  decoration: InputDecoration(
+                    labelText: 'Paste Transaction ID / SMS Reference',
+                    hintText: 'e.g. TXN123456789',
+                    prefixIcon: const Icon(Icons.receipt_long_rounded, color: AppColors.gray500),
+                    filled: true,
+                    fillColor: AppColors.white,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+
+              // Phone number field for non-wallet, non-manual providers
+              if (_selectedProvider != 'WALLET' && (_selectedPaymentMethod == null || _selectedPaymentMethod!.isAutomated)) ...[
+                TextField(
+                  controller: _phoneController,
+                  keyboardType: TextInputType.phone,
+                  decoration: InputDecoration(
+                    labelText: 'Mobile Money Phone Number',
+                    hintText: 'e.g. 076 123456 or 077 123456',
+                    prefixIcon: const Icon(Icons.phone, color: AppColors.gray500),
+                    filled: true,
+                    fillColor: AppColors.white,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+
+              // Confirm & Lock Action
+              VxButton(
+                label: _selectedPaymentMethod != null && _selectedPaymentMethod!.isManual
+                    ? 'Submit Payment Claim'
+                    : (_selectedPaymentMethod != null && _selectedPaymentMethod!.isAutomated) || _selectedProvider == 'moneroo_auto'
+                        ? 'Pay with Moneroo (SLE ${currencyFmt.format(_totalEscrowInflow)})'
+                        : 'Lock SLE ${currencyFmt.format(_totalEscrowInflow)} in Escrow',
+                icon: _selectedPaymentMethod != null && _selectedPaymentMethod!.isManual
+                    ? Icons.send_rounded
+                    : (_selectedPaymentMethod != null && _selectedPaymentMethod!.isAutomated) || _selectedProvider == 'moneroo_auto'
+                        ? Icons.open_in_browser_rounded
+                        : Icons.lock_outline_rounded,
+                isLoading: _isSubmitting,
+                onPressed: _selectedPaymentMethod != null && _selectedPaymentMethod!.isManual
+                    ? _handleManualPaymentClaim
+                    : (_selectedPaymentMethod != null && _selectedPaymentMethod!.isAutomated) || _selectedProvider == 'moneroo_auto'
+                        ? _handleInitiateMoneroo
+                        : _handleInitiateEscrow,
+              ),
+              const SizedBox(height: 20),
+            ],
           ],
         ),
       ),

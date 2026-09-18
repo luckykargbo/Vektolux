@@ -22,12 +22,12 @@ import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../auth/presentation/views/login_screen.dart';
 import '../../../../core/widgets/vektolux_avatar.dart';
 import '../../../operator/presentation/views/operator_dashboard_screen.dart';
-import '../../../mobility/presentation/views/driver_vehicle_registration_screen.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/my_listings_screen.dart';
 import '../../../auth/presentation/views/pending_verification_screen.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? currentUserId;
@@ -622,6 +622,314 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  void _showCustomerSupportModal(BuildContext context) {
+    const supportPhone = '+23273623761';
+    const formattedPhone = '+232 73 623 761';
+    final whatsappUri = Uri.parse(
+      'https://wa.me/23273623761?text=${Uri.encodeComponent("Hello Vektolux Customer Support, I would like to make an inquiry regarding my account.")}',
+    );
+    final callUri = Uri.parse('tel:$supportPhone');
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 44,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.gray300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: const BoxDecoration(
+                        color: AppColors.emeraldSurface,
+                        borderRadius: BorderRadius.all(Radius.circular(14)),
+                      ),
+                      child: const Icon(
+                        Icons.support_agent_rounded,
+                        color: AppColors.emeraldDark,
+                        size: 26,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Customer Support',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.obsidian,
+                            ),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            'Available 24/7 in Sierra Leone • Choose how to connect',
+                            style: TextStyle(fontSize: 12, color: AppColors.gray500),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                // Option 1: WhatsApp Support
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () async {
+                      Navigator.of(ctx).pop();
+                      try {
+                        final launched = await launchUrl(
+                          whatsappUri,
+                          mode: LaunchMode.externalApplication,
+                        );
+                        if (!launched) {
+                          await launchUrl(whatsappUri);
+                        }
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Could not launch WhatsApp. Support: $formattedPhone'),
+                              backgroundColor: AppColors.obsidian,
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        }
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0FDF4),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFF86EFAC)),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF25D366),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.chat_bubble_rounded,
+                              color: Colors.white,
+                              size: 22,
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Row(
+                                  children: [
+                                    Text(
+                                      'Chat on WhatsApp',
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppColors.obsidian,
+                                      ),
+                                    ),
+                                    SizedBox(width: 8),
+                                    DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        color: Color(0xFFDCFCE7),
+                                        borderRadius: BorderRadius.all(Radius.circular(6)),
+                                      ),
+                                      child: Padding(
+                                        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        child: Text(
+                                          'Instant',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w800,
+                                            color: Color(0xFF16A34A),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  'Send messages, voice notes & images ($formattedPhone)',
+                                  style: const TextStyle(fontSize: 12, color: AppColors.gray600),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            size: 14,
+                            color: Color(0xFF16A34A),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // Option 2: Normal Mobile Phone Call
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () async {
+                      Navigator.of(ctx).pop();
+                      try {
+                        final launched = await launchUrl(callUri);
+                        if (!launched && context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Phone dialer not supported on this device.'),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        }
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Could not initiate call: $e'),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        }
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: AppColors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: const BoxDecoration(
+                              color: AppColors.emeraldSurface,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.phone_in_talk_rounded,
+                              color: AppColors.emeraldDark,
+                              size: 22,
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Normal Mobile Call',
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.obsidian,
+                                  ),
+                                ),
+                                SizedBox(height: 3),
+                                Text(
+                                  'Direct cellular audio call ($formattedPhone)',
+                                  style: TextStyle(fontSize: 12, color: AppColors.gray600),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            size: 14,
+                            color: AppColors.gray400,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // Option 3: Copy Phone Number
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () {
+                      Clipboard.setData(const ClipboardData(text: supportPhone));
+                      Navigator.of(ctx).pop();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Support line copied: $formattedPhone'),
+                          backgroundColor: AppColors.emerald,
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.copy_rounded, size: 16, color: AppColors.gray500),
+                          SizedBox(width: 8),
+                          Text(
+                            'Copy Support Number ($formattedPhone)',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.gray600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<AuthBloc, AuthState>(
@@ -1083,30 +1391,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 // ── 3. Partner & Vendor Upgrades (All Users) ─────────
                 _buildSectionHeader('BECOME A VEKTOLUX PARTNER'),
                 _buildPartnerCard(
-                  icon: Icons.local_shipping_rounded,
-                  title: 'Register Commercial Vehicle or Fleet',
-                  subtitle:
-                      'List delivery vans, tipper trucks & heavy freight for commercial haulage',
-                  actionLabel: 'Register Fleet',
-                  badgeText: role == UserRole.driver ? 'ACTIVE' : 'REGISTER',
-                  isEnrolled: role == UserRole.driver,
-                  onTap: () async {
-                    final res = await Navigator.of(context).push<bool>(
-                      MaterialPageRoute(
-                        builder: (_) => DriverVehicleRegistrationScreen(
-                          driverId: user?.id ?? '',
-                        ),
-                      ),
-                    );
-                    if (res == true && context.mounted) {
-                      context
-                          .read<AuthBloc>()
-                          .add(const UserRoleUpdatedEvent(UserRole.driver));
-                    }
-                  },
-                ),
-                const SizedBox(height: 10),
-                _buildPartnerCard(
                   icon: Icons.apartment_rounded,
                   title: 'List Properties as Real Estate Agent',
                   subtitle:
@@ -1319,8 +1603,55 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       _buildSettingsTile(
                         icon: Icons.signal_cellular_alt_rounded,
                         title: 'Africell Afrimoney',
-                        subtitle: 'Linked Mobile Money account',
-                        onTap: () {},
+                        subtitle: 'Linked Mobile Money account • Dial *161#',
+                        trailing: const Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 14,
+                          color: AppColors.gray400,
+                        ),
+                        onTap: () {
+                          _showInfoSheet(
+                            context,
+                            'Africell Afrimoney (*161#)',
+                            'Deposit and release escrow milestones using your Afrimoney wallet. For direct over-the-counter payments at an authorized cash agent or teller, use Vektolux Merchant / Agent Code: 001.',
+                          );
+                        },
+                      ),
+                      const Divider(height: 1, indent: 56),
+                      _buildSettingsTile(
+                        icon: Icons.cell_tower_rounded,
+                        title: 'QCell QMoney Sierra Leone',
+                        subtitle: 'Linked Mobile Money account • Dial *345#',
+                        trailing: const Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 14,
+                          color: AppColors.gray400,
+                        ),
+                        onTap: () {
+                          _showInfoSheet(
+                            context,
+                            'QCell QMoney (*345#)',
+                            'Pay and receive marketplace disbursements directly via QCell QMoney. For direct cashier or merchant payment, use Vektolux Merchant / Agent Code: 001 with your order reference.',
+                          );
+                        },
+                      ),
+                      const Divider(height: 1, indent: 56),
+                      _buildSettingsTile(
+                        icon: Icons.account_balance_rounded,
+                        title: 'Commercial Bank & Wire (SL)',
+                        subtitle: 'Sierra Leone Commercial Bank (SLCB) & Rokel',
+                        trailing: const Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 14,
+                          color: AppColors.gray400,
+                        ),
+                        onTap: () {
+                          _showInfoSheet(
+                            context,
+                            'Bank Transfer & Escrow Custody',
+                            'Direct ACH / RTGS wire transfers to the Vektolux Segregated Escrow Trust Account at Sierra Leone Commercial Bank (SLCB) or Rokel Commercial Bank. Funds are locked under multi-signatory escrow protocols until physical milestone satisfaction.',
+                          );
+                        },
                       ),
                       const Divider(height: 1, indent: 56),
                       _buildSettingsTile(
@@ -1435,21 +1766,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       _buildSettingsTile(
                         icon: Icons.support_agent_outlined,
                         title: 'Customer Support',
-                        subtitle: 'Direct WhatsApp & telephone: +232 73 623 761',
-                        onTap: () {
-                          Clipboard.setData(
-                            const ClipboardData(text: '+23273623761'),
-                          );
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Support line copied: +23273623761 (+232 73 623 761) - 24/7 Assistance',
-                              ),
-                              backgroundColor: AppColors.emerald,
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                        },
+                        subtitle: 'WhatsApp & Direct Call: +232 73 623 761',
+                        trailing: const Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 14,
+                          color: AppColors.gray400,
+                        ),
+                        onTap: () => _showCustomerSupportModal(context),
                       ),
                       const Divider(height: 1, indent: 56),
                       _buildSettingsTile(
@@ -1881,52 +2204,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ),
           ] else ...[
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.obsidian,
-                      foregroundColor: AppColors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
-                    icon: const Icon(Icons.app_registration_rounded, size: 16),
-                    label: const Text(
-                      'Register Commercial Vehicle',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-                    ),
-                    onPressed: () async {
-                      await Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => DriverVehicleRegistrationScreen(
-                            driverId: user?.id ?? '',
-                          ),
-                        ),
-                      );
-                    },
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.emeraldSurface,
+                  foregroundColor: AppColors.emeraldDark,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: const BorderSide(color: AppColors.emerald, width: 1),
                   ),
+                  padding: const EdgeInsets.symmetric(vertical: 11),
                 ),
-                const SizedBox(width: 8),
-                TextButton.icon(
-                  style: TextButton.styleFrom(
-                    backgroundColor: AppColors.emeraldSurface,
-                    foregroundColor: AppColors.emeraldDark,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: const BorderSide(color: AppColors.emerald, width: 1),
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                  ),
-                  icon: const Icon(Icons.bolt_rounded, size: 16),
-                  label: const Text(
-                    'Demo Unlock',
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
-                  ),
-                  onPressed: () async {
+                icon: const Icon(Icons.bolt_rounded, size: 18),
+                label: const Text(
+                  'Demo Unlock Driver Mode',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+                ),
+                onPressed: () async {
                     if (user == null) return;
                     try {
                       final client = context.read<ConvexClientWrapper>();
@@ -1959,8 +2255,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     }
                   },
                 ),
-              ],
-            ),
+              ),
           ],
         ],
       ),

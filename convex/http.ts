@@ -1078,5 +1078,130 @@ http.route({
   }),
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+//    POST /api/webhooks/moneroo — Moneroo Aggregator Payment Webhook
+// ═══════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/webhooks/moneroo",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const rawBody = await request.text();
+      const monerooSig = request.headers.get("x-moneroo-signature")
+        || request.headers.get("x-webhook-secret")
+        || request.headers.get("verif-hash");
+
+      const WEBHOOK_SECRET_HASH = process.env.WEBHOOK_SECRET_HASH || "Vektolux_SecHash_2026!";
+
+      let isValid = false;
+
+      // 1. Check direct secret hash from header
+      if (monerooSig && (monerooSig === WEBHOOK_SECRET_HASH || monerooSig === process.env.WEBHOOK_SECRET_HASH)) {
+        isValid = true;
+      }
+
+      // 2. Parse payload and check payload secret_hash if present
+      let payload: any = {};
+      try {
+        payload = JSON.parse(rawBody);
+        if (payload.secret_hash && (payload.secret_hash === WEBHOOK_SECRET_HASH || payload.secret_hash === process.env.WEBHOOK_SECRET_HASH)) {
+          isValid = true;
+        }
+      } catch (e) {
+        console.error("Moneroo webhook JSON parse error:", e);
+      }
+
+      // 3. HMAC-SHA256 verification against WEBHOOK_SECRET_HASH or MONEROO_SECRET_KEY
+      if (!isValid && monerooSig) {
+        const secretsToTry = [WEBHOOK_SECRET_HASH];
+        if (process.env.MONEROO_SECRET_KEY) secretsToTry.push(process.env.MONEROO_SECRET_KEY);
+
+        const encoder = new TextEncoder();
+        for (const secret of secretsToTry) {
+          try {
+            const key = await crypto.subtle.importKey(
+              "raw",
+              encoder.encode(secret),
+              { name: "HMAC", hash: "SHA-256" },
+              false,
+              ["sign"]
+            );
+            const signatureBytes = await crypto.subtle.sign("HMAC", key, encoder.encode(rawBody));
+            const computedHash = Array.from(new Uint8Array(signatureBytes))
+              .map((b) => b.toString(16).padStart(2, "0"))
+              .join("");
+
+            if (computedHash.toLowerCase() === monerooSig.toLowerCase()) {
+              isValid = true;
+              break;
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (!isValid) {
+        console.error("Moneroo webhook: Signature/Secret hash validation FAILED. Received header:", monerooSig);
+        return new Response("Unauthorized — Invalid signature/secret hash", { status: 401 });
+      }
+
+      const event = typeof payload.event === "string" ? payload.event : "";
+      const data = payload.data ?? {};
+
+      // Only process successful payment events
+      if (event !== "payment.success" && event !== "payment.completed" && data.status !== "success") {
+        console.log(`Moneroo webhook: Received non-success event "${event}", status="${data.status}"`);
+        return new Response(JSON.stringify({ received: true, event }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      const transactionRef = typeof data.reference === "string" && data.reference.length > 0
+        ? data.reference
+        : typeof data.id === "string"
+          ? data.id
+          : "";
+      const paymentId = typeof data.id === "string" ? data.id : undefined;
+      const amountPaid = typeof data.amount === "number" ? data.amount : 0;
+      const currency = typeof data.currency === "string" ? data.currency : "SLE";
+
+      if (!transactionRef && !paymentId) {
+        console.error("Moneroo webhook: No transaction reference or payment id in payload");
+        return new Response(JSON.stringify({ received: true, error: "No reference" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // Process the payment atomically & lock escrow
+      const result = await ctx.runMutation(
+        internal.payments.processMonerooWebhookClaim,
+        {
+          transactionReference: transactionRef || paymentId || "",
+          amountPaid,
+          currency,
+          paymentId,
+          metadata: data.metadata,
+        }
+      );
+
+      console.log(`Moneroo webhook processed successfully: ref=${transactionRef} id=${paymentId} amount=${amountPaid}`, result);
+
+      return new Response(JSON.stringify({ received: true, ...result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (error: any) {
+      console.error("Moneroo webhook error:", error.message ?? error);
+      return new Response(
+        JSON.stringify({ received: true, error: "Processing error logged" }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+  }),
+});
+
 export default http;
+
 

@@ -18,6 +18,8 @@ import 'core/constants/app_constants.dart';
 import 'features/auth/auth.dart';
 import 'features/mobility/presentation/bloc/mobility_bloc.dart';
 import 'features/mobility/data/repositories/mobility_repository_impl.dart';
+import 'core/services/notification_service.dart';
+import 'core/services/payment_methods_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -42,6 +44,20 @@ void main() async {
   );
 
   await syncEngine.initialize();
+
+  // ── Initialize Push Notification Service ──────────────────────────
+  try {
+    await NotificationService.instance.initialize(
+      convexClient: convexClient,
+    );
+  } catch (e) {
+    debugPrint('[Main] NotificationService initialization notice: $e');
+  }
+
+  // ── Initialize Payment Methods Service ────────────────────────────
+  PaymentMethodsService.instance.initialize(
+    convexClient: convexClient,
+  );
 
   // ── Launch App ────────────────────────────────────────────────────
   runApp(VektoluxApp(
@@ -95,6 +111,7 @@ class VektoluxApp extends StatelessWidget {
           ),
         ],
         child: MaterialApp(
+          navigatorKey: NotificationService.navigatorKey,
           title: 'Vektolux',
           debugShowCheckedModeBanner: false,
 
@@ -102,6 +119,21 @@ class VektoluxApp extends StatelessWidget {
           theme: AppTheme.light,
           darkTheme: AppTheme.dark,
           themeMode: ThemeMode.system,
+
+          // ── Auth User Synchronization for Notifications ─────────────
+          builder: (context, child) {
+            return BlocListener<AuthBloc, AuthState>(
+              listenWhen: (prev, curr) => prev.user?.id != curr.user?.id,
+              listener: (context, state) {
+                if (state.user != null) {
+                  NotificationService.instance.updateUser(state.user!.id);
+                } else {
+                  NotificationService.instance.updateUser(null);
+                }
+              },
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
 
           // ── Initial Screen ──────────────────────────────────────────
           home: const SplashScreen(),

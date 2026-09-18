@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "convex": "^1.17.4",
+    "firebase-admin": "^14.4.0",
     "lucide-react": "^1.46.0",
     "next": "^14.2.30",
     "react": "^18.3.1",

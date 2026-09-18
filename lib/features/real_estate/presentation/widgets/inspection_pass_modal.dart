@@ -333,10 +333,12 @@ class _InspectionPassModalState extends State<InspectionPassModal> {
         const SizedBox(height: 8),
         Row(
           children: [
-            _buildRailChip('ORANGE_MONEY_SL', 'Orange Money', Icons.phone_android_rounded),
-            const SizedBox(width: 8),
+            _buildRailChip('ORANGE_MONEY_SL', 'Orange', Icons.phone_android_rounded),
+            const SizedBox(width: 6),
             _buildRailChip('AFRICELL_AFRIMONEY_SL', 'Afrimoney', Icons.sim_card_outlined),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
+            _buildRailChip('QCELL_QMONEY_SL', 'QMoney', Icons.cell_tower_rounded),
+            const SizedBox(width: 6),
             _buildRailChip('WALLET', 'Wallet', Icons.account_balance_wallet_outlined),
           ],
         ),

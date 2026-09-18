@@ -671,7 +671,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       children: [
                         Expanded(
                           child: ChoiceChip(
-                            label: const Text('Orange Money'),
+                            label: const Text('Orange (*144#)'),
                             selected: _momoProvider == 'orange_money',
                             selectedColor: Colors.orange.shade700,
                             backgroundColor: const Color(0xFFF1F5F9),
@@ -680,7 +680,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                   ? AppColors.white
                                   : AppColors.obsidian,
                               fontWeight: FontWeight.w700,
-                              fontSize: 12,
+                              fontSize: 11,
                             ),
                             onSelected: (val) {
                               if (val) {
@@ -689,10 +689,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             },
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 6),
                         Expanded(
                           child: ChoiceChip(
-                            label: const Text('Africell Money'),
+                            label: const Text('Africell (*161#)'),
                             selected: _momoProvider == 'africell_money',
                             selectedColor: Colors.purple.shade700,
                             backgroundColor: const Color(0xFFF1F5F9),
@@ -701,11 +701,32 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                   ? AppColors.white
                                   : AppColors.obsidian,
                               fontWeight: FontWeight.w700,
-                              fontSize: 12,
+                              fontSize: 11,
                             ),
                             onSelected: (val) {
                               if (val) {
                                 setState(() => _momoProvider = 'africell_money');
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Text('QMoney (*345#)'),
+                            selected: _momoProvider == 'qmoney',
+                            selectedColor: Colors.blue.shade700,
+                            backgroundColor: const Color(0xFFF1F5F9),
+                            labelStyle: TextStyle(
+                              color: _momoProvider == 'qmoney'
+                                  ? AppColors.white
+                                  : AppColors.obsidian,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 11,
+                            ),
+                            onSelected: (val) {
+                              if (val) {
+                                setState(() => _momoProvider = 'qmoney');
                               }
                             },
                           ),
@@ -744,7 +765,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       decoration: InputDecoration(
                         labelText: _momoProvider == 'orange_money'
                             ? 'Orange Money Agent # / Merchant Code'
-                            : 'Africell Agent Code',
+                            : _momoProvider == 'qmoney'
+                                ? 'QMoney Agent # / Merchant Code'
+                                : 'Africell Agent Code',
                         labelStyle: const TextStyle(color: AppColors.gray600),
                         hintText: 'e.g. 001',
                         prefixIcon: const Icon(Icons.store_mall_directory_outlined),
