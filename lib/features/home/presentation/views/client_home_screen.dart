@@ -2,7 +2,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Client / Customer Super App Discovery Home Feed
 // Modern curated discovery feed with quick-launch grid, showroom
-// carousels for verified properties & vehicles, and quick ride shortcuts.
+// carousels for verified properties & vehicles, and saved search shortcuts.
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
@@ -22,8 +22,6 @@ import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
 import '../../../listings/presentation/views/vehicle_detail_screen.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
-import '../../../mobility/presentation/bloc/mobility_bloc.dart';
-import '../../../mobility/presentation/bloc/mobility_event.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../../../notifications/presentation/views/notifications_screen.dart';
 
@@ -66,36 +64,20 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     } catch (_) {}
   }
 
-  final List<Map<String, dynamic>> _quickDestinations = [
+  final List<Map<String, dynamic>> _savedShortcuts = [
     {
-      'name': 'Lumley Beach',
-      'area': 'Aberdeen Peninsula',
-      'icon': Icons.beach_access_rounded,
-      'color': Color(0xFF0284C7),
+      'title': 'Home',
+      'address': 'Wilkinson Road, Freetown',
+      'query': 'Wilkinson',
+      'icon': Icons.home_rounded,
+      'color': const Color(0xFF10B981),
     },
     {
-      'name': 'Cotton Tree / CBD',
-      'area': 'Central Freetown',
-      'icon': Icons.park_rounded,
-      'color': Color(0xFF10B981),
-    },
-    {
-      'name': 'Aberdeen Ferry Terminal',
-      'area': 'Sir Samuel Lewis Rd',
-      'icon': Icons.directions_boat_rounded,
-      'color': Color(0xFF6366F1),
-    },
-    {
-      'name': 'Waterloo Central Junction',
-      'area': 'Western Area Rural',
-      'icon': Icons.alt_route_rounded,
-      'color': Color(0xFFF59E0B),
-    },
-    {
-      'name': 'Lungi Airport Ferry',
-      'area': 'Government Wharf',
-      'icon': Icons.flight_takeoff_rounded,
-      'color': Color(0xFF8B5CF6),
+      'title': 'Work / Office',
+      'address': 'Central Business District, CBD',
+      'query': 'CBD',
+      'icon': Icons.work_rounded,
+      'color': const Color(0xFF0284C7),
     },
   ];
 
@@ -295,27 +277,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     );
   }
 
-  void _handleQuickDestinationTap(Map<String, dynamic> destination) {
-    final destName = destination['name'] as String;
-    final destArea = destination['area'] as String;
-    final fullDropoff = '$destName, $destArea, Sierra Leone';
-
-    // 1. Dispatch update to MobilityBloc
-    context.read<MobilityBloc>().add(
-          UpdateLocationsEvent(dropoffAddress: fullDropoff),
-        );
-
-    // 2. Switch to Rides tab (Tab Index 1)
-    MainNavigationShell.switchToTab(context, 1);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Destination set to $destName! Select your ride tier.'),
-        backgroundColor: AppColors.emeraldDark,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-      ),
-    );
+  void _handleSavedShortcutTap(Map<String, dynamic> shortcut) {
+    final query = shortcut['query'] as String? ?? shortcut['title'] as String;
+    setState(() {
+      _searchController.text = query;
+    });
   }
 
   @override
@@ -351,14 +317,6 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     model.contains(query) ||
                     color.contains(query) ||
                     type.contains(query);
-              }).toList()
-            : <Map<String, dynamic>>[];
-
-        final matchingDestinations = isSearching
-            ? _quickDestinations.where((d) {
-                final name = (d['name'] as String? ?? '').toLowerCase();
-                final area = (d['area'] as String? ?? '').toLowerCase();
-                return name.contains(query) || area.contains(query);
               }).toList()
             : <Map<String, dynamic>>[];
 
@@ -431,7 +389,6 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                         query: _searchController.text.trim(),
                         properties: matchingProperties,
                         vehicles: matchingVehicles,
-                        destinations: matchingDestinations,
                       ),
                     ),
                   ] else ...[
@@ -450,9 +407,9 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       child: _buildVehiclesCarousel(),
                     ),
 
-                    // ── 6. Quick Ride Shortcuts ───────────────────────
+                    // ── 6. Saved Places & Shortcuts ───────────────────
                     SliverToBoxAdapter(
-                      child: _buildQuickDestinationsSection(),
+                      child: _buildSavedPlacesSection(),
                     ),
                   ],
 
@@ -1138,9 +1095,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     required String query,
     required List<Map<String, dynamic>> properties,
     required List<Map<String, dynamic>> vehicles,
-    required List<Map<String, dynamic>> destinations,
   }) {
-    final totalMatches = properties.length + vehicles.length + destinations.length;
+    final totalMatches = properties.length + vehicles.length;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -1234,68 +1190,6 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 ],
               ),
             ),
-          ],
-
-          // Matching Destinations
-          if (destinations.isNotEmpty) ...[
-            _buildResultCategoryHeader(
-              title: 'Ride Destinations',
-              count: destinations.length,
-              icon: Icons.local_taxi_rounded,
-              color: AppColors.emerald,
-            ),
-            const SizedBox(height: 8),
-            ListView.separated(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: destinations.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (context, idx) {
-                final dest = destinations[idx];
-                return InkWell(
-                  onTap: () => _handleQuickDestinationTap(dest),
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: AppColors.emeraldSurface,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Icon(dest['icon'] as IconData, size: 20, color: AppColors.emeraldDark),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                dest['name'] as String,
-                                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-                              ),
-                              Text(
-                                dest['area'] as String,
-                                style: const TextStyle(fontSize: 11, color: AppColors.gray500),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: AppColors.gray400),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 16),
           ],
 
           // Matching Properties
@@ -1998,7 +1892,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     );
   }
 
-  Widget _buildQuickDestinationsSection() {
+  Widget _buildSavedPlacesSection() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 10),
       child: Column(
@@ -2016,7 +1910,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               ),
               const SizedBox(width: 8),
               const Text(
-                'QUICK RIDE SHORTCUTS',
+                'SAVED PLACES & SHORTCUTS',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
@@ -2030,14 +1924,14 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           ListView.separated(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: _quickDestinations.length,
+            itemCount: _savedShortcuts.length,
             separatorBuilder: (_, __) => const SizedBox(height: 8),
             itemBuilder: (context, idx) {
-              final dest = _quickDestinations[idx];
-              final color = dest['color'] as Color;
+              final shortcut = _savedShortcuts[idx];
+              final color = shortcut['color'] as Color;
 
               return InkWell(
-                onTap: () => _handleQuickDestinationTap(dest),
+                onTap: () => _handleSavedShortcutTap(shortcut),
                 borderRadius: BorderRadius.circular(14),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -2054,7 +1948,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                           color: color.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: Icon(dest['icon'] as IconData, size: 20, color: color),
+                        child: Icon(shortcut['icon'] as IconData, size: 20, color: color),
                       ),
                       const SizedBox(width: 14),
                       Expanded(
@@ -2062,7 +1956,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              dest['name'] as String,
+                              shortcut['title'] as String,
                               style: const TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w700,
@@ -2071,7 +1965,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              dest['area'] as String,
+                              shortcut['address'] as String,
                               style: const TextStyle(fontSize: 11, color: AppColors.gray500),
                             ),
                           ],
@@ -2083,10 +1977,10 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                           color: AppColors.emeraldSurface,
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Row(
-                          children: const [
+                        child: const Row(
+                          children: [
                             Text(
-                              'Book Ride',
+                              'Filter Listings',
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,
