@@ -78,17 +78,20 @@ jobs:
   release:
     name: Publish Release (APK & IPA)
     needs: [build-android, build-ios]
+    if: always() && (needs.build-ios.result == 'success' || needs.build-android.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Download Android APK
+        if: needs.build-android.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: android-apk
           path: apk-dir
 
       - name: Download iOS IPA
+        if: needs.build-ios.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: ios-ipa
@@ -97,8 +100,8 @@ jobs:
       - name: Organize Release Assets
         run: |
           mkdir -p release-assets
-          cp apk-dir/app-release.apk release-assets/
-          cp ipa-dir/Vektolux.ipa release-assets/
+          if [ -d apk-dir ] && [ -f apk-dir/app-release.apk ]; then cp apk-dir/app-release.apk release-assets/; fi
+          if [ -d ipa-dir ] && [ -f ipa-dir/Vektolux.ipa ]; then cp ipa-dir/Vektolux.ipa release-assets/; fi
           ls -lh release-assets/
 
       - name: Create or Update GitHub Release
@@ -125,9 +128,7 @@ jobs:
             - **Multi-Tier Real Estate & Vehicle Escrow System (Sierra Leone SLE)**:
               * Anti-bypass inspection pass with 4-digit verification OTP.
               * Segregated caution deposit vaults and rental handoffs.
-          files: |
-            release-assets/Vektolux.ipa
-            release-assets/app-release.apk
+          files: release-assets/*
           prerelease: false
           make_latest: true
         env:

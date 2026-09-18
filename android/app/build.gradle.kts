@@ -6,8 +6,8 @@ plugins {
 
 android {
     namespace = "com.example.vektolux"
-    compileSdk = 34
-    buildToolsVersion = "34.0.0"
+    compileSdk = 36
+    buildToolsVersion = "36.0.0"
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
