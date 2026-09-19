@@ -29,47 +29,8 @@ import '../../../auth/presentation/views/pending_verification_screen.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/services/payment_methods_service.dart';
+import '../../../../core/models/payment_account.dart';
 
-
-class SavedPaymentMethodItem {
-  final String id;
-  final String providerName;
-  final String providerCode; // 'orange', 'africell', 'qmoney', 'slcb'
-  final String accountNumber;
-  final String maskedNumber;
-  final bool isDefault;
-  final bool isActive;
-
-  const SavedPaymentMethodItem({
-    required this.id,
-    required this.providerName,
-    required this.providerCode,
-    required this.accountNumber,
-    required this.maskedNumber,
-    this.isDefault = false,
-    this.isActive = true,
-  });
-
-  SavedPaymentMethodItem copyWith({
-    String? id,
-    String? providerName,
-    String? providerCode,
-    String? accountNumber,
-    String? maskedNumber,
-    bool? isDefault,
-    bool? isActive,
-  }) {
-    return SavedPaymentMethodItem(
-      id: id ?? this.id,
-      providerName: providerName ?? this.providerName,
-      providerCode: providerCode ?? this.providerCode,
-      accountNumber: accountNumber ?? this.accountNumber,
-      maskedNumber: maskedNumber ?? this.maskedNumber,
-      isDefault: isDefault ?? this.isDefault,
-      isActive: isActive ?? this.isActive,
-    );
-  }
-}
 
 class ProfileScreen extends StatefulWidget {
   final String? currentUserId;
@@ -86,20 +47,111 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  // ── Notification preferences (local UI toggles) ───────────────────
   bool _pushNotifications = true;
   bool _smsAlerts = true;
+
+  // ── Escrow wallet display state ───────────────────────────────────
   bool _isBalanceVisible = true;
   bool _escrowBiometricEnabled = true;
-  double _escrowBalance = 3500.00;
-  List<SavedPaymentMethodItem>? _savedPaymentMethods;
+
+  // ── Live Convex wallet data (replaces hardcoded _escrowBalance) ───
+  double? _walletBalance;        // null = loading
+  int _activeEscrowDeals = 0;
+  bool _isLoadingBalance = true;
+
+  // ── Live Convex payment accounts (replaces local _savedPaymentMethods) ──
+  List<PaymentAccount> _userPaymentAccounts = [];
+  bool _isLoadingAccounts = true;
+
+  // ── Vendor listing count (replaces hardcoded '6 Items') ───────────
+  int _vendorListingCount = 0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<AuthBloc>().add(const RefreshUserSessionEvent());
+      _fetchWalletData();
+      _fetchUserPaymentAccounts();
     });
   }
+
+  /// Fetch live wallet balance and active escrow deal count from Convex.
+  Future<void> _fetchWalletData() async {
+    if (!mounted) return;
+    final userId = context.read<AuthBloc>().state.user?.id;
+    if (userId == null) {
+      setState(() => _isLoadingBalance = false);
+      return;
+    }
+    final client = context.read<ConvexClientWrapper>();
+    try {
+      final walletRes = await client.query(
+        'payments:getWalletBalance',
+        args: {'userId': userId},
+      );
+      final ordersRes = await client.query(
+        'escrow:getMyEscrowOrders',
+        args: {'userId': userId},
+      );
+      final propRes = await client.query(
+        'realEstate:getMyPropertyListings',
+        args: {'userId': userId},
+      );
+      if (!mounted) return;
+      setState(() {
+        _walletBalance =
+            (walletRes.value?['availableBalance'] as num?)?.toDouble() ?? 0.0;
+        final orders =
+            ordersRes.value is List ? ordersRes.value as List : <dynamic>[];
+        _activeEscrowDeals = orders.where((o) {
+          final s = (o as Map)['status'] as String? ?? '';
+          return s == 'FUNDED' ||
+              s == 'INSPECTION_IN_PROGRESS' ||
+              s == 'AWAITING_HANDOFF';
+        }).length;
+        final listings =
+            propRes.value is List ? propRes.value as List : <dynamic>[];
+        _vendorListingCount = listings.length;
+        _isLoadingBalance = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingBalance = false);
+    }
+  }
+
+  /// Fetch user's Convex-persisted linked payment accounts.
+  Future<void> _fetchUserPaymentAccounts() async {
+    if (!mounted) return;
+    final userId = context.read<AuthBloc>().state.user?.id;
+    if (userId == null) {
+      setState(() => _isLoadingAccounts = false);
+      return;
+    }
+    final client = context.read<ConvexClientWrapper>();
+    try {
+      final res = await client.query(
+        'payments:getUserPaymentAccounts',
+        args: {'userId': userId},
+      );
+      if (!mounted) return;
+      if (res.success && res.value is List) {
+        setState(() {
+          _userPaymentAccounts = (res.value as List)
+              .map((item) =>
+                  PaymentAccount.fromJson(item as Map<String, dynamic>))
+              .toList();
+          _isLoadingAccounts = false;
+        });
+      } else {
+        setState(() => _isLoadingAccounts = false);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingAccounts = false);
+    }
+  }
+
 
   void _showEditProfileModal(BuildContext context, UserEntity user) {
     final nameCtrl = TextEditingController(text: user.name);
@@ -993,8 +1045,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             role == UserRole.driver ||
             role == UserRole.admin;
 
-        _initPaymentMethods(user);
-
         return Scaffold(
           backgroundColor: AppColors.gray50,
           appBar: AppBar(
@@ -1481,14 +1531,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             _buildVendorStatCard(
                               icon: Icons.storefront_outlined,
                               label: 'Active Listings',
-                              value: '6 Items',
+                              value: '$_vendorListingCount Item${_vendorListingCount == 1 ? '' : 's'}',
                               color: AppColors.obsidian,
                             ),
                             const SizedBox(width: 10),
                             _buildVendorStatCard(
                               icon: Icons.account_balance_wallet_outlined,
                               label: 'Escrow Balance',
-                              value: 'SLE 14,250',
+                              value: 'SLE ${_walletBalance != null ? _walletBalance!.toStringAsFixed(0) : '...'}',
                               color: AppColors.emeraldDark,
                             ),
                           ],
@@ -1501,31 +1551,43 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             Container(
                               padding: const EdgeInsets.all(8),
                               decoration: BoxDecoration(
-                                color: AppColors.emeraldSurface,
+                                color: (user?.isVerified == true || user?.isApprovedVerification == true)
+                                    ? AppColors.emeraldSurface
+                                    : AppColors.amberSurface,
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: const Icon(
-                                Icons.badge_outlined,
-                                color: AppColors.emeraldDark,
+                              child: Icon(
+                                (user?.isVerified == true || user?.isApprovedVerification == true)
+                                    ? Icons.badge_outlined
+                                    : Icons.pending_actions_outlined,
+                                color: (user?.isVerified == true || user?.isApprovedVerification == true)
+                                    ? AppColors.emeraldDark
+                                    : AppColors.amberDark,
                                 size: 18,
                               ),
                             ),
                             const SizedBox(width: 10),
-                            const Expanded(
+                            Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'KYC Verification: Verified',
-                                    style: TextStyle(
+                                    (user?.isVerified == true || user?.isApprovedVerification == true)
+                                        ? 'KYC Verification: Verified'
+                                        : (user?.isPendingVerification == true
+                                            ? 'KYC Verification: Pending Review'
+                                            : 'KYC Verification: Unverified'),
+                                    style: const TextStyle(
                                       fontSize: 13,
                                       fontWeight: FontWeight.w700,
                                       color: AppColors.obsidian,
                                     ),
                                   ),
                                   Text(
-                                    'National ID & TIN credentials verified on-chain',
-                                    style: TextStyle(
+                                    (user?.isVerified == true || user?.isApprovedVerification == true)
+                                        ? 'National ID & TIN credentials verified on-chain'
+                                        : 'Tap to submit business & identity verification',
+                                    style: const TextStyle(
                                       fontSize: 10,
                                       color: AppColors.textSecondary,
                                     ),
@@ -1533,9 +1595,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ],
                               ),
                             ),
-                            const Icon(
-                              Icons.check_circle,
-                              color: AppColors.emerald,
+                            Icon(
+                              (user?.isVerified == true || user?.isApprovedVerification == true)
+                                  ? Icons.check_circle
+                                  : Icons.info_outline,
+                              color: (user?.isVerified == true || user?.isApprovedVerification == true)
+                                  ? AppColors.emerald
+                                  : AppColors.amberDark,
                               size: 18,
                             ),
                           ],
@@ -1547,7 +1613,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
 
                 // ── 3. Saved Addresses / Places ─────────────────────
-                _buildSectionHeader('SAVED PLACES & SHORTCUTS'),
+                _buildSectionHeader('SAVED ADDRESSES'),
                 Container(
                   decoration: BoxDecoration(
                     color: AppColors.white,
@@ -1559,21 +1625,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       _buildSettingsTile(
                         icon: Icons.home_outlined,
                         title: 'Home',
-                        subtitle: '18 Wilkinson Road, Freetown',
+                        subtitle: 'Freetown, Sierra Leone (Default)',
                         onTap: () {},
                       ),
                       const Divider(height: 1, indent: 56),
                       _buildSettingsTile(
                         icon: Icons.work_outline,
                         title: 'Work / Office',
-                        subtitle: 'Siaka Stevens Street, Central Business District',
-                        onTap: () {},
-                      ),
-                      const Divider(height: 1, indent: 56),
-                      _buildSettingsTile(
-                        icon: Icons.beach_access_outlined,
-                        title: 'Lumley Beach',
-                        subtitle: 'Aberdeen Peninsula Road',
+                        subtitle: 'Central Business District, Freetown',
                         onTap: () {},
                       ),
                     ],
@@ -1598,7 +1657,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   child: Column(
                     children: [
-                      if (_savedPaymentMethods == null || _savedPaymentMethods!.isEmpty)
+                      if (_isLoadingAccounts)
+                        const Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Center(
+                            child: SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        )
+                      else if (_userPaymentAccounts.isEmpty)
                         const Padding(
                           padding: EdgeInsets.all(20),
                           child: Center(
@@ -1609,9 +1679,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                         )
                       else
-                        for (int i = 0; i < _savedPaymentMethods!.length; i++) ...[
+                        for (int i = 0; i < _userPaymentAccounts.length; i++) ...[
                           if (i > 0) const Divider(height: 1, indent: 68),
-                          _buildPaymentMethodTile(_savedPaymentMethods![i]),
+                          _buildPaymentMethodTile(_userPaymentAccounts[i]),
                         ],
                       const Divider(height: 1),
                       InkWell(
@@ -1819,7 +1889,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       _buildSettingsTile(
                         icon: Icons.info_outline,
                         title: 'App Version',
-                        subtitle: 'Vektolux v1.2.0-sl-prod (Build 120)',
+                        subtitle: 'Vektolux v1.0.13 (Build 14)',
                         trailing: const Text(
                           'Latest',
                           style: TextStyle(
@@ -2245,58 +2315,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ),
           ] else ...[
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.emeraldSurface,
-                  foregroundColor: AppColors.emeraldDark,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: const BorderSide(color: AppColors.emerald, width: 1),
-                  ),
-                  padding: const EdgeInsets.symmetric(vertical: 11),
-                ),
-                icon: const Icon(Icons.bolt_rounded, size: 18),
-                label: const Text(
-                  'Demo Unlock Driver Mode',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
-                ),
-                onPressed: () async {
-                    if (user == null) return;
-                    try {
-                      final client = context.read<ConvexClientWrapper>();
-                      await client.mutation(
-                        'users:mockApproveRoleUpgrade',
-                        args: {
-                          'userId': user.id,
-                          'targetRole': 'driver',
-                        },
-                      );
-                      if (context.mounted) {
-                        context.read<AuthBloc>().add(const SwitchUserModeEvent('driver'));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Driver Workspace Unlocked! (Demo Verification)'),
-                            backgroundColor: AppColors.emerald,
-                            behavior: SnackBarBehavior.floating,
-                          ),
-                        );
-                      }
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Unlock error: $e'),
-                            backgroundColor: AppColors.error,
-                          ),
-                        );
-                      }
-                    }
-                  },
-                ),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.gray100,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border),
               ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline_rounded, size: 16, color: AppColors.gray500),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Fleet Operator access requires verified operator status. Apply as a Dealer below to unlock this mode.',
+                      style: TextStyle(fontSize: 12, color: AppColors.gray600),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ],
       ),
@@ -2520,7 +2558,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (user == null) return;
     final agencyCtrl =
         TextEditingController(text: '${user.name} Real Estate Agency');
-    final tinCtrl = TextEditingController(text: 'TIN-SL-84920');
+    final tinCtrl = TextEditingController();
 
     showModalBottomSheet(
       context: context,
@@ -2611,19 +2649,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
                 onPressed: () async {
+                  final businessName = agencyCtrl.text.trim();
+                  final tin = tinCtrl.text.trim();
+                  if (businessName.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Please enter an agency name.')),
+                    );
+                    return;
+                  }
                   final client = context.read<ConvexClientWrapper>();
                   await client.mutation(
-                    'users:mockApproveRoleUpgrade',
-                    args: {'userId': user.id, 'targetRole': 'agent'},
+                    'users:applyRoleUpgrade',
+                    args: {
+                      'userId': user.id,
+                      'targetRole': 'agent',
+                      'businessName': businessName,
+                      if (tin.isNotEmpty) 'tinNumber': tin,
+                    },
                   );
                   if (context.mounted) {
-                    context
-                        .read<AuthBloc>()
-                        .add(const UserRoleUpdatedEvent(UserRole.agent));
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text(
-                            'Agent credentials verified! You can now publish properties.'),
+                            'Application submitted! You will be notified once verified.'),
                         backgroundColor: AppColors.emeraldDark,
                         behavior: SnackBarBehavior.floating,
                       ),
@@ -2632,7 +2680,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   if (ctx.mounted) Navigator.pop(ctx);
                 },
                 child: const Text(
-                  'Submit & Activate (Demo)',
+                  'Submit Application',
                   style: TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
@@ -2647,7 +2695,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (user == null) return;
     final dealerCtrl =
         TextEditingController(text: '${user.name} Motors & Fleet');
-    final tinCtrl = TextEditingController(text: 'TIN-SL-90241');
+    final tinCtrl = TextEditingController();
 
     showModalBottomSheet(
       context: context,
@@ -2738,19 +2786,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
                 onPressed: () async {
+                  final dealershipName = dealerCtrl.text.trim();
+                  final tin = tinCtrl.text.trim();
+                  if (dealershipName.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Please enter a dealership name.')),
+                    );
+                    return;
+                  }
                   final client = context.read<ConvexClientWrapper>();
                   await client.mutation(
-                    'users:mockApproveRoleUpgrade',
-                    args: {'userId': user.id, 'targetRole': 'merchant'},
+                    'users:applyRoleUpgrade',
+                    args: {
+                      'userId': user.id,
+                      'targetRole': 'merchant',
+                      'businessName': dealershipName,
+                      if (tin.isNotEmpty) 'tinNumber': tin,
+                    },
                   );
                   if (context.mounted) {
-                    context
-                        .read<AuthBloc>()
-                        .add(const UserRoleUpdatedEvent(UserRole.merchant));
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text(
-                            'Auto Dealer verified! You can now list vehicles in the showroom.'),
+                            'Dealership application submitted! You will be notified once verified.'),
                         backgroundColor: Color(0xFF92400E),
                         behavior: SnackBarBehavior.floating,
                       ),
@@ -2759,7 +2817,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   if (ctx.mounted) Navigator.pop(ctx);
                 },
                 child: const Text(
-                  'Submit & Activate (Demo)',
+                  'Submit Application',
                   style: TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
@@ -3107,6 +3165,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                   TextField(
                     controller: codeCtrl,
+                    cursorColor: const Color(0xFF10B981),
                     style: const TextStyle(
                       color: AppColors.obsidian,
                       fontWeight: FontWeight.w600,
@@ -3123,6 +3182,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   TextField(
                     controller: amountCtrl,
                     keyboardType: TextInputType.number,
+                    cursorColor: const Color(0xFF10B981),
                     style: const TextStyle(
                       color: AppColors.obsidian,
                       fontWeight: FontWeight.w700,
@@ -3414,22 +3474,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _initPaymentMethods(UserEntity? user) {
-    if (_savedPaymentMethods != null) return;
-    final phone = (user?.phone.isNotEmpty == true) ? user!.phone : '+232 76 108 761';
-    _savedPaymentMethods = [
-      SavedPaymentMethodItem(
-        id: 'pm_default_orange',
-        providerName: 'Orange Money Sierra Leone',
-        providerCode: 'orange',
-        accountNumber: phone,
-        maskedNumber: _maskAccountNumber(phone),
-        isDefault: true,
-        isActive: true,
-      ),
-    ];
-  }
-
   String _maskAccountNumber(String raw) {
     final clean = raw.trim();
     if (clean.isEmpty) return '••••';
@@ -3492,7 +3536,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildEscrowWalletHeroCard(BuildContext context, UserEntity? user) {
     final balanceText = _isBalanceVisible
-        ? 'SLE ${_escrowBalance.toStringAsFixed(2)}'
+        ? 'SLE ${_walletBalance?.toStringAsFixed(2) ?? '0.00'}'
         : 'SLE ••••••';
 
     return Container(
@@ -3568,15 +3612,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ],
           ),
           const SizedBox(height: 14),
-          Text(
-            balanceText,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 30,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.5,
-            ),
-          ),
+          _isLoadingBalance
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 4),
+                  child: SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2.5,
+                    ),
+                  ),
+                )
+              : Text(
+                  balanceText,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
+                  ),
+                ),
           const SizedBox(height: 10),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -3600,9 +3656,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
                 const SizedBox(width: 6),
-                const Text(
-                  'Escrow Protected • 2 Active Deals',
-                  style: TextStyle(
+                Text(
+                  'Escrow Protected • $_activeEscrowDeals Active Deal${_activeEscrowDeals == 1 ? '' : 's'}',
+                  style: const TextStyle(
                     color: Color(0xFF6EE7B7),
                     fontSize: 11.5,
                     fontWeight: FontWeight.w700,
@@ -3681,7 +3737,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildPaymentMethodTile(SavedPaymentMethodItem method) {
+  Widget _buildPaymentMethodTile(PaymentAccount method) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
@@ -3755,30 +3811,54 @@ class _ProfileScreenState extends State<ProfileScreen> {
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert_rounded, size: 18, color: AppColors.gray400),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            onSelected: (action) {
+            onSelected: (action) async {
+              final client = context.read<ConvexClientWrapper>();
+              final userId = context.read<AuthBloc>().state.user?.id ?? '';
               if (action == 'default') {
-                setState(() {
-                  _savedPaymentMethods = _savedPaymentMethods?.map((m) {
-                    return m.copyWith(isDefault: m.id == method.id);
-                  }).toList();
-                });
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('${method.providerName} set as default payment method.'),
-                    backgroundColor: AppColors.emeraldDark,
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
+                try {
+                  await client.mutation(
+                    'payments:setDefaultPaymentAccount',
+                    args: {'accountId': method.id, 'userId': userId},
+                  );
+                  await _fetchUserPaymentAccounts();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('${method.providerName} set as default payment method.'),
+                        backgroundColor: AppColors.emeraldDark,
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to set default: $e')),
+                    );
+                  }
+                }
               } else if (action == 'delete') {
-                setState(() {
-                  _savedPaymentMethods?.removeWhere((m) => m.id == method.id);
-                });
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('${method.providerName} removed.'),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
+                try {
+                  await client.mutation(
+                    'payments:removeUserPaymentAccount',
+                    args: {'accountId': method.id, 'userId': userId},
+                  );
+                  await _fetchUserPaymentAccounts();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('${method.providerName} removed.'),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to remove: $e')),
+                    );
+                  }
+                }
               }
             },
             itemBuilder: (ctx) => [
@@ -3874,7 +3954,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
-                    value: selectedProvider,
+                    initialValue: selectedProvider,
                     style: const TextStyle(
                       color: Color(0xFF0F172A),
                       fontSize: 15,
@@ -3960,7 +4040,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
-                      onPressed: () {
+                      onPressed: () async {
                         final rawNumber = accountCtrl.text.trim();
                         if (rawNumber.isEmpty) {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -3986,36 +4066,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             break;
                         }
 
-                        final newItem = SavedPaymentMethodItem(
-                          id: 'pm_${DateTime.now().millisecondsSinceEpoch}',
-                          providerName: pName,
-                          providerCode: selectedProvider,
-                          accountNumber: rawNumber,
-                          maskedNumber: _maskAccountNumber(rawNumber),
-                          isDefault: setAsDefault || (_savedPaymentMethods?.isEmpty ?? true),
-                          isActive: true,
-                        );
+                        try {
+                          final client = context.read<ConvexClientWrapper>();
+                          final userId = context.read<AuthBloc>().state.user?.id ?? '';
+                          await client.mutation(
+                            'payments:addUserPaymentAccount',
+                            args: {
+                              'userId': userId,
+                              'providerCode': selectedProvider,
+                              'providerName': pName,
+                              'accountNumber': rawNumber,
+                              'maskedNumber': _maskAccountNumber(rawNumber),
+                              'isDefault': setAsDefault || _userPaymentAccounts.isEmpty,
+                            },
+                          );
+                          await _fetchUserPaymentAccounts();
 
-                        setState(() {
-                          final current = _savedPaymentMethods ?? [];
-                          if (newItem.isDefault) {
-                            _savedPaymentMethods = [
-                              ...current.map((m) => m.copyWith(isDefault: false)),
-                              newItem,
-                            ];
-                          } else {
-                            _savedPaymentMethods = [...current, newItem];
+                          if (modalCtx.mounted) Navigator.of(modalCtx).pop();
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('$pName linked successfully!'),
+                                backgroundColor: AppColors.emeraldDark,
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
                           }
-                        });
-
-                        Navigator.of(modalCtx).pop();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('$pName linked successfully!'),
-                            backgroundColor: AppColors.emeraldDark,
-                            behavior: SnackBarBehavior.floating,
-                          ),
-                        );
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Failed to link account: $e')),
+                            );
+                          }
+                        }
                       },
                       child: const Text('Link Payment Method', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                     ),
@@ -4127,7 +4210,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
-                      value: selectedTopUpProvider,
+                      initialValue: selectedTopUpProvider,
                       style: const TextStyle(
                         color: Color(0xFF0F172A),
                         fontSize: 15,
@@ -4339,6 +4422,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       }
                                     }
                                     if (modalCtx.mounted) Navigator.of(modalCtx).pop();
+                                    _fetchWalletData();
                                     if (context.mounted) {
                                       ScaffoldMessenger.of(context).showSnackBar(
                                         const SnackBar(
@@ -4388,6 +4472,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                                 if (result['success'] == true) {
                                   if (modalCtx.mounted) Navigator.of(modalCtx).pop();
+                                  _fetchWalletData();
                                   if (context.mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
@@ -4469,9 +4554,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (modalCtx, setModalState) {
-            final activeMethod = _savedPaymentMethods?.firstWhere(
+            final activeMethod = _userPaymentAccounts.firstWhere(
               (m) => m.isDefault,
-              orElse: () => _savedPaymentMethods!.first,
+              orElse: () => _userPaymentAccounts.isNotEmpty
+                  ? _userPaymentAccounts.first
+                  : const PaymentAccount(
+                      id: '',
+                      providerCode: 'orange',
+                      providerName: 'Orange Money',
+                      accountNumber: '',
+                      maskedNumber: 'No linked account',
+                      isDefault: false,
+                      isActive: false,
+                    ),
             );
 
             return Padding(
@@ -4512,7 +4607,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Available for payout: SLE ${_escrowBalance.toStringAsFixed(2)}',
+                    'Available for payout: SLE ${_walletBalance?.toStringAsFixed(2) ?? '0.00'}',
                     style: const TextStyle(fontSize: 12.5, color: AppColors.gray600, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 16),
@@ -4535,7 +4630,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  if (activeMethod != null) ...[
+                  if (activeMethod.accountNumber.isNotEmpty || activeMethod.maskedNumber != 'No linked account') ...[
                     const Text(
                       'Destination Account',
                       style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.obsidian),
@@ -4585,7 +4680,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 );
                                 return;
                               }
-                              if (amt > _escrowBalance) {
+                              if (amt > (_walletBalance ?? 0.0)) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('Withdrawal amount exceeds available escrow balance.')),
                                 );
@@ -4593,21 +4688,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               }
 
                               setModalState(() => isProcessing = true);
-                              await Future.delayed(const Duration(milliseconds: 600));
-
-                              setState(() {
-                                _escrowBalance -= amt;
-                              });
-
-                              if (modalCtx.mounted) {
-                                Navigator.of(modalCtx).pop();
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Payout of SLE ${amt.toStringAsFixed(2)} processed successfully!'),
-                                    backgroundColor: AppColors.emeraldDark,
-                                    behavior: SnackBarBehavior.floating,
-                                  ),
+                              try {
+                                final client = context.read<ConvexClientWrapper>();
+                                final res = await client.mutation(
+                                  'payments:requestWithdrawal',
+                                  args: {
+                                    'userId': user?.id ?? '',
+                                    'amount': amt,
+                                    'destinationProviderCode': activeMethod.providerCode,
+                                    'destinationAccountNumber': activeMethod.accountNumber.isNotEmpty
+                                        ? activeMethod.accountNumber
+                                        : (user?.phone ?? ''),
+                                  },
                                 );
+
+                                if (res.success) {
+                                  await _fetchWalletData();
+                                  if (modalCtx.mounted) {
+                                    Navigator.of(modalCtx).pop();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Payout request of SLE ${amt.toStringAsFixed(2)} submitted successfully!'),
+                                        backgroundColor: AppColors.emeraldDark,
+                                        behavior: SnackBarBehavior.floating,
+                                      ),
+                                    );
+                                  }
+                                } else {
+                                  throw Exception(res.errorMessage ?? 'Withdrawal failed');
+                                }
+                              } catch (e) {
+                                setModalState(() => isProcessing = false);
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('Withdrawal error: $e'), backgroundColor: AppColors.error),
+                                  );
+                                }
                               }
                             },
                       child: isProcessing

@@ -1148,4 +1148,20 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_providerId", ["providerId"])
     .index("by_userId_status", ["userId", "status"]),
+
+  // ─── USER LINKED PAYMENT ACCOUNTS (Per-User saved numbers) ─────────
+  // Stores each user's personally linked Mobile Money numbers / bank accounts.
+  // Distinct from payment_settings (admin-only merchant account config).
+  user_payment_accounts: defineTable({
+    userId: v.id("users"),
+    providerCode: v.string(),   // "orange" | "africell" | "qmoney" | "slcb"
+    providerName: v.string(),   // Human-readable label
+    accountNumber: v.string(),  // Raw phone / account number
+    maskedNumber: v.string(),   // "+232 76 ••• 761"
+    isDefault: v.boolean(),
+    isActive: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_default", ["userId", "isDefault"]),
 });

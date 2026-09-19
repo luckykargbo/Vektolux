@@ -1686,7 +1686,7 @@ export const getAllEscrowClaims = query({
     // Enrich with user info
     const enriched = [];
     for (const claim of claims) {
-      const user = await ctx.db.get(claim.userId);
+      const user = (await ctx.db.get(claim.userId)) as Doc<"users"> | null;
       enriched.push({
         ...claim,
         userName: user?.name ?? "Unknown",
@@ -1729,4 +1729,186 @@ export const getPaymentClaimStatus = query({
   },
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+//           USER LINKED PAYMENT ACCOUNTS (Phase 1 re-arch)
+// ═══════════════════════════════════════════════════════════════════════
 
+/**
+ * Fetch all payment accounts linked by a specific user (newest first).
+ */
+export const getUserPaymentAccounts = query({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const userNorm = ctx.db.normalizeId("users", args.userId);
+    if (!userNorm) return [];
+    return await ctx.db
+      .query("user_payment_accounts")
+      .withIndex("by_user", (q) => q.eq("userId", userNorm))
+      .order("desc")
+      .collect();
+  },
+});
+
+/**
+ * Link a new Mobile Money / bank account to the user's profile.
+ * If isDefault=true, clears the isDefault flag on all existing accounts first.
+ * If this is the user's very first account, it becomes the default automatically.
+ */
+export const addUserPaymentAccount = mutation({
+  args: {
+    userId: v.string(),
+    providerCode: v.string(),
+    providerName: v.string(),
+    accountNumber: v.string(),
+    maskedNumber: v.string(),
+    isDefault: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userNorm = ctx.db.normalizeId("users", args.userId);
+    if (!userNorm) throw new Error("User not found");
+    const now = Date.now();
+
+    const existing = await ctx.db
+      .query("user_payment_accounts")
+      .withIndex("by_user", (q) => q.eq("userId", userNorm))
+      .collect();
+
+    // First account always becomes default
+    const forceDefault = existing.length === 0 ? true : args.isDefault;
+
+    if (forceDefault) {
+      for (const acct of existing) {
+        if (acct.isDefault) {
+          await ctx.db.patch(acct._id, { isDefault: false });
+        }
+      }
+    }
+
+    const id = await ctx.db.insert("user_payment_accounts", {
+      userId: userNorm,
+      providerCode: args.providerCode,
+      providerName: args.providerName,
+      accountNumber: args.accountNumber,
+      maskedNumber: args.maskedNumber,
+      isDefault: forceDefault,
+      isActive: true,
+      createdAt: now,
+    });
+
+    return { success: true, accountId: id };
+  },
+});
+
+/**
+ * Remove a linked payment account by its document ID.
+ * Ownership-checked against the calling userId.
+ */
+export const removeUserPaymentAccount = mutation({
+  args: {
+    accountId: v.id("user_payment_accounts"),
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const account = await ctx.db.get(args.accountId);
+    if (!account) throw new Error("Account not found");
+    const userNorm = ctx.db.normalizeId("users", args.userId);
+    if (!userNorm || account.userId !== userNorm) {
+      throw new Error("Unauthorized");
+    }
+    await ctx.db.delete(args.accountId);
+    return { success: true };
+  },
+});
+
+/**
+ * Set a specific account as the user's default payment account.
+ * Atomically clears isDefault on all other accounts for this user.
+ */
+export const setDefaultPaymentAccount = mutation({
+  args: {
+    accountId: v.id("user_payment_accounts"),
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userNorm = ctx.db.normalizeId("users", args.userId);
+    if (!userNorm) throw new Error("User not found");
+
+    const allAccounts = await ctx.db
+      .query("user_payment_accounts")
+      .withIndex("by_user", (q) => q.eq("userId", userNorm))
+      .collect();
+
+    for (const acct of allAccounts) {
+      const shouldBeDefault = acct._id === args.accountId;
+      if (acct.isDefault !== shouldBeDefault) {
+        await ctx.db.patch(acct._id, { isDefault: shouldBeDefault });
+      }
+    }
+    return { success: true };
+  },
+});
+
+/**
+ * Request an escrow wallet withdrawal.
+ * Immediately deducts from availableBalance and records a pending payout
+ * transaction in the ledger. Admin can audit via the transactions table.
+ */
+export const requestWithdrawal = mutation({
+  args: {
+    userId: v.string(),
+    amount: v.number(),
+    destinationProviderCode: v.string(),
+    destinationAccountNumber: v.string(),
+    currency: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.amount <= 0) throw new Error("Withdrawal amount must be positive");
+    const userNorm = ctx.db.normalizeId("users", args.userId);
+    if (!userNorm) throw new Error("User not found");
+
+    const currency = args.currency ?? "SLE";
+    const now = Date.now();
+
+    const wallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user_currency", (q) =>
+        q.eq("userId", userNorm).eq("currency", currency)
+      )
+      .first();
+
+    if (!wallet || wallet.availableBalance < args.amount) {
+      throw new Error(
+        `Insufficient balance. Available: ${wallet?.availableBalance ?? 0} ${currency}`
+      );
+    }
+
+    const newBalance = wallet.availableBalance - args.amount;
+    await ctx.db.patch(wallet._id, {
+      availableBalance: newBalance,
+      updatedAt: now,
+    });
+
+    const ref = `WTHDRW_${now}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+    await ctx.db.insert("transactions", {
+      walletId: wallet._id,
+      userId: userNorm,
+      type: "payout",
+      amount: args.amount,
+      currency,
+      gatewayProvider: args.destinationProviderCode,
+      gatewayReference: ref,
+      agentNumber: args.destinationAccountNumber,
+      status: "pending",
+      description: `Payout of ${args.amount} ${currency} to ${args.destinationProviderCode} ${args.destinationAccountNumber}`,
+      updatedAt: now,
+    });
+
+    return {
+      success: true,
+      withdrawalRef: ref,
+      remainingBalance: newBalance,
+      currency,
+    };
+  },
+});
