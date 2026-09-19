@@ -28,6 +28,8 @@ import '../../../listings/presentation/views/my_listings_screen.dart';
 import '../../../auth/presentation/views/pending_verification_screen.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../../core/services/payment_methods_service.dart';
+
 
 class SavedPaymentMethodItem {
   final String id;
@@ -3872,28 +3874,43 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
-                    initialValue: selectedProvider,
+                    value: selectedProvider,
+                    style: const TextStyle(
+                      color: Color(0xFF0F172A),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    dropdownColor: Colors.white,
+                    iconEnabledColor: const Color(0xFF64748B),
+                    focusColor: Colors.transparent,
                     decoration: InputDecoration(
                       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
                       enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.emerald, width: 1.5)),
                     ),
+                    selectedItemBuilder: (context) => [
+                      'Orange Money Sierra Leone',
+                      'Africell Afrimoney',
+                      'QCell QMoney',
+                      'Sierra Leone Commercial Bank (SLCB)',
+                    ].map((label) => Text(label, style: const TextStyle(color: Color(0xFF0F172A), fontSize: 15, fontWeight: FontWeight.w600))).toList(),
                     items: const [
                       DropdownMenuItem(
                         value: 'orange',
-                        child: Text('Orange Money Sierra Leone'),
+                        child: Text('Orange Money Sierra Leone', style: TextStyle(color: Color(0xFF0F172A), fontSize: 15, fontWeight: FontWeight.w500)),
                       ),
                       DropdownMenuItem(
                         value: 'africell',
-                        child: Text('Africell Afrimoney'),
+                        child: Text('Africell Afrimoney', style: TextStyle(color: Color(0xFF0F172A), fontSize: 15, fontWeight: FontWeight.w500)),
                       ),
                       DropdownMenuItem(
                         value: 'qmoney',
-                        child: Text('QCell QMoney'),
+                        child: Text('QCell QMoney', style: TextStyle(color: Color(0xFF0F172A), fontSize: 15, fontWeight: FontWeight.w500)),
                       ),
                       DropdownMenuItem(
                         value: 'slcb',
-                        child: Text('Sierra Leone Commercial Bank (SLCB)'),
+                        child: Text('Sierra Leone Commercial Bank (SLCB)', style: TextStyle(color: Color(0xFF0F172A), fontSize: 15, fontWeight: FontWeight.w500)),
                       ),
                     ],
                     onChanged: (val) {
@@ -4014,7 +4031,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   void _showTopUpEscrowSheet(BuildContext context, UserEntity? user) {
     final amountCtrl = TextEditingController(text: '500');
+    final referenceCtrl = TextEditingController();
+    String selectedTopUpProvider = 'orange';
     bool isProcessing = false;
+    bool showReferenceStep = false; // Step 2 for manual providers
+    String? errorMessage;
+
+    // Provider display names
+    const providerLabels = {
+      'orange': 'Orange Money Sierra Leone',
+      'africell': 'Africell Afrimoney',
+      'qmoney': 'QCell QMoney',
+    };
+
+    // Provider IDs mapped to Convex payment_settings providerIds
+    const providerIds = {
+      'orange': 'moneroo_auto',
+      'africell': 'afrimoney_manual',
+      'qmoney': 'qmoney_manual',
+    };
+
+    // Manual instructions
+    const providerInstructions = {
+      'africell':
+          'Dial *144# → Select "Pay" → Enter Merchant Code 9988 → Enter the exact SLE amount → confirm with your PIN. Copy the Transaction ID from the confirmation SMS.',
+      'qmoney':
+          'Dial *345# → Select "Pay Merchant" → Enter Merchant Code 001 → Enter the exact SLE amount → confirm with your PIN. Copy the Transaction ID from the confirmation SMS.',
+    };
 
     showModalBottomSheet(
       context: context,
@@ -4026,17 +4069,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (modalCtx, setModalState) {
-            return Padding(
+            final isManual = selectedTopUpProvider != 'orange';
+
+            return SingleChildScrollView(
               padding: EdgeInsets.only(
                 left: 20,
                 right: 20,
                 top: 20,
-                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 32,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // ── Drag handle ─────────────────────────────────────
                   Center(
                     child: Container(
                       width: 40,
@@ -4048,13 +4094,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Row(
+
+                  // ── Title ────────────────────────────────────────────
+                  Row(
                     children: [
-                      Icon(Icons.add_circle_outline_rounded, color: AppColors.emeraldDark, size: 22),
-                      SizedBox(width: 8),
+                      const Icon(Icons.add_circle_outline_rounded, color: AppColors.emeraldDark, size: 22),
+                      const SizedBox(width: 8),
                       Text(
-                        'Top Up Escrow Wallet',
-                        style: TextStyle(
+                        showReferenceStep ? 'Submit Payment Reference' : 'Top Up Escrow Wallet',
+                        style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w700,
                           color: AppColors.obsidian,
@@ -4063,89 +4111,306 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ],
                   ),
                   const SizedBox(height: 4),
-                  const Text(
-                    'Deposit funds into escrow protection via Mobile Money.',
-                    style: TextStyle(fontSize: 12.5, color: AppColors.gray500),
-                  ),
-                  const SizedBox(height: 16),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [250, 500, 1000, 2500].map((amt) {
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: ActionChip(
-                            label: Text('SLE $amt', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                            backgroundColor: amountCtrl.text == amt.toString() ? AppColors.emeraldSurface : AppColors.gray100,
-                            side: BorderSide(
-                              color: amountCtrl.text == amt.toString() ? AppColors.emerald : Colors.transparent,
-                            ),
-                            onPressed: () {
-                              setModalState(() {
-                                amountCtrl.text = amt.toString();
-                              });
-                            },
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  TextFormField(
-                    controller: amountCtrl,
-                    keyboardType: TextInputType.number,
-                    style: const TextStyle(
-                      color: Color(0xFF0F172A),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    cursorColor: const Color(0xFF10B981),
-                    decoration: const InputDecoration(
-                      labelText: 'Deposit Amount (SLE)',
-                      labelStyle: TextStyle(color: Color(0xFF64748B)),
-                      hintText: '0.00',
-                      hintStyle: TextStyle(color: Color(0xFF94A3B8)),
-                      prefixText: 'SLE ',
-                      prefixStyle: TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
-                    ),
+                  Text(
+                    showReferenceStep
+                        ? 'Paste the Transaction ID from your ${providerLabels[selectedTopUpProvider] ?? "provider"} SMS.'
+                        : 'Deposit funds into escrow protection via Mobile Money.',
+                    style: const TextStyle(fontSize: 12.5, color: AppColors.gray500),
                   ),
                   const SizedBox(height: 20),
+
+                  if (!showReferenceStep) ...[
+                    // ── Provider Selector ────────────────────────────
+                    const Text(
+                      'Payment Provider',
+                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: selectedTopUpProvider,
+                      style: const TextStyle(
+                        color: Color(0xFF0F172A),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      dropdownColor: Colors.white,
+                      iconEnabledColor: const Color(0xFF64748B),
+                      focusColor: Colors.transparent,
+                      decoration: InputDecoration(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.emerald, width: 1.5)),
+                      ),
+                      selectedItemBuilder: (context) => [
+                        'Orange Money Sierra Leone',
+                        'Africell Afrimoney',
+                        'QCell QMoney',
+                      ].map((label) => Text(label, style: const TextStyle(color: Color(0xFF0F172A), fontSize: 15, fontWeight: FontWeight.w600))).toList(),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'orange',
+                          child: Text('Orange Money Sierra Leone', style: TextStyle(color: Color(0xFF0F172A), fontSize: 15, fontWeight: FontWeight.w500)),
+                        ),
+                        DropdownMenuItem(
+                          value: 'africell',
+                          child: Text('Africell Afrimoney', style: TextStyle(color: Color(0xFF0F172A), fontSize: 15, fontWeight: FontWeight.w500)),
+                        ),
+                        DropdownMenuItem(
+                          value: 'qmoney',
+                          child: Text('QCell QMoney', style: TextStyle(color: Color(0xFF0F172A), fontSize: 15, fontWeight: FontWeight.w500)),
+                        ),
+                      ],
+                      onChanged: (val) {
+                        if (val != null) setModalState(() => selectedTopUpProvider = val);
+                      },
+                    ),
+                    const SizedBox(height: 16),
+
+                    // ── Amount Chips ─────────────────────────────────
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [250, 500, 1000, 2500].map((amt) {
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: ActionChip(
+                              label: Text('SLE $amt', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                              backgroundColor: amountCtrl.text == amt.toString() ? AppColors.emeraldSurface : AppColors.gray100,
+                              side: BorderSide(
+                                color: amountCtrl.text == amt.toString() ? AppColors.emerald : Colors.transparent,
+                              ),
+                              onPressed: () {
+                                setModalState(() => amountCtrl.text = amt.toString());
+                              },
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // ── Amount Input ─────────────────────────────────
+                    TextFormField(
+                      controller: amountCtrl,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(
+                        color: Color(0xFF0F172A),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      cursorColor: const Color(0xFF10B981),
+                      decoration: const InputDecoration(
+                        labelText: 'Deposit Amount (SLE)',
+                        labelStyle: TextStyle(color: Color(0xFF64748B)),
+                        hintText: '0.00',
+                        hintStyle: TextStyle(color: Color(0xFF94A3B8)),
+                        prefixText: 'SLE ',
+                        prefixStyle: TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                      ),
+                    ),
+
+                    // ── Manual instructions banner ───────────────────
+                    if (isManual) ...[
+                      const SizedBox(height: 14),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF7ED),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFFFED7AA)),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.info_outline_rounded, color: Color(0xFFEA580C), size: 16),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                providerInstructions[selectedTopUpProvider] ?? '',
+                                style: const TextStyle(fontSize: 12, color: Color(0xFF9A3412), height: 1.4),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ] else ...[
+                    // ── Step 2: Reference Input ──────────────────────
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: AppColors.emeraldSurface,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFA7F3D0)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Amount: SLE ${double.tryParse(amountCtrl.text.trim())?.toStringAsFixed(2) ?? "0.00"}',
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Provider: ${providerLabels[selectedTopUpProvider] ?? selectedTopUpProvider}',
+                            style: const TextStyle(fontSize: 12, color: AppColors.gray500),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Transaction ID / SMS Reference',
+                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      controller: referenceCtrl,
+                      style: const TextStyle(
+                        color: Color(0xFF0F172A),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      cursorColor: const Color(0xFF10B981),
+                      decoration: const InputDecoration(
+                        hintText: 'e.g. TXN202600001234',
+                        hintStyle: TextStyle(color: Color(0xFF94A3B8)),
+                        labelText: 'Reference Number',
+                        labelStyle: TextStyle(color: Color(0xFF64748B)),
+                        prefixIcon: Icon(Icons.receipt_long_rounded, color: Color(0xFF64748B)),
+                      ),
+                    ),
+                  ],
+
+                  // ── Error message ────────────────────────────────────
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 10),
+                    Text(errorMessage!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                  ],
+
+                  const SizedBox(height: 20),
+
+                  // ── Action Button ────────────────────────────────────
                   SizedBox(
                     width: double.infinity,
-                    height: 48,
+                    height: 50,
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.emerald,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
                       ),
                       onPressed: isProcessing
                           ? null
                           : () async {
+                              setModalState(() => errorMessage = null);
+
                               final amt = double.tryParse(amountCtrl.text.trim()) ?? 0;
                               if (amt <= 0) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Please enter a valid amount.')),
-                                );
+                                setModalState(() => errorMessage = 'Please enter a valid amount.');
+                                return;
+                              }
+
+                              // ── ORANGE MONEY (Moneroo Automated) ────
+                              if (selectedTopUpProvider == 'orange') {
+                                setModalState(() => isProcessing = true);
+                                try {
+                                  final result = await PaymentMethodsService.instance.initializeMonerooPayment(
+                                    amount: amt,
+                                    currency: 'SLE',
+                                    customerEmail: user?.email ?? 'user@vektolux.com',
+                                    customerFirstName: (user?.name ?? 'Vektolux User').split(' ').first,
+                                    customerLastName: (user?.name ?? 'User').split(' ').length > 1
+                                        ? (user?.name ?? 'User').split(' ').last
+                                        : 'User',
+                                    customerPhone: user?.phone,
+                                    userId: user?.id ?? '',
+                                    description: 'Escrow Wallet Top-Up — SLE $amt',
+                                  );
+
+                                  if (result['success'] == true) {
+                                    final checkoutUrl = result['checkoutUrl'] as String? ?? '';
+                                    if (checkoutUrl.isNotEmpty) {
+                                      final uri = Uri.tryParse(checkoutUrl);
+                                      if (uri != null && await canLaunchUrl(uri)) {
+                                        await launchUrl(uri, mode: LaunchMode.externalApplication);
+                                      }
+                                    }
+                                    if (modalCtx.mounted) Navigator.of(modalCtx).pop();
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Payment initiated. Your wallet will update once confirmed.'),
+                                          backgroundColor: AppColors.emeraldDark,
+                                          behavior: SnackBarBehavior.floating,
+                                        ),
+                                      );
+                                    }
+                                  } else {
+                                    setModalState(() {
+                                      errorMessage = result['error'] as String? ?? 'Failed to initialize payment. Try again.';
+                                      isProcessing = false;
+                                    });
+                                  }
+                                } catch (e) {
+                                  setModalState(() {
+                                    errorMessage = 'Error: ${e.toString()}';
+                                    isProcessing = false;
+                                  });
+                                }
+                                return;
+                              }
+
+                              // ── MANUAL PROVIDERS (Step navigation) ──
+                              if (!showReferenceStep) {
+                                setModalState(() => showReferenceStep = true);
+                                return;
+                              }
+
+                              // ── SUBMIT MANUAL CLAIM ──────────────────
+                              final ref = referenceCtrl.text.trim();
+                              if (ref.isEmpty) {
+                                setModalState(() => errorMessage = 'Please enter the Transaction ID from your SMS.');
                                 return;
                               }
 
                               setModalState(() => isProcessing = true);
-                              await Future.delayed(const Duration(milliseconds: 600));
-
-                              setState(() {
-                                _escrowBalance += amt;
-                              });
-
-                              if (modalCtx.mounted) {
-                                Navigator.of(modalCtx).pop();
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Deposited SLE ${amt.toStringAsFixed(2)} into Escrow Wallet!'),
-                                    backgroundColor: AppColors.emeraldDark,
-                                    behavior: SnackBarBehavior.floating,
-                                  ),
+                              try {
+                                final pid = providerIds[selectedTopUpProvider] ?? selectedTopUpProvider;
+                                final result = await PaymentMethodsService.instance.submitManualPaymentClaim(
+                                  userId: user?.id ?? '',
+                                  amount: amt,
+                                  providerId: pid,
+                                  transactionReference: ref,
                                 );
+
+                                if (result['success'] == true) {
+                                  if (modalCtx.mounted) Navigator.of(modalCtx).pop();
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Claim submitted! SLE ${amt.toStringAsFixed(2)} pending admin approval.',
+                                        ),
+                                        backgroundColor: AppColors.emeraldDark,
+                                        behavior: SnackBarBehavior.floating,
+                                        duration: const Duration(seconds: 5),
+                                      ),
+                                    );
+                                  }
+                                } else {
+                                  setModalState(() {
+                                    errorMessage = result['error'] as String? ?? 'Submission failed. Try again.';
+                                    isProcessing = false;
+                                  });
+                                }
+                              } catch (e) {
+                                setModalState(() {
+                                  errorMessage = 'Error: ${e.toString()}';
+                                  isProcessing = false;
+                                });
                               }
                             },
                       child: isProcessing
@@ -4154,9 +4419,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               height: 20,
                               child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                             )
-                          : const Text('Confirm Deposit', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                          : Text(
+                              showReferenceStep
+                                  ? 'Submit Claim'
+                                  : (selectedTopUpProvider == 'orange' ? 'Pay with Orange Money' : 'Continue → Enter Reference'),
+                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                            ),
                     ),
                   ),
+
+                  // ── Back button for step 2 ────────────────────────────
+                  if (showReferenceStep) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 44,
+                      child: TextButton(
+                        onPressed: isProcessing
+                            ? null
+                            : () => setModalState(() {
+                                  showReferenceStep = false;
+                                  referenceCtrl.clear();
+                                  errorMessage = null;
+                                }),
+                        child: const Text('← Back', style: TextStyle(color: AppColors.gray500, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             );

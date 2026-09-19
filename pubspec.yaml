@@ -1,7 +1,8 @@
 name: vektolux
 description: Vektolux Multi-Vertical Marketplace — Real Estate & Mobility
 publish_to: 'none'
-version: 1.0.11+12
+version: 1.0.12+13
+
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
