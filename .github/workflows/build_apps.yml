@@ -108,9 +108,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Vektolux Latest Mobile Release (v1.0.11)"
+          name: "Vektolux Latest Mobile Release (v1.0.13)"
           body: |
-            ## Vektolux Mobile App Builds (v1.0.11) — Tiered KYC & Auth Reliability Release
+            ## Vektolux Mobile App Builds (v1.0.13) — Profile Re-Architecture & Convex Data Wiring
 
             ### Direct Downloads:
             - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
@@ -118,15 +118,18 @@ jobs:
             - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
               * Direct sideload / install on any Android device.
 
-            ### What's New in this Build (v1.0.11):
-            - **Tiered Vendor & Agent KYC Verification**:
-              * Support for Individual Agent/Owner flow (National ID + Live biometric face scan) without TIN requirement.
-              * Support for Registered Company/Agency flow with TIN and registration certificate.
-            - **Authentication & Password Reset Resiliency**:
-              * Case-insensitive email and flexible Sierra Leone phone number normalization.
-              * Resilient password reset OTP delivery and zero-500 server crash safety.
-            - **Moneroo Sandbox & Escrow System**:
-              * In-app automated payment gateway checkout and milestone escrow releases.
+            ### What's New in this Build (v1.0.13):
+            - **Profile Screen Re-Architecture & Convex Data Wiring**:
+              * Live Convex wallet balance & active deals count on Escrow Hero Card.
+              * Real Convex-backed Saved Payment Methods (`user_payment_accounts` table).
+              * Real payout requests via `payments:requestWithdrawal` mutation.
+            - **Demo Escalation & Mock Purge**:
+              * Removed fake "Demo Unlock Driver Mode" button.
+              * Replaced instant Agent/Dealer demo approvals with legitimate `users:applyRoleUpgrade` submissions.
+              * Dynamic listings count & live KYC verification status.
+            - **Saved Addresses & Input UI Enhancements**:
+              * Renamed to Saved Addresses with clean Freetown defaults.
+              * Dark obsidian text and brand emerald carets on all modals and QR scanner inputs.
           files: release-assets/*
           prerelease: false
           make_latest: true
