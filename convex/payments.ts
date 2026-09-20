@@ -1955,3 +1955,139 @@ export const requestWithdrawal = mutation({
     };
   },
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+//          ORANGE MONEY / AIRBOX REAL BALANCE DEPOSIT HANDLER
+// ═══════════════════════════════════════════════════════════════════════
+
+export const processOrangeMoneyDeposit = internalMutation({
+  args: {
+    txId: v.string(),
+    amount: v.number(),
+    currency: v.string(),
+    phoneNumber: v.string(),
+    userId: v.optional(v.string()),
+    userPhone: v.optional(v.string()),
+    status: v.string(),
+    rawPayload: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    // 1. Check idempotency: check if transaction already exists
+    const existingTx = await ctx.db
+      .query("transactions")
+      .withIndex("by_gateway_ref", (q) =>
+        q.eq("gatewayProvider", "orange_money").eq("gatewayReference", args.txId)
+      )
+      .first();
+
+    if (existingTx) {
+      return {
+        success: true,
+        message: "Transaction already processed",
+        alreadyProcessed: true,
+        txId: args.txId,
+      };
+    }
+
+    // 2. Identify target user
+    let user = null;
+    if (args.userId) {
+      const userNorm = ctx.db.normalizeId("users", args.userId);
+      if (userNorm) user = await ctx.db.get(userNorm);
+    }
+
+    const phoneToSearch = args.userPhone || args.phoneNumber;
+    if (!user && phoneToSearch) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", phoneToSearch))
+        .first();
+
+      if (!user) {
+        const allUsers = await ctx.db.query("users").take(20);
+        user =
+          allUsers.find(
+            (u) =>
+              u.phone &&
+              (u.phone.includes(phoneToSearch) || phoneToSearch.includes(u.phone))
+          ) ?? null;
+      }
+    }
+
+    // If still not found, default to primary user (Alfred Manso Kargbo)
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", "alfred.kargbo@vektolux.com"))
+        .first();
+    }
+
+    if (!user) {
+      throw new Error("No recipient user could be resolved for deposit.");
+    }
+
+    const now = Date.now();
+    const currency = args.currency || "SLE";
+
+    // 3. Atomically update wallet balance
+    let wallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user_currency", (q) =>
+        q.eq("userId", user!._id).eq("currency", currency)
+      )
+      .first();
+
+    let newBalance = args.amount;
+    if (!wallet) {
+      const walletId = await ctx.db.insert("walletBalances", {
+        userId: user._id,
+        availableBalance: args.amount,
+        pendingBalance: 0,
+        escrowBalance: 0,
+        currency,
+        updatedAt: now,
+      });
+      wallet = (await ctx.db.get(walletId))!;
+    } else {
+      newBalance = wallet.availableBalance + args.amount;
+      await ctx.db.patch(wallet._id, {
+        availableBalance: newBalance,
+        updatedAt: now,
+      });
+    }
+
+    // 4. Record ledger transaction
+    await ctx.db.insert("transactions", {
+      walletId: wallet._id,
+      userId: user._id,
+      type: "top_up",
+      amount: args.amount,
+      currency,
+      gatewayProvider: "orange_money",
+      gatewayReference: args.txId,
+      status: "completed",
+      description: `Orange Money / Airbox Balance deposit of ${args.amount} ${currency} (Ref: ${args.txId})`,
+      updatedAt: now,
+    });
+
+    // 5. Emit user notification
+    await ctx.db.insert("user_notifications", {
+      userId: user._id as string,
+      targetType: "single_user",
+      title: "Deposit Successful",
+      body: `Your wallet has been credited with ${args.amount} ${currency} via Orange Money.`,
+      read: false,
+      createdAt: now,
+    });
+
+    return {
+      success: true,
+      creditedUserId: user._id,
+      amount: args.amount,
+      currency,
+      newBalance,
+      txId: args.txId,
+    };
+  },
+});
+

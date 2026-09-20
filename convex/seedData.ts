@@ -18,59 +18,25 @@ export const seedDiscoveryData = mutation({
     message: v.string(),
   }),
   handler: async (ctx, args) => {
-    // 1. Find or create a demo agent user
-    let agentUser = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", "agent@vektolux.sl"))
-      .first();
-
+    // 1. Find production owner (Alfred Manso Kargbo)
     const now = Date.now();
-
-    if (!agentUser) {
-      const agentId = await ctx.db.insert("users", {
-        name: "Ibrahim Conteh (Vektolux Real Estate)",
-        email: "agent@vektolux.sl",
-        phone: "+232 76 998 877",
-        role: "agent",
-        activeRole: "agent",
-        isVerified: true,
-        isVerifiedAgent: true,
-        isActive: true,
-        avatarUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400",
-        verificationStatus: "verified",
-        verificationBadge: "GREEN_TICK",
-        updatedAt: now,
-      });
-      agentUser = await ctx.db.get(agentId);
-    }
-
-    // 2. Find or create a demo dealer user
-    let dealerUser = await ctx.db
+    let ownerUser = await ctx.db
       .query("users")
-      .withIndex("by_email", (q) => q.eq("email", "dealer@vektolux.sl"))
+      .withIndex("by_email", (q) => q.eq("email", "alfred.kargbo@vektolux.com"))
       .first();
 
-    if (!dealerUser) {
-      const dealerId = await ctx.db.insert("users", {
-        name: "Mohamed Sesay Motors",
-        email: "dealer@vektolux.sl",
-        phone: "+232 77 445 566",
-        role: "merchant",
-        activeRole: "merchant",
-        isVerified: true,
-        isVerifiedMerchant: true,
-        isActive: true,
-        avatarUrl: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400",
-        verificationStatus: "verified",
-        verificationBadge: "GREEN_TICK",
-        updatedAt: now,
-      });
-      dealerUser = await ctx.db.get(dealerId);
+    if (!ownerUser) {
+      // Fallback: look for any admin user
+      const allUsers = await ctx.db.query("users").take(5);
+      ownerUser = allUsers.find((u) => u.role === "admin") ?? null;
     }
 
-    if (!agentUser || !dealerUser) {
-      return { propertiesSeeded: 0, vehiclesSeeded: 0, message: "Failed to initialize owners" };
+    if (!ownerUser) {
+      return { propertiesSeeded: 0, vehiclesSeeded: 0, message: "No production user found to assign listings." };
     }
+
+    const agentUser = ownerUser;
+    const dealerUser = ownerUser;
 
     // 3. Seed Properties if none exist or force == true
     const existingProperties = await ctx.db.query("realEstateListings").take(5);

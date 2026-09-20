@@ -380,14 +380,6 @@ class MobilityRepositoryImpl implements MobilityRepository {
     }
   }
 
-  List<NearbyDriverEntity> _generateSimulatedOnDemandDrivers(
-    double lat,
-    double lng,
-    String? serviceFilter,
-  ) {
-    return [];
-  }
-
   @override
   Future<List<NearbySellerEntity>> getNearbySellers({
     required double lat,

@@ -754,7 +754,9 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                 );
 
                                 if (res.success) {
+                                  if (!ctx.mounted) return;
                                   Navigator.pop(ctx);
+                                  if (!mounted) return;
                                   context.read<AuthBloc>().add(const RefreshUserSessionEvent());
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
@@ -1375,10 +1377,10 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Expanded(
+                const Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
+                    children: [
                       Text(
                         'Verified Properties in Sierra Leone',
                         style: TextStyle(
@@ -1563,11 +1565,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                   const SizedBox(height: 6),
                   Row(
                     children: [
-                      Icon(Icons.king_bed_outlined, size: 13, color: AppColors.gray500),
+                      const Icon(Icons.king_bed_outlined, size: 13, color: AppColors.gray500),
                       const SizedBox(width: 3),
                       Text('$beds Beds', style: const TextStyle(fontSize: 11, color: AppColors.gray600)),
                       const SizedBox(width: 10),
-                      Icon(Icons.bathtub_outlined, size: 13, color: AppColors.gray500),
+                      const Icon(Icons.bathtub_outlined, size: 13, color: AppColors.gray500),
                       const SizedBox(width: 3),
                       Text('$baths Baths', style: const TextStyle(fontSize: 11, color: AppColors.gray600)),
                     ],
@@ -1593,10 +1595,10 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Expanded(
+                const Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
+                    children: [
                       Text(
                         'Featured Vehicles for Sale & Hire',
                         style: TextStyle(
@@ -1608,8 +1610,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 2),
-                      const Text(
+                      SizedBox(height: 2),
+                      Text(
                         'Cars, vans & tipper trucks from verified Sierra Leone dealers',
                         style: TextStyle(fontSize: 12, color: AppColors.gray500),
                         maxLines: 1,

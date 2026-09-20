@@ -267,7 +267,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     const SizedBox(height: 14),
                     // Area / District Dropdown
                     DropdownButtonFormField<String>(
-                      value: (selectedRegion != null && selectedRegion!.isNotEmpty)
+                      initialValue: (selectedRegion != null && selectedRegion!.isNotEmpty)
                           ? selectedRegion
                           : null,
                       decoration: const InputDecoration(
@@ -423,6 +423,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     });
                   } catch (_) {}
                 }
+
+                PaintingBinding.instance.imageCache.clear();
+                PaintingBinding.instance.imageCache.clearLiveImages();
 
                 if (modalCtx.mounted) {
                   context.read<AuthBloc>().add(
@@ -677,18 +680,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   final userId = user?.id;
                                   if (userId != null && userId.isNotEmpty) {
                                     final authRepo = context.read<AuthRepository>();
+                                    final convexClient = context.read<ConvexClientWrapper>();
                                     await authRepo.updateUserProfile(
                                       userId: userId,
                                       avatarUrl: '',
                                     );
                                     try {
-                                      final convexClient = context.read<ConvexClientWrapper>();
                                       await convexClient.mutation('users:updateAvatar', args: {
                                         'userId': userId,
                                         'avatarUrl': '',
                                       });
                                     } catch (_) {}
                                   }
+                                  PaintingBinding.instance.imageCache.clear();
+                                  PaintingBinding.instance.imageCache.clearLiveImages();
+
                                   if (modalCtx.mounted) {
                                     context.read<AuthBloc>().add(
                                           const UpdateUserProfileEvent(avatarUrl: ''),
@@ -979,11 +985,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
                           const SizedBox(width: 14),
-                          Expanded(
+                          const Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Row(
+                                Row(
                                   children: [
                                     Text(
                                       'Chat on WhatsApp',
@@ -1013,10 +1019,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 3),
+                                SizedBox(height: 3),
                                 Text(
                                   'Send messages, voice notes & images ($formattedPhone)',
-                                  style: const TextStyle(fontSize: 12, color: AppColors.gray600),
+                                  style: TextStyle(fontSize: 12, color: AppColors.gray600),
                                 ),
                               ],
                             ),

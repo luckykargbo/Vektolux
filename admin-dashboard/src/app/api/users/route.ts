@@ -32,9 +32,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: true, data: result });
   } catch (err: any) {
     console.error("[users GET] error:", err);
+    const msg = err?.message ?? "Failed to fetch users.";
+    const isUnauthorized = msg.includes("Unauthorized") || msg.includes("Forbidden") || msg.includes("session token");
     return NextResponse.json(
-      { success: false, error: err?.message ?? "Failed to fetch users." },
-      { status: 500 }
+      { success: false, error: msg, code: isUnauthorized ? "UNAUTHORIZED" : "SERVER_ERROR" },
+      { status: isUnauthorized ? 401 : 500 }
     );
   }
 }
@@ -68,9 +70,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, data: result });
   } catch (err: any) {
     console.error("[users POST] error:", err);
+    const msg = err?.message ?? "Failed to update user status.";
+    const isUnauthorized = msg.includes("Unauthorized") || msg.includes("Forbidden") || msg.includes("session token");
     return NextResponse.json(
-      { success: false, error: err?.message ?? "Failed to update user status." },
-      { status: 500 }
+      { success: false, error: msg, code: isUnauthorized ? "UNAUTHORIZED" : "SERVER_ERROR" },
+      { status: isUnauthorized ? 401 : 500 }
     );
   }
 }

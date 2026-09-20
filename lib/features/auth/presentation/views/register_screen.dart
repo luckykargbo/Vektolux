@@ -544,7 +544,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
             // Optional Area / District Dropdown
             DropdownButtonFormField<String>(
-              value: _selectedRegion,
+              initialValue: _selectedRegion,
               decoration: const InputDecoration(
                 labelText: 'Area / District (Optional)',
                 hintText: 'Select your general area',

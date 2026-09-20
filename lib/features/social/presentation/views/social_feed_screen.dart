@@ -13,7 +13,6 @@ import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/vx_network_image.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
-import '../../../auth/presentation/bloc/auth_state.dart';
 import 'public_profile_screen.dart';
 
 class SocialFeedScreen extends StatefulWidget {
@@ -33,7 +32,6 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
 
   bool _isLoading = true;
   List<Map<String, dynamic>> _feedItems = [];
-  String _currentUserId = '';
 
   @override
   void initState() {
@@ -49,7 +47,6 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
       return;
     }
 
-    _currentUserId = userId;
     setState(() => _isLoading = true);
 
     try {
@@ -146,7 +143,7 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            Text(
+            const Text(
               'Follow agents and dealers to see their latest property and vehicle listings here.',
               textAlign: TextAlign.center,
               style: TextStyle(
@@ -233,7 +230,7 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
                         ),
                         Text(
                           type == 'property' ? 'Property Agent' : 'Auto Dealer',
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 12,
                             color: AppColors.textSecondary,
                           ),
@@ -310,7 +307,7 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 13,
                     color: AppColors.textSecondary,
                   ),

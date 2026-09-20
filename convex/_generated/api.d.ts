@@ -19,6 +19,7 @@ import type * as escrow from "../escrow.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as lib_geo from "../lib/geo.js";
+import type * as lib_paymentErrors from "../lib/paymentErrors.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as middleware from "../middleware.js";
 import type * as mobility from "../mobility.js";
@@ -51,6 +52,7 @@ declare const fullApi: ApiFromModules<{
   files: typeof files;
   http: typeof http;
   "lib/geo": typeof lib_geo;
+  "lib/paymentErrors": typeof lib_paymentErrors;
   "lib/validation": typeof lib_validation;
   middleware: typeof middleware;
   mobility: typeof mobility;

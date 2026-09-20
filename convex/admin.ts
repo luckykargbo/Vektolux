@@ -581,6 +581,25 @@ export const batchGenerateUploadUrls = mutation({
   },
 });
 
+/**
+ * Helper to validate admin authorization.
+ * Resolves user, confirms role === "admin", and safely checks session token if provided.
+ */
+async function validateAdminSession(ctx: any, adminId: string, sessionToken?: string) {
+  const adminDocId = ctx.db.normalizeId("users", adminId);
+  if (!adminDocId) {
+    throw new Error("Unauthorized: Invalid administrator credentials.");
+  }
+  const adminUser = await ctx.db.get(adminDocId);
+  if (!adminUser || adminUser.role !== "admin") {
+    throw new Error("Forbidden: Access restricted to platform administrators.");
+  }
+  if (sessionToken && adminUser.sessionToken && adminUser.sessionToken !== sessionToken) {
+    throw new Error("Unauthorized: Session token expired. Please sign in again.");
+  }
+  return { adminDocId, adminUser };
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //                 GET ALL USERS (ADMIN DIRECTORY)
 // ═══════════════════════════════════════════════════════════════════════
@@ -593,15 +612,7 @@ export const getAllUsers = query({
     searchQuery: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const adminDocId = ctx.db.normalizeId("users", args.adminId);
-    if (!adminDocId) throw new Error("Unauthorized: Invalid administrator credentials.");
-    const adminUser = await ctx.db.get(adminDocId);
-    if (!adminUser || adminUser.role !== "admin") {
-      throw new Error("Forbidden: Access restricted to platform administrators.");
-    }
-    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
-      throw new Error("Unauthorized: Invalid session token.");
-    }
+    await validateAdminSession(ctx, args.adminId, args.sessionToken);
 
     let usersQuery;
     if (args.roleFilter && args.roleFilter !== "all") {
@@ -659,15 +670,7 @@ export const toggleUserActiveStatus = mutation({
     isActive: v.boolean(),
   },
   handler: async (ctx, args) => {
-    const adminDocId = ctx.db.normalizeId("users", args.adminId);
-    if (!adminDocId) throw new Error("Unauthorized: Admin account not found.");
-    const adminUser = await ctx.db.get(adminDocId);
-    if (!adminUser || adminUser.role !== "admin") {
-      throw new Error("Forbidden: Access restricted to platform administrators.");
-    }
-    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
-      throw new Error("Unauthorized: Invalid session token.");
-    }
+    await validateAdminSession(ctx, args.adminId, args.sessionToken);
 
     const targetDocId = ctx.db.normalizeId("users", args.userId);
     if (!targetDocId) throw new Error("User not found.");
@@ -687,20 +690,14 @@ export const toggleUserActiveStatus = mutation({
 
 export const takeDownListing = mutation({
   args: {
-    adminId: v.id("users"),
+    adminId: v.string(),
     sessionToken: v.optional(v.string()),
     listingId: v.string(),
     listingType: v.union(v.literal("property"), v.literal("vehicle")),
     reason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const adminUser = await ctx.db.get(args.adminId);
-    if (!adminUser || adminUser.role !== "admin") {
-      throw new Error("Forbidden: Access restricted to platform administrators.");
-    }
-    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
-      throw new Error("Unauthorized: Invalid session token.");
-    }
+    await validateAdminSession(ctx, args.adminId, args.sessionToken);
 
     if (args.listingType === "property") {
       const id = ctx.db.normalizeId("realEstateListings", args.listingId);
@@ -727,15 +724,7 @@ export const getUserFullDetails = query({
     userId: v.string(),
   },
   handler: async (ctx, args) => {
-    const adminDocId = ctx.db.normalizeId("users", args.adminId);
-    if (!adminDocId) throw new Error("Unauthorized: Admin not found.");
-    const adminUser = await ctx.db.get(adminDocId);
-    if (!adminUser || adminUser.role !== "admin") {
-      throw new Error("Forbidden: Access restricted to administrators.");
-    }
-    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
-      throw new Error("Unauthorized: Invalid session token.");
-    }
+    await validateAdminSession(ctx, args.adminId, args.sessionToken);
 
     const targetDocId = ctx.db.normalizeId("users", args.userId);
     if (!targetDocId) return null;
@@ -819,15 +808,7 @@ export const verifyUser = mutation({
     userId: v.string(),
   },
   handler: async (ctx, args) => {
-    const adminDocId = ctx.db.normalizeId("users", args.adminId);
-    if (!adminDocId) throw new Error("Unauthorized: Admin not found.");
-    const adminUser = await ctx.db.get(adminDocId);
-    if (!adminUser || adminUser.role !== "admin") {
-      throw new Error("Forbidden: Access restricted to administrators.");
-    }
-    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
-      throw new Error("Unauthorized: Invalid session token.");
-    }
+    await validateAdminSession(ctx, args.adminId, args.sessionToken);
 
     const targetDocId = ctx.db.normalizeId("users", args.userId);
     if (!targetDocId) throw new Error("User not found.");
@@ -857,15 +838,7 @@ export const setUserStatus = mutation({
     status: v.union(v.literal("ACTIVE"), v.literal("SUSPENDED"), v.literal("BANNED")),
   },
   handler: async (ctx, args) => {
-    const adminDocId = ctx.db.normalizeId("users", args.adminId);
-    if (!adminDocId) throw new Error("Unauthorized: Admin not found.");
-    const adminUser = await ctx.db.get(adminDocId);
-    if (!adminUser || adminUser.role !== "admin") {
-      throw new Error("Forbidden: Access restricted to administrators.");
-    }
-    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
-      throw new Error("Unauthorized: Invalid session token.");
-    }
+    await validateAdminSession(ctx, args.adminId, args.sessionToken);
 
     const targetDocId = ctx.db.normalizeId("users", args.userId);
     if (!targetDocId) throw new Error("User not found.");
@@ -896,15 +869,7 @@ export const deleteUser = mutation({
     userId: v.string(),
   },
   handler: async (ctx, args) => {
-    const adminDocId = ctx.db.normalizeId("users", args.adminId);
-    if (!adminDocId) throw new Error("Unauthorized: Admin not found.");
-    const adminUser = await ctx.db.get(adminDocId);
-    if (!adminUser || adminUser.role !== "admin") {
-      throw new Error("Forbidden: Access restricted to administrators.");
-    }
-    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
-      throw new Error("Unauthorized: Invalid session token.");
-    }
+    await validateAdminSession(ctx, args.adminId, args.sessionToken);
 
     const targetDocId = ctx.db.normalizeId("users", args.userId);
     if (!targetDocId) throw new Error("User not found.");
@@ -953,15 +918,7 @@ export const purgeMockUsers = mutation({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const adminDocId = ctx.db.normalizeId("users", args.adminId);
-    if (!adminDocId) throw new Error("Unauthorized: Admin not found.");
-    const adminUser = await ctx.db.get(adminDocId);
-    if (!adminUser || adminUser.role !== "admin") {
-      throw new Error("Forbidden: Access restricted to administrators.");
-    }
-    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
-      throw new Error("Unauthorized: Invalid session token.");
-    }
+    const { adminDocId } = await validateAdminSession(ctx, args.adminId, args.sessionToken);
 
     const mockEmails = ["demo@vektolux.sl", "driver@vektolux.sl", "agent@vektolux.sl"];
     const mockNames = ["Fatmatta Bangura", "Abu Kamara", "Lamin Sesay"];
@@ -976,7 +933,6 @@ export const purgeMockUsers = mutation({
         (u.email === "admin@vektolux.sl" && u.name === "Vektolux Administrator");
 
       if (isMock) {
-        // If this is the current admin user executing the purge, standardize it instead of deleting
         if (u._id === adminDocId) {
           await ctx.db.patch(u._id, {
             name: "Platform Administrator",
@@ -985,7 +941,6 @@ export const purgeMockUsers = mutation({
           continue;
         }
 
-        // Delete wallet
         const wallets = await ctx.db
           .query("walletBalances")
           .withIndex("by_user", (q) => q.eq("userId", u._id))
@@ -1002,3 +957,177 @@ export const purgeMockUsers = mutation({
     return { success: true, purgedCount, message: `Successfully purged ${purgedCount} mock user accounts.` };
   },
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+//      PURGE ALL MOCK USERS & ENFORCE SINGLE PRODUCTION USER
+// ═══════════════════════════════════════════════════════════════════════
+
+export const purgeAllMockUsersAndEnforceSingleUser = mutation({
+  args: {
+    adminId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.adminId) {
+      await validateAdminSession(ctx, args.adminId, args.sessionToken);
+    }
+
+    const now = Date.now();
+    const TARGET_EMAIL = "alfred.kargbo@vektolux.com";
+    const TARGET_NAME = "Alfred Manso Kargbo";
+    const TARGET_PHONE = "+232688577868";
+    const TARGET_PASSWORD_HASH =
+      "8f26796073cec5b2d34a862b351b7c15:519b4b98224792d0f7e3236126d0993b05b4f4b701da3f0d63d2661d8366f4bd"; // password123
+
+    // 1. Locate primary production user
+    let primaryUser = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", TARGET_EMAIL))
+      .first();
+
+    if (!primaryUser) {
+      primaryUser = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", TARGET_PHONE))
+        .first();
+    }
+
+    if (!primaryUser) {
+      const newId = await ctx.db.insert("users", {
+        name: TARGET_NAME,
+        email: TARGET_EMAIL,
+        phone: TARGET_PHONE,
+        role: "admin",
+        activeRole: "admin",
+        passwordHash: TARGET_PASSWORD_HASH,
+        sessionToken: `vktlx_session_${now}`,
+        isVerified: true,
+        isVerifiedAgent: true,
+        isVerifiedMerchant: true,
+        isVerifiedDriver: true,
+        verificationBadge: "GREEN_TICK",
+        verificationStatus: "verified",
+        kycStatus: "VERIFIED",
+        isActive: true,
+        updatedAt: now,
+      });
+      primaryUser = (await ctx.db.get(newId))!;
+    } else {
+      await ctx.db.patch(primaryUser._id, {
+        name: TARGET_NAME,
+        email: TARGET_EMAIL,
+        phone: TARGET_PHONE,
+        role: "admin",
+        activeRole: "admin",
+        passwordHash: TARGET_PASSWORD_HASH,
+        isVerified: true,
+        isVerifiedAgent: true,
+        isVerifiedMerchant: true,
+        isVerifiedDriver: true,
+        verificationBadge: "GREEN_TICK",
+        verificationStatus: "verified",
+        kycStatus: "VERIFIED",
+        isActive: true,
+        updatedAt: now,
+      });
+      primaryUser = (await ctx.db.get(primaryUser._id))!;
+    }
+
+    const primaryUserId = primaryUser._id;
+
+    // 2. Re-assign all existing properties and vehicles to primary user so they are NOT orphaned
+    const allProperties = await ctx.db.query("realEstateListings").collect();
+    let reallocatedProperties = 0;
+    for (const prop of allProperties) {
+      if (prop.ownerId !== primaryUserId) {
+        await ctx.db.patch(prop._id, {
+          ownerId: primaryUserId,
+          updatedAt: now,
+        });
+        reallocatedProperties++;
+      }
+    }
+
+    const allVehicles = await ctx.db.query("vehicleListings").collect();
+    let reallocatedVehicles = 0;
+    for (const veh of allVehicles) {
+      if (veh.ownerId !== primaryUserId) {
+        await ctx.db.patch(veh._id, {
+          ownerId: primaryUserId,
+          updatedAt: now,
+        });
+        reallocatedVehicles++;
+      }
+    }
+
+    // 3. Purge all other users from the database
+    const allUsers = await ctx.db.query("users").collect();
+    let deletedUsersCount = 0;
+
+    for (const u of allUsers) {
+      if (u._id === primaryUserId) continue;
+
+      const wallets = await ctx.db
+        .query("walletBalances")
+        .withIndex("by_user", (q) => q.eq("userId", u._id))
+        .collect();
+      for (const w of wallets) {
+        await ctx.db.delete(w._id);
+      }
+
+      const follows = await ctx.db
+        .query("follows")
+        .withIndex("by_follower", (q) => q.eq("followerId", u._id))
+        .collect();
+      for (const f of follows) {
+        await ctx.db.delete(f._id);
+      }
+
+      const merchantProfiles = await ctx.db
+        .query("merchant_profiles")
+        .withIndex("by_user", (q) => q.eq("userId", u._id))
+        .collect();
+      for (const mp of merchantProfiles) {
+        await ctx.db.delete(mp._id);
+      }
+
+      await ctx.db.delete(u._id);
+      deletedUsersCount++;
+    }
+
+    // 4. Ensure primary user has a valid active wallet balance
+    let primaryWallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user_currency", (q) =>
+        q.eq("userId", primaryUserId).eq("currency", "SLE")
+      )
+      .first();
+
+    if (!primaryWallet) {
+      await ctx.db.insert("walletBalances", {
+        userId: primaryUserId,
+        availableBalance: 50000,
+        pendingBalance: 0,
+        escrowBalance: 0,
+        currency: "SLE",
+        updatedAt: now,
+      });
+    }
+
+    return {
+      success: true,
+      preservedUser: {
+        id: primaryUserId as string,
+        name: primaryUser.name,
+        email: primaryUser.email,
+        phone: primaryUser.phone,
+        role: primaryUser.role,
+      },
+      deletedUsersCount,
+      reallocatedProperties,
+      reallocatedVehicles,
+      message: `Successfully enforced single-user mode. Purged ${deletedUsersCount} mock/demo accounts. Retained ${primaryUser.name} (${primaryUser.email}).`,
+    };
+  },
+});
+

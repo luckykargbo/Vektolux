@@ -234,6 +234,8 @@ class AuthRepositoryImpl implements AuthRepository {
         verifiedAt: (data['verifiedAt'] as num?)?.toInt(),
         bio: data['bio'] as String?,
         kycStatus: data['kycStatus'] as String?,
+        address: data['address'] as String?,
+        region: data['region'] as String?,
       );
 
       // Refresh local cache with latest data

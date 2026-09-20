@@ -109,6 +109,11 @@ export default function UsersDirectoryPage() {
       }
       const res = await fetch(`/api/users?${params.toString()}`);
       const data = await res.json();
+      if (res.status === 401 || data.code === "UNAUTHORIZED") {
+        sessionStorage.removeItem("adminSession");
+        window.location.href = "/";
+        return;
+      }
       if (data.success) {
         setUsers(data.data ?? []);
       } else {

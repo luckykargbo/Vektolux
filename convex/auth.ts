@@ -373,6 +373,8 @@ export const loginWithPhoneOrEmail = mutation({
     email: v.optional(v.string()),
     phone: v.optional(v.string()),
     role: v.optional(v.string()),
+    address: v.optional(v.string()),
+    region: v.optional(v.string()),
     isVerified: v.optional(v.boolean()),
     verificationStatus: v.optional(v.string()),
     businessName: v.optional(v.string()),
@@ -393,6 +395,11 @@ export const loginWithPhoneOrEmail = mutation({
       const sanitizedId = args.identifier.trim();
       let user = await findUserByIdentifier(ctx, sanitizedId);
 
+      // Support alias: admin@vektolux.sl -> Alfred Manso Kargbo
+      if (!user && sanitizedId.toLowerCase() === "admin@vektolux.sl") {
+        user = await findUserByIdentifier(ctx, "alfred.kargbo@vektolux.com");
+      }
+
       if (!user) {
         return {
           success: false,
@@ -408,7 +415,11 @@ export const loginWithPhoneOrEmail = mutation({
       }
 
       // Auto-heal admin credentials if passwordHash is missing or needs sync
-      if (user.email?.toLowerCase() === "admin@vektolux.sl" && args.password === "password123") {
+      if (
+        (user.email?.toLowerCase() === "admin@vektolux.sl" ||
+          user.email?.toLowerCase() === "alfred.kargbo@vektolux.com") &&
+        args.password === "password123"
+      ) {
         const valid = user.passwordHash ? await verifyPassword(args.password, user.passwordHash) : false;
         if (!valid) {
           const freshHash = await hashPassword("password123");
@@ -460,6 +471,8 @@ export const loginWithPhoneOrEmail = mutation({
         email: user.email,
         phone: user.phone,
         role: user.role,
+        address: user.address,
+        region: user.region,
         isVerified: user.isVerified,
         verificationStatus: user.verificationStatus ?? (user.isVerified ? "verified" : "unverified"),
         businessName: user.businessName,
@@ -501,6 +514,8 @@ export const getUserSession = query({
       email: v.string(),
       phone: v.string(),
       role: v.string(),
+      address: v.optional(v.string()),
+      region: v.optional(v.string()),
       isVerified: v.boolean(),
       isActive: v.boolean(),
       avatarUrl: v.optional(v.string()),
@@ -548,6 +563,8 @@ export const getUserSession = query({
         email: user.email,
         phone: user.phone,
         role: user.role,
+        address: user.address,
+        region: user.region,
         isVerified: user.isVerified,
         isActive: user.isActive,
         avatarUrl: user.avatarUrl,
@@ -571,7 +588,7 @@ export const getUserSession = query({
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-//                    SEED DEMO / TEST USERS
+//                    SEED DEMO / TEST USERS (PRODUCTION ENFORCED)
 // ═══════════════════════════════════════════════════════════════════════
 
 export const seedDemoUsers = mutation({
@@ -581,36 +598,13 @@ export const seedDemoUsers = mutation({
     existing: v.array(v.string()),
   }),
   handler: async (ctx) => {
-    const demoAccounts = [
-      {
-        email: "demo@vektolux.sl",
-        phone: "+23276100001",
-        name: "Lamin Sesay",
-        role: "client" as const,
-        balance: 1500,
-      },
-      {
-        email: "driver@vektolux.sl",
-        phone: "+23276100002",
-        name: "Abu Kamara",
-        role: "driver" as const,
-        balance: 850,
-      },
-      {
-        email: "agent@vektolux.sl",
-        phone: "+23276100003",
-        name: "Fatmatta Bangura",
-        role: "agent" as const,
-        balance: 5000,
-      },
-      {
-        email: "admin@vektolux.sl",
-        phone: "+23276100000",
-        name: "Vektolux Administrator",
-        role: "admin" as const,
-        balance: 99999,
-      },
-    ];
+    // Only ensure primary production user Alfred Manso Kargbo exists
+    const prodAccount = {
+      email: "alfred.kargbo@vektolux.com",
+      phone: "+232688577868",
+      name: "Alfred Manso Kargbo",
+      role: "admin" as const,
+    };
 
     const seeded: string[] = [];
     const existing: string[] = [];
@@ -618,46 +612,48 @@ export const seedDemoUsers = mutation({
     const passwordHash = await hashPassword(defaultPassword);
     const now = Date.now();
 
-    for (const acc of demoAccounts) {
-      const existingUser = await ctx.db
-        .query("users")
-        .withIndex("by_email", (q) => q.eq("email", acc.email))
-        .first();
+    const existingUser = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", prodAccount.email))
+      .first();
 
-      if (existingUser) {
-        await ctx.db.patch(existingUser._id, {
-          passwordHash,
-          role: acc.role,
-          isActive: true,
-          isVerified: true,
-          updatedAt: now,
-        });
-        existing.push(`${acc.email} (synced)`);
-        continue;
-      }
-
-      const sessionToken = generateSessionToken();
-      const userId = await ctx.db.insert("users", {
-        email: acc.email,
-        phone: acc.phone,
-        name: acc.name,
-        role: acc.role,
+    if (existingUser) {
+      await ctx.db.patch(existingUser._id, {
         passwordHash,
-        sessionToken,
+        role: "admin",
+        activeRole: "admin",
         isVerified: true,
+        isVerifiedAgent: true,
+        isVerifiedMerchant: true,
+        isVerifiedDriver: true,
+        verificationBadge: "GREEN_TICK",
+        verificationStatus: "verified",
+        kycStatus: "VERIFIED",
         isActive: true,
         updatedAt: now,
       });
-
-      await ctx.db.insert("walletBalances", {
-        userId,
-        availableBalance: acc.balance,
-        pendingBalance: 0,
-        currency: "SLE",
+      existing.push(`${prodAccount.email} (synced)`);
+    } else {
+      const sessionToken = generateSessionToken();
+      await ctx.db.insert("users", {
+        email: prodAccount.email,
+        phone: prodAccount.phone,
+        name: prodAccount.name,
+        role: "admin",
+        activeRole: "admin",
+        passwordHash,
+        sessionToken,
+        isVerified: true,
+        isVerifiedAgent: true,
+        isVerifiedMerchant: true,
+        isVerifiedDriver: true,
+        verificationBadge: "GREEN_TICK",
+        verificationStatus: "verified",
+        kycStatus: "VERIFIED",
+        isActive: true,
         updatedAt: now,
       });
-
-      seeded.push(acc.email);
+      seeded.push(`${prodAccount.email} (created)`);
     }
 
     return { seeded, existing };

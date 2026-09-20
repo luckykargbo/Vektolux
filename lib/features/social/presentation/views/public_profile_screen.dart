@@ -14,7 +14,6 @@ import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/vx_network_image.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
-import '../../../auth/presentation/bloc/auth_state.dart';
 
 class PublicProfileScreen extends StatefulWidget {
   final String userId;
@@ -257,7 +256,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     alignment: Alignment.centerLeft,
                     child: Text(
                       _roleName(role),
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 13,
                         color: AppColors.textSecondary,
                       ),
@@ -382,7 +381,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         const SizedBox(height: 2),
         Text(
           label,
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 12,
             color: AppColors.textSecondary,
           ),
@@ -409,7 +408,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
               const SizedBox(height: 12),
               Text(
                 'No ${type == 'property' ? 'property' : 'vehicle'} listings yet',
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 14,
                   color: AppColors.textSecondary,
                 ),
