@@ -624,3 +624,91 @@ export const updateBio = mutation({
     return { success: true };
   },
 });
+
+/**
+ * Dynamic Wallet & Profile endpoint
+ * Returns user identity, KYC badge, live wallet balance, active deal count, and QR payload.
+ */
+export const getWalletProfile = query({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    let user = null;
+    const userNorm = ctx.db.normalizeId("users", args.userId);
+    if (userNorm) {
+      user = await ctx.db.get(userNorm);
+    }
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_sessionToken", (q) => q.eq("sessionToken", args.userId))
+        .first();
+    }
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", args.userId))
+        .first();
+    }
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", args.userId))
+        .first();
+    }
+    if (!user) return null;
+
+    // Fetch live wallet balance
+    const wallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .first();
+
+    // Fetch active escrow orders
+    const buyerOrders = await ctx.db
+      .query("escrow_orders")
+      .withIndex("by_renter_or_buyer", (q) => q.eq("renterOrBuyerId", user._id))
+      .collect();
+    const sellerOrders = await ctx.db
+      .query("escrow_orders")
+      .withIndex("by_owner_or_seller", (q) => q.eq("ownerOrSellerId", user._id))
+      .collect();
+
+    const orderMap = new Map();
+    for (const o of [...buyerOrders, ...sellerOrders]) {
+      orderMap.set(o._id, o);
+    }
+    const allOrders = Array.from(orderMap.values());
+    const activeDeals = allOrders.filter(
+      (o) =>
+        o.status === "HELD_IN_ESCROW" ||
+        o.status === "PARTIALLY_RELEASED" ||
+        o.status === "POST_INSPECTION_PENDING" ||
+        o.status === "PENDING_PAYMENT"
+    ).length;
+
+    const qrPayload = `vektolux://pay?userId=${user._id}&phone=${encodeURIComponent(user.phone)}&name=${encodeURIComponent(user.name)}`;
+
+    const isVerifiedCitizen =
+      user.isVerified ||
+      user.verificationStatus === "VERIFIED" ||
+      user.verificationStatus === "verified" ||
+      user.verificationStatus === "approved";
+
+    return {
+      userId: user._id as string,
+      fullName: user.name,
+      phone: user.phone,
+      email: user.email,
+      role: user.role,
+      avatarUrl: user.avatarUrl ?? null,
+      verificationStatus: user.verificationStatus ?? (isVerifiedCitizen ? "VERIFIED" : "UNVERIFIED"),
+      verificationBadge: user.verificationBadge ?? (isVerifiedCitizen ? "VERIFIED CITIZEN ID • ESCROW ENABLED" : "UNVERIFIED"),
+      walletBalance: wallet?.availableBalance ?? 0.0,
+      lockedEscrowBalance: wallet?.escrowBalance ?? 0.0,
+      currency: "SLE",
+      activeEscrowDeals: activeDeals,
+      qrPayload,
+    };
+  },
+});
+

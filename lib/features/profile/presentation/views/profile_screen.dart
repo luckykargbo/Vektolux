@@ -30,6 +30,11 @@ import '../../../social/presentation/views/public_profile_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/services/payment_methods_service.dart';
 import '../../../../core/models/payment_account.dart';
+import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/rendering.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 
 class ProfileScreen extends StatefulWidget {
@@ -77,7 +82,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
   }
 
-  /// Fetch live wallet balance and active escrow deal count from Convex.
+  /// Fetch live wallet balance, escrow status, and dynamic profile from Convex.
   Future<void> _fetchWalletData() async {
     if (!mounted) return;
     final userId = context.read<AuthBloc>().state.user?.id;
@@ -87,6 +92,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
     final client = context.read<ConvexClientWrapper>();
     try {
+      // 1. Try unified getWalletProfile
+      final profileRes = await client.query(
+        'users:getWalletProfile',
+        args: {'userId': userId},
+      );
+      if (profileRes.success && profileRes.value is Map) {
+        final data = profileRes.value as Map;
+        final propRes = await client.query(
+          'realEstate:getMyPropertyListings',
+          args: {'userId': userId},
+        );
+        if (!mounted) return;
+        setState(() {
+          _walletBalance = (data['walletBalance'] as num?)?.toDouble() ?? 0.0;
+          _activeEscrowDeals = (data['activeEscrowDeals'] as num?)?.toInt() ?? 0;
+          final listings =
+              propRes.value is List ? propRes.value as List : <dynamic>[];
+          _vendorListingCount = listings.length;
+          _isLoadingBalance = false;
+        });
+        return;
+      }
+
+      // 2. Resilient fallback to individual queries
       final walletRes = await client.query(
         'payments:getWalletBalance',
         args: {'userId': userId},
@@ -336,6 +365,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     userId: userId,
                     avatarUrl: publicUrl,
                   );
+                  try {
+                    await convexClient.mutation('users:updateAvatar', args: {
+                      'userId': userId,
+                      'avatarUrl': publicUrl,
+                    });
+                  } catch (_) {}
                 }
 
                 if (modalCtx.mounted) {
@@ -509,51 +544,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // Actions: Save or Remove
+                  // Explicit Action Bar: [Cancel] & [Save Photo]
                   Row(
                     children: [
-                      if (currentAvatarUrl != null && currentAvatarUrl.isNotEmpty) ...[
-                        OutlinedButton(
+                      Expanded(
+                        child: OutlinedButton(
                           onPressed: isUploading
                               ? null
-                              : () async {
-                                  try {
-                                    final userId = user?.id;
-                                    if (userId != null && userId.isNotEmpty) {
-                                      final authRepo = context.read<AuthRepository>();
-                                      await authRepo.updateUserProfile(
-                                        userId: userId,
-                                        avatarUrl: '',
-                                      );
-                                    }
-                                    if (modalCtx.mounted) {
-                                      context.read<AuthBloc>().add(
-                                            const UpdateUserProfileEvent(avatarUrl: ''),
-                                          );
-                                      Navigator.of(modalCtx).pop();
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Profile photo removed.'),
-                                          behavior: SnackBarBehavior.floating,
-                                        ),
-                                      );
-                                    }
-                                  } catch (e) {
-                                    setModalState(() {
-                                      uploadError = 'Failed to remove photo: $e';
-                                    });
-                                  }
+                              : () {
+                                  setModalState(() {
+                                    pickedBytes = null;
+                                    uploadError = null;
+                                  });
+                                  Navigator.of(modalCtx).pop();
                                 },
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.error,
-                            side: const BorderSide(color: AppColors.errorLight),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            side: const BorderSide(color: AppColors.gray300, width: 1.2),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
-                          child: const Text('Remove'),
+                          child: const Text(
+                            'Cancel',
+                            style: TextStyle(
+                              color: AppColors.obsidian,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                            ),
+                          ),
                         ),
-                        const SizedBox(width: 10),
-                      ],
+                      ),
+                      const SizedBox(width: 12),
                       Expanded(
+                        flex: 2,
                         child: ElevatedButton(
                           onPressed: (pickedBytes == null || isUploading)
                               ? null
@@ -564,6 +586,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             disabledBackgroundColor: AppColors.gray200,
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            elevation: 0,
                           ),
                           child: isUploading
                               ? const Row(
@@ -578,14 +601,73 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       ),
                                     ),
                                     SizedBox(width: 10),
-                                    Text('Uploading to Cloud...'),
+                                    Text(
+                                      'Saving Photo...',
+                                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                                    ),
                                   ],
                                 )
-                              : const Text('Upload & Save Photo'),
+                              : const Text(
+                                  'Save Photo',
+                                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                                ),
                         ),
                       ),
                     ],
                   ),
+                  if (currentAvatarUrl != null && currentAvatarUrl.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Center(
+                      child: TextButton.icon(
+                        onPressed: isUploading
+                            ? null
+                            : () async {
+                                try {
+                                  final userId = user?.id;
+                                  if (userId != null && userId.isNotEmpty) {
+                                    final authRepo = context.read<AuthRepository>();
+                                    await authRepo.updateUserProfile(
+                                      userId: userId,
+                                      avatarUrl: '',
+                                    );
+                                    try {
+                                      final convexClient = context.read<ConvexClientWrapper>();
+                                      await convexClient.mutation('users:updateAvatar', args: {
+                                        'userId': userId,
+                                        'avatarUrl': '',
+                                      });
+                                    } catch (_) {}
+                                  }
+                                  if (modalCtx.mounted) {
+                                    context.read<AuthBloc>().add(
+                                          const UpdateUserProfileEvent(avatarUrl: ''),
+                                        );
+                                    Navigator.of(modalCtx).pop();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Profile photo removed.'),
+                                        behavior: SnackBarBehavior.floating,
+                                      ),
+                                    );
+                                  }
+                                } catch (e) {
+                                  setModalState(() {
+                                    uploadError = 'Failed to remove photo: $e';
+                                  });
+                                }
+                              },
+                        icon: const Icon(Icons.delete_outline, size: 16, color: AppColors.error),
+                        label: const Text(
+                          'Remove Current Photo',
+                          style: TextStyle(
+                            color: AppColors.error,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             );
@@ -2829,8 +2911,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showMyQrCodeModal(BuildContext context, UserEntity? user) {
+    final qrCardKey = GlobalKey();
     final qrData =
         'vektolux://pay?userId=${user?.id ?? "guest"}&phone=${user?.phone ?? ""}&name=${Uri.encodeComponent(user?.name ?? "User")}';
+    final verificationBadgeText = (user != null &&
+            user.verificationBadge.isNotEmpty &&
+            user.verificationBadge != 'NONE')
+        ? user.verificationBadge
+        : (user?.isVerified == true
+            ? 'VERIFIED CITIZEN ID • ESCROW ENABLED'
+            : 'CITIZEN ID • ESCROW ENABLED');
 
     showModalBottomSheet(
       context: context,
@@ -2869,102 +2959,107 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             const SizedBox(height: 24),
 
-            // QR Container Card
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.border),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.06),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Column(
-                children: [
-                  SizedBox(
-                    width: 190,
-                    height: 190,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        CustomPaint(
-                          size: const Size(190, 190),
-                          painter: _VektoluxQrPainter(
-                            data: qrData,
-                            foregroundColor: const Color(0xFF0F172A),
+            // QR Container Card with RepaintBoundary for high-res PNG capture
+            RepaintBoundary(
+              key: qrCardKey,
+              child: Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: AppColors.border),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 16,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    SizedBox(
+                      width: 190,
+                      height: 190,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          CustomPaint(
+                            size: const Size(190, 190),
+                            painter: _VektoluxQrPainter(
+                              data: qrData,
+                              foregroundColor: const Color(0xFF0F172A),
+                            ),
                           ),
-                        ),
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: AppColors.emerald,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 3),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.15),
-                                blurRadius: 6,
-                              ),
-                            ],
-                          ),
-                          child: const Center(
-                            child: Text(
-                              'V',
-                              style: TextStyle(
-                                fontFamily: 'Poppins',
-                                fontWeight: FontWeight.w900,
-                                color: Colors.white,
-                                fontSize: 19,
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: AppColors.emerald,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 3),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.15),
+                                  blurRadius: 6,
+                                ),
+                              ],
+                            ),
+                            child: const Center(
+                              child: Text(
+                                'V',
+                                style: TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white,
+                                  fontSize: 19,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    user?.name ?? 'Vektolux User',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.obsidian,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    user?.phone ?? '+232 ...',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.gray500,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppColors.emeraldSurface,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Text(
-                      'VERIFIED CITIZEN ID • ESCROW ENABLED',
-                      style: TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.emeraldDark,
-                        letterSpacing: 0.4,
+                        ],
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 16),
+                    Text(
+                      user?.name ?? 'Vektolux User',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.obsidian,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      user != null && user.phone.isNotEmpty
+                          ? user.phone
+                          : '+232 ...',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.gray500,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.emeraldSurface,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        verificationBadgeText,
+                        style: const TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.emeraldDark,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 24),
@@ -2985,16 +3080,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         style: TextStyle(
                             color: AppColors.obsidian,
                             fontWeight: FontWeight.w600)),
-                    onPressed: () {
-                      Clipboard.setData(
-                          ClipboardData(text: user?.id ?? 'VLX-SL-232'));
-                      Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Vektolux Account ID copied to clipboard!'),
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
+                    onPressed: () async {
+                      final idToCopy = (user?.id != null && user!.id.isNotEmpty)
+                          ? user.id
+                          : 'VLX-SL-232';
+                      await Clipboard.setData(ClipboardData(text: idToCopy));
+                      // Native OS clipboard confirmation verification
+                      final clipCheck = await Clipboard.getData(Clipboard.kTextPlain);
+                      final isConfirmed = clipCheck?.text == idToCopy;
+
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Row(
+                              children: [
+                                const Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    isConfirmed
+                                        ? 'Account ID ($idToCopy) copied to clipboard!'
+                                        : 'Account ID copied to clipboard!',
+                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            backgroundColor: AppColors.emeraldDark,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
                     },
                   ),
                 ),
@@ -3011,13 +3128,54 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     icon: const Icon(Icons.share_rounded, size: 18),
                     label: const Text('Share QR',
                         style: TextStyle(fontWeight: FontWeight.w700)),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Sharing payment QR link...'),
-                          behavior: SnackBarBehavior.floating,
-                        ),
+                    onPressed: () async {
+                      final userId = user?.id ?? "guest";
+                      final userName = user?.name ?? "Vektolux User";
+                      final userPhone = user?.phone ?? "";
+                      final shareLink = 'https://app.vektolux.com/pay?userId=$userId&phone=$userPhone&name=${Uri.encodeComponent(userName)}';
+                      final shareText = 'Pay or verify with Vektolux Escrow:\n'
+                          'Name: $userName\n'
+                          'Account ID: $userId\n'
+                          'Link: $shareLink\n\n'
+                          'Sierra Leone Escrow Protection & Mobile Money.';
+
+                      final box = context.findRenderObject() as RenderBox?;
+                      final originRect = box != null
+                          ? box.localToGlobal(Offset.zero) & box.size
+                          : const Rect.fromLTWH(0, 0, 300, 300);
+
+                      try {
+                        final boundary = qrCardKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+                        if (boundary != null) {
+                          final image = await boundary.toImage(pixelRatio: 2.5);
+                          final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+                          if (byteData != null) {
+                            final pngBytes = byteData.buffer.asUint8List();
+                            final tempDir = await getTemporaryDirectory();
+                            final filePath = '${tempDir.path}/vektolux_qr_${userId.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_')}.png';
+                            final file = File(filePath);
+                            await file.writeAsBytes(pngBytes, flush: true);
+
+                            if (ctx.mounted) Navigator.pop(ctx);
+                            await Share.shareXFiles(
+                              [XFile(filePath, mimeType: 'image/png', name: 'vektolux_qr.png')],
+                              text: shareText,
+                              subject: 'Vektolux Payment QR — $userName',
+                              sharePositionOrigin: originRect,
+                            );
+                            return;
+                          }
+                        }
+                      } catch (e) {
+                        debugPrint('[ProfileScreen] QR image render failed, falling back to text share: $e');
+                      }
+
+                      // Fallback to text & link share via native OS share sheet
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      await Share.share(
+                        shareText,
+                        subject: 'Vektolux Payment QR — $userName',
+                        sharePositionOrigin: originRect,
                       );
                     },
                   ),

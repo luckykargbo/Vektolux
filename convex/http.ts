@@ -401,6 +401,67 @@ http.route({
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+//          GET /api/user/wallet-profile — Dynamic Profile & Wallet State
+// ═══════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/user/wallet-profile",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const url = new URL(request.url);
+      const userId = url.searchParams.get("userId") || request.headers.get("x-user-id");
+
+      if (!userId) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Missing userId parameter or x-user-id header",
+          }),
+          { status: 400, headers: corsHeaders() }
+        );
+      }
+
+      const profile = await ctx.runQuery(api.users.getWalletProfile, { userId });
+      if (!profile) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "User profile not found",
+          }),
+          { status: 404, headers: corsHeaders() }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          ...profile,
+        }),
+        { status: 200, headers: corsHeaders() }
+      );
+    } catch (error: any) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: error.message ?? "Failed to fetch wallet profile",
+        }),
+        { status: 500, headers: corsHeaders() }
+      );
+    }
+  }),
+});
+
+http.route({
+  path: "/api/user/wallet-profile",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, { status: 204, headers: corsHeaders() });
+  }),
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════
 //                    GATEWAY API IMPLEMENTATIONS
 // ═══════════════════════════════════════════════════════════════════════
 
