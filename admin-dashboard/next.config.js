@@ -1,3 +1,8 @@
+const dns = require("node:dns");
+try {
+  dns.setDefaultResultOrder("ipv4first");
+} catch (_) {}
+
 /** @type {import("next").NextConfig} */
 const nextConfig = {
   reactStrictMode: true,

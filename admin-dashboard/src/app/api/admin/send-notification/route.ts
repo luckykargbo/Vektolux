@@ -9,7 +9,7 @@ import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { sendPushNotification } from "@/lib/firebase-admin";
 
-const CONVEX_URL = process.env.NEXT_PUBLIC_CONVEX_URL ?? "https://incredible-possum-462.convex.cloud";
+import { CONVEX_URL } from "@/lib/convex";
 
 function getConvexClient() {
   return new ConvexHttpClient(CONVEX_URL);
