@@ -40,7 +40,6 @@ class ClientHomeScreen extends StatefulWidget {
 }
 
 class _ClientHomeScreenState extends State<ClientHomeScreen> {
-  String _selectedCity = 'Freetown Central';
   final TextEditingController _searchController = TextEditingController();
   final NumberFormat _currencyFormat = NumberFormat('#,##0', 'en_US');
 
@@ -183,99 +182,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     }
   }
 
-  void _showLocationPicker() {
-    final regions = [
-      {'name': 'Freetown Central', 'sub': 'Western Area Urban'},
-      {'name': 'Lumley & Aberdeen', 'sub': 'Beachfront & Tourism Zone'},
-      {'name': 'Wilkinson Road & Congo Cross', 'sub': 'Commercial Corridor'},
-      {'name': 'Hill Station & Regent', 'sub': 'Diplomatic Mountain Zone'},
-      {'name': 'Waterloo & Goderich', 'sub': 'Western Area Rural'},
-      {'name': 'Bo City', 'sub': 'Southern Province Hub'},
-      {'name': 'Kenema', 'sub': 'Eastern Province Hub'},
-      {'name': 'Makeni', 'sub': 'Northern Province Hub'},
-    ];
 
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.gray300,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Select Your Region in Sierra Leone',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.obsidian,
-                ),
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                'Browse rides, properties, and vehicles tailored to your area.',
-                style: TextStyle(fontSize: 13, color: AppColors.gray500),
-              ),
-              const SizedBox(height: 16),
-              Flexible(
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: regions.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, idx) {
-                    final r = regions[idx];
-                    final isSelected = r['name'] == _selectedCity;
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(
-                        Icons.location_on_rounded,
-                        color: isSelected ? AppColors.emerald : AppColors.gray400,
-                      ),
-                      title: Text(
-                        r['name']!,
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                          color: isSelected ? AppColors.emerald : AppColors.obsidian,
-                        ),
-                      ),
-                      subtitle: Text(
-                        r['sub']!,
-                        style: const TextStyle(fontSize: 12, color: AppColors.gray500),
-                      ),
-                      trailing: isSelected
-                          ? const Icon(Icons.check_circle_rounded, color: AppColors.emerald)
-                          : null,
-                      onTap: () {
-                        setState(() => _selectedCity = r['name']!);
-                        Navigator.pop(ctx);
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
   void _handleSavedShortcutTap(Map<String, dynamic> shortcut) {
     final query = shortcut['query'] as String? ?? shortcut['title'] as String;
@@ -893,69 +800,30 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Greeting & Active Location
+          // Greeting
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Text(
-                      '$greeting, $firstName',
-                      style: const TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.obsidian,
-                      ),
+                Flexible(
+                  child: Text(
+                    '$greeting, $firstName',
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.obsidian,
                     ),
-                    const SizedBox(width: 6),
-                    const Text('👋', style: TextStyle(fontSize: 18)),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                GestureDetector(
-                  onTap: _showLocationPicker,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppColors.emeraldSurface,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: AppColors.emerald.withValues(alpha: 0.3),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.location_on_rounded,
-                          size: 13,
-                          color: AppColors.emeraldDark,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          _selectedCity,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.emeraldDark,
-                          ),
-                        ),
-                        const SizedBox(width: 3),
-                        const Icon(
-                          Icons.keyboard_arrow_down_rounded,
-                          size: 14,
-                          color: AppColors.emeraldDark,
-                        ),
-                      ],
-                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                const SizedBox(width: 6),
+                const Text('👋', style: TextStyle(fontSize: 18)),
               ],
             ),
           ),
+          const SizedBox(width: 12),
 
           // Notification Bell with unread badge indicator
           InkWell(

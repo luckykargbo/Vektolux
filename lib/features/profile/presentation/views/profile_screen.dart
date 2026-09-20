@@ -186,6 +186,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final nameCtrl = TextEditingController(text: user.name);
     final phoneCtrl = TextEditingController(text: user.phone);
     final bioCtrl = TextEditingController(text: user.bio ?? '');
+    final addressCtrl = TextEditingController(text: user.address ?? '');
+    String? selectedRegion = user.region;
 
     showModalBottomSheet(
       context: context,
@@ -195,119 +197,168 @@ class _ProfileScreenState extends State<ProfileScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (modalCtx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 20,
-            bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 44,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.gray300,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
               ),
-              const SizedBox(height: 18),
-              const Text(
-                'Edit Account Information',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.obsidian,
-                ),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Update your display name, contact phone number, and bio.',
-                style: TextStyle(fontSize: 13, color: AppColors.gray500),
-              ),
-              const SizedBox(height: 20),
-              TextFormField(
-                controller: nameCtrl,
-                style: const TextStyle(
-                  color: AppColors.obsidian,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                ),
-                cursorColor: const Color(0xFF10B981),
-                decoration: const InputDecoration(
-                  labelText: 'Full Name',
-                  prefixIcon: Icon(Icons.person_outline),
-                ),
-              ),
-              const SizedBox(height: 14),
-              TextFormField(
-                controller: phoneCtrl,
-                keyboardType: TextInputType.phone,
-                style: const TextStyle(
-                  color: AppColors.obsidian,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                ),
-                cursorColor: const Color(0xFF10B981),
-                decoration: const InputDecoration(
-                  labelText: 'Phone Number',
-                  prefixIcon: Icon(Icons.phone_outlined),
-                ),
-              ),
-              const SizedBox(height: 14),
-              TextFormField(
-                controller: bioCtrl,
-                maxLines: 3,
-                style: const TextStyle(
-                  color: AppColors.obsidian,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                ),
-                cursorColor: const Color(0xFF10B981),
-                decoration: const InputDecoration(
-                  labelText: 'Bio / About You',
-                  alignLabelWithHint: true,
-                  prefixIcon: Padding(
-                    padding: EdgeInsets.only(bottom: 40),
-                    child: Icon(Icons.edit_note_outlined),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: () {
-                    final updatedName = nameCtrl.text.trim();
-                    final updatedPhone = phoneCtrl.text.trim();
-                    final updatedBio = bioCtrl.text.trim();
-                    context.read<AuthBloc>().add(
-                          UpdateUserProfileEvent(
-                            name: updatedName.isNotEmpty ? updatedName : null,
-                            phone: updatedPhone.isNotEmpty ? updatedPhone : null,
-                            bio: updatedBio.isNotEmpty ? updatedBio : null,
-                          ),
-                        );
-                    Navigator.of(modalCtx).pop();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Profile information updated successfully.'),
-                        backgroundColor: AppColors.emerald,
-                        behavior: SnackBarBehavior.floating,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 44,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.gray300,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
-                    );
-                  },
-                  child: const Text('Save Changes'),
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      'Edit Account Information',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.obsidian,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Update your display name, contact phone number, address, and bio.',
+                      style: TextStyle(fontSize: 13, color: AppColors.gray500),
+                    ),
+                    const SizedBox(height: 20),
+                    TextFormField(
+                      controller: nameCtrl,
+                      style: const TextStyle(
+                        color: AppColors.obsidian,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      cursorColor: const Color(0xFF10B981),
+                      decoration: const InputDecoration(
+                        labelText: 'Full Name',
+                        prefixIcon: Icon(Icons.person_outline),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      controller: phoneCtrl,
+                      keyboardType: TextInputType.phone,
+                      style: const TextStyle(
+                        color: AppColors.obsidian,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      cursorColor: const Color(0xFF10B981),
+                      decoration: const InputDecoration(
+                        labelText: 'Phone Number',
+                        prefixIcon: Icon(Icons.phone_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    // Area / District Dropdown
+                    DropdownButtonFormField<String>(
+                      value: (selectedRegion != null && selectedRegion!.isNotEmpty)
+                          ? selectedRegion
+                          : null,
+                      decoration: const InputDecoration(
+                        labelText: 'Area / District (Optional)',
+                        hintText: 'Select your general area',
+                        prefixIcon: Icon(Icons.location_city_outlined),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'Freetown Central', child: Text('Freetown Central (Western Urban)')),
+                        DropdownMenuItem(value: 'Lumley & Aberdeen', child: Text('Lumley & Aberdeen (Beachfront)')),
+                        DropdownMenuItem(value: 'Wilkinson Road & Congo Cross', child: Text('Wilkinson Road & Congo Cross')),
+                        DropdownMenuItem(value: 'Hill Station & Regent', child: Text('Hill Station & Regent (Mountain)')),
+                        DropdownMenuItem(value: 'Waterloo & Goderich', child: Text('Waterloo & Goderich (Western Rural)')),
+                        DropdownMenuItem(value: 'Bo City', child: Text('Bo City (Southern Province)')),
+                        DropdownMenuItem(value: 'Kenema', child: Text('Kenema (Eastern Province)')),
+                        DropdownMenuItem(value: 'Makeni', child: Text('Makeni (Northern Province)')),
+                      ],
+                      onChanged: (val) => setModalState(() => selectedRegion = val),
+                    ),
+                    const SizedBox(height: 14),
+                    // Street Address
+                    TextFormField(
+                      controller: addressCtrl,
+                      textCapitalization: TextCapitalization.words,
+                      style: const TextStyle(
+                        color: AppColors.obsidian,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      cursorColor: const Color(0xFF10B981),
+                      decoration: const InputDecoration(
+                        labelText: 'Street Address (Optional)',
+                        hintText: 'e.g. 14 Wilkinson Road, Freetown',
+                        prefixIcon: Icon(Icons.home_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      controller: bioCtrl,
+                      maxLines: 3,
+                      style: const TextStyle(
+                        color: AppColors.obsidian,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      cursorColor: const Color(0xFF10B981),
+                      decoration: const InputDecoration(
+                        labelText: 'Bio / About You',
+                        alignLabelWithHint: true,
+                        prefixIcon: Padding(
+                          padding: EdgeInsets.only(bottom: 40),
+                          child: Icon(Icons.edit_note_outlined),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          final updatedName = nameCtrl.text.trim();
+                          final updatedPhone = phoneCtrl.text.trim();
+                          final updatedBio = bioCtrl.text.trim();
+                          final updatedAddress = addressCtrl.text.trim();
+                          context.read<AuthBloc>().add(
+                                UpdateUserProfileEvent(
+                                  name: updatedName.isNotEmpty ? updatedName : null,
+                                  phone: updatedPhone.isNotEmpty ? updatedPhone : null,
+                                  bio: updatedBio.isNotEmpty ? updatedBio : null,
+                                  address: updatedAddress.isNotEmpty ? updatedAddress : null,
+                                  region: selectedRegion,
+                                ),
+                              );
+                          Navigator.of(modalCtx).pop();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Profile information updated successfully.'),
+                              backgroundColor: AppColors.emerald,
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        },
+                        child: const Text('Save Changes'),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -1121,6 +1172,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final displayPhone = user?.phone.isNotEmpty == true ? user!.phone : '';
         final displayEmail = user?.email.isNotEmpty == true ? user!.email : '';
         final userBio = user?.bio;
+        final userRegion = user?.region;
+        final userAddress = user?.address;
         final role = user?.role ?? UserRole.client;
         final isVendor = role == UserRole.agent ||
             role == UserRole.merchant ||
@@ -1278,6 +1331,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                            if ((userRegion != null && userRegion.isNotEmpty) ||
+                                (userAddress != null && userAddress.isNotEmpty)) ...[
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  const Icon(Icons.location_on_outlined, size: 13, color: AppColors.gray500),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      [
+                                        if (userRegion != null && userRegion.isNotEmpty) userRegion,
+                                        if (userAddress != null && userAddress.isNotEmpty) userAddress,
+                                      ].join(' • '),
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: AppColors.gray500,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ],

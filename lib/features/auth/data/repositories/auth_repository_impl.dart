@@ -37,6 +37,8 @@ class AuthRepositoryImpl implements AuthRepository {
     String? tinNumber,
     String? documentStorageId,
     String? documentUrl,
+    String? address,
+    String? region,
   }) async {
     final result = await _convexClient.mutation(
       'auth:registerUser',
@@ -51,6 +53,8 @@ class AuthRepositoryImpl implements AuthRepository {
         if (tinNumber != null && tinNumber.isNotEmpty) 'tinNumber': tinNumber,
         if (documentStorageId != null && documentStorageId.isNotEmpty) 'documentStorageId': documentStorageId,
         if (documentUrl != null && documentUrl.isNotEmpty) 'documentUrl': documentUrl,
+        if (address != null && address.isNotEmpty) 'address': address,
+        if (region != null && region.isNotEmpty) 'region': region,
       },
     );
 
@@ -80,6 +84,8 @@ class AuthRepositoryImpl implements AuthRepository {
       businessName: businessName,
       tinNumber: tinNumber,
       documentUrl: documentUrl,
+      address: data['address']?.toString() ?? address,
+      region: data['region']?.toString() ?? region,
     );
 
     // Cache session locally
@@ -146,6 +152,8 @@ class AuthRepositoryImpl implements AuthRepository {
         verifiedAt: (data['verifiedAt'] as num?)?.toInt(),
         bio: data['bio'] as String?,
         kycStatus: data['kycStatus'] as String?,
+        address: data['address'] as String?,
+        region: data['region'] as String?,
       );
     } catch (e, stack) {
       _log.e('Failed to parse user document on login: $e', error: e, stackTrace: stack);
@@ -266,6 +274,8 @@ class AuthRepositoryImpl implements AuthRepository {
     String? phone,
     String? avatarUrl,
     String? bio,
+    String? address,
+    String? region,
   }) async {
     final current = await getActiveSession();
     if (current == null) {
@@ -280,6 +290,8 @@ class AuthRepositoryImpl implements AuthRepository {
         if (phone != null) 'phone': phone,
         if (avatarUrl != null) 'avatarUrl': avatarUrl,
         if (bio != null) 'bio': bio,
+        if (address != null) 'address': address,
+        if (region != null) 'region': region,
       },
     );
 
@@ -295,6 +307,8 @@ class AuthRepositoryImpl implements AuthRepository {
       phone: phone ?? current.phone,
       avatarUrl: avatarUrl ?? current.avatarUrl,
       bio: bio ?? current.bio,
+      address: address ?? current.address,
+      region: region ?? current.region,
     );
 
     await _cacheUser(updated);

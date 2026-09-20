@@ -78,6 +78,8 @@ class UserEntity extends Equatable {
   final int? verifiedAt;
   final String? bio;
   final String? kycStatus;
+  final String? address;
+  final String? region;
 
   const UserEntity({
     required this.id,
@@ -101,6 +103,8 @@ class UserEntity extends Equatable {
     this.verifiedAt,
     this.bio,
     this.kycStatus,
+    this.address,
+    this.region,
   });
 
   bool get isDriverMode => activeMode == 'driver';
@@ -139,6 +143,8 @@ class UserEntity extends Equatable {
     int? verifiedAt,
     String? bio,
     String? kycStatus,
+    String? address,
+    String? region,
   }) {
     return UserEntity(
       id: id ?? this.id,
@@ -162,6 +168,8 @@ class UserEntity extends Equatable {
       verifiedAt: verifiedAt ?? this.verifiedAt,
       bio: bio ?? this.bio,
       kycStatus: kycStatus ?? this.kycStatus,
+      address: address ?? this.address,
+      region: region ?? this.region,
     );
   }
 
@@ -188,5 +196,7 @@ class UserEntity extends Equatable {
         verifiedAt,
         bio,
         kycStatus,
+        address,
+        region,
       ];
 }

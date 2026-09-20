@@ -20,6 +20,8 @@ abstract class AuthRepository {
     String? tinNumber,
     String? documentStorageId,
     String? documentUrl,
+    String? address,
+    String? region,
   });
 
   /// Login with email or phone + password.
@@ -43,13 +45,15 @@ abstract class AuthRepository {
   /// Check if Convex backend is reachable.
   Future<bool> checkConvexHealth();
 
-  /// Update user profile (name, phone, avatarUrl, bio) and refresh cache.
+  /// Update user profile (name, phone, avatarUrl, bio, address, region) and refresh cache.
   Future<UserEntity> updateUserProfile({
     required String userId,
     String? name,
     String? phone,
     String? avatarUrl,
     String? bio,
+    String? address,
+    String? region,
   });
 
   /// Switch user active mode ('passenger' vs 'driver') and update backend & cache.

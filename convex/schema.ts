@@ -394,6 +394,8 @@ export default defineSchema({
 
     // Social & Profile
     bio: v.optional(v.string()),
+    address: v.optional(v.string()),
+    region: v.optional(v.string()),
     followersCount: v.optional(v.number()),
     followingCount: v.optional(v.number()),
     kycStatus: v.optional(v.union(

@@ -243,6 +243,8 @@ export const registerUser = mutation({
     tinNumber: v.optional(v.string()),
     documentStorageId: v.optional(v.id("_storage")),
     documentUrl: v.optional(v.string()),
+    address: v.optional(v.string()),
+    region: v.optional(v.string()),
   },
   returns: v.object({
     success: v.boolean(),
@@ -254,6 +256,8 @@ export const registerUser = mutation({
     phone: v.optional(v.string()),
     role: v.optional(v.string()),
     avatarUrl: v.optional(v.string()),
+    address: v.optional(v.string()),
+    region: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
     const normalizedEmail = args.email.trim().toLowerCase();
@@ -293,6 +297,8 @@ export const registerUser = mutation({
       phone: normalizedPhone,
       role: args.role,
       avatarUrl: args.avatarUrl,
+      address: args.address,
+      region: args.region,
       passwordHash,
       sessionToken,
       isVerified: false,

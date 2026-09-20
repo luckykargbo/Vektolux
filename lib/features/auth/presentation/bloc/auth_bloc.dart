@@ -125,6 +125,8 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         tinNumber: event.tinNumber,
         documentStorageId: event.documentStorageId,
         documentUrl: event.documentUrl,
+        address: event.address,
+        region: event.region,
       );
 
       emit(state.copyWith(
@@ -226,6 +228,8 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         phone: event.phone,
         avatarUrl: event.avatarUrl,
         bio: event.bio,
+        address: event.address,
+        region: event.region,
       );
 
       emit(state.copyWith(

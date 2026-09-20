@@ -38,6 +38,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _confirmPasswordController = TextEditingController();
   final _businessNameController = TextEditingController();
   final _tinController = TextEditingController();
+  final _addressController = TextEditingController();
+  String? _selectedRegion;
 
   UserRole? _selectedRole;
   bool _obscurePassword = true;
@@ -62,6 +64,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _confirmPasswordController.dispose();
     _businessNameController.dispose();
     _tinController.dispose();
+    _addressController.dispose();
     super.dispose();
   }
 
@@ -163,6 +166,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       documentUrl: _selectedRole!.requiresBusinessInfo
           ? _documentUrl
           : null,
+      address: _addressController.text.trim().isNotEmpty
+          ? _addressController.text.trim()
+          : null,
+      region: _selectedRegion,
     ));
   }
 
@@ -532,6 +539,45 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 if (v != _passwordController.text) return 'Passwords do not match';
                 return null;
               },
+            ),
+            const SizedBox(height: 16),
+
+            // Optional Area / District Dropdown
+            DropdownButtonFormField<String>(
+              value: _selectedRegion,
+              decoration: const InputDecoration(
+                labelText: 'Area / District (Optional)',
+                hintText: 'Select your general area',
+                prefixIcon: Icon(Icons.location_city_outlined),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'Freetown Central', child: Text('Freetown Central (Western Urban)')),
+                DropdownMenuItem(value: 'Lumley & Aberdeen', child: Text('Lumley & Aberdeen (Beachfront)')),
+                DropdownMenuItem(value: 'Wilkinson Road & Congo Cross', child: Text('Wilkinson Road & Congo Cross')),
+                DropdownMenuItem(value: 'Hill Station & Regent', child: Text('Hill Station & Regent (Mountain)')),
+                DropdownMenuItem(value: 'Waterloo & Goderich', child: Text('Waterloo & Goderich (Western Rural)')),
+                DropdownMenuItem(value: 'Bo City', child: Text('Bo City (Southern Province)')),
+                DropdownMenuItem(value: 'Kenema', child: Text('Kenema (Eastern Province)')),
+                DropdownMenuItem(value: 'Makeni', child: Text('Makeni (Northern Province)')),
+              ],
+              onChanged: (val) => setState(() => _selectedRegion = val),
+            ),
+            const SizedBox(height: 16),
+
+            // Optional Street Address
+            TextFormField(
+              controller: _addressController,
+              textCapitalization: TextCapitalization.words,
+              style: const TextStyle(
+                color: Color(0xFF0F172A),
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Street Address (Optional)',
+                hintText: 'e.g. 14 Wilkinson Road, Freetown',
+                prefixIcon: Icon(Icons.home_outlined),
+              ),
             ),
 
             // Optional Business Registration / TIN field for agents and merchants

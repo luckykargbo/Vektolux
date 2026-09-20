@@ -26,6 +26,8 @@ export const getUserById = query({
       isActive: v.boolean(),
       avatarUrl: v.optional(v.string()),
       bio: v.optional(v.string()),
+      address: v.optional(v.string()),
+      region: v.optional(v.string()),
       kycStatus: v.optional(v.string()),
       walletAddress: v.optional(v.string()),
       createdAt: v.number(),
@@ -50,6 +52,8 @@ export const getUserById = query({
         isActive: user.isActive,
         avatarUrl: user.avatarUrl,
         bio: user.bio,
+        address: user.address,
+        region: user.region,
         kycStatus: user.kycStatus,
         walletAddress: user.walletAddress,
         createdAt: user._creationTime,
@@ -113,6 +117,8 @@ export const updateUserProfile = mutation({
     phone: v.optional(v.string()),
     avatarUrl: v.optional(v.string()),
     bio: v.optional(v.string()),
+    address: v.optional(v.string()),
+    region: v.optional(v.string()),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
@@ -148,6 +154,8 @@ export const updateUserProfile = mutation({
     if (args.phone !== undefined) updates.phone = args.phone;
     if (args.avatarUrl !== undefined) updates.avatarUrl = args.avatarUrl;
     if (args.bio !== undefined) updates.bio = args.bio;
+    if (args.address !== undefined) updates.address = args.address;
+    if (args.region !== undefined) updates.region = args.region;
 
     await ctx.db.patch(userDoc._id, updates);
     return true;
@@ -701,6 +709,8 @@ export const getWalletProfile = query({
       email: user.email,
       role: user.role,
       avatarUrl: user.avatarUrl ?? null,
+      address: user.address ?? null,
+      region: user.region ?? null,
       verificationStatus: user.verificationStatus ?? (isVerifiedCitizen ? "VERIFIED" : "UNVERIFIED"),
       verificationBadge: user.verificationBadge ?? (isVerifiedCitizen ? "VERIFIED CITIZEN ID • ESCROW ENABLED" : "UNVERIFIED"),
       walletBalance: wallet?.availableBalance ?? 0.0,

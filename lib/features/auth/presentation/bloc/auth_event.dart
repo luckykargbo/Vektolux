@@ -39,6 +39,8 @@ class RegisterSubmittedEvent extends AuthEvent {
   final String? tinNumber;
   final String? documentStorageId;
   final String? documentUrl;
+  final String? address;
+  final String? region;
 
   const RegisterSubmittedEvent({
     required this.name,
@@ -51,6 +53,8 @@ class RegisterSubmittedEvent extends AuthEvent {
     this.tinNumber,
     this.documentStorageId,
     this.documentUrl,
+    this.address,
+    this.region,
   });
 
   @override
@@ -65,6 +69,8 @@ class RegisterSubmittedEvent extends AuthEvent {
         tinNumber,
         documentStorageId,
         documentUrl,
+        address,
+        region,
       ];
 }
 
@@ -87,22 +93,26 @@ class LogoutEvent extends AuthEvent {
   const LogoutEvent();
 }
 
-/// User requests profile update (name, phone, avatarUrl, bio).
+/// User requests profile update (name, phone, avatarUrl, bio, address, region).
 class UpdateUserProfileEvent extends AuthEvent {
   final String? name;
   final String? phone;
   final String? avatarUrl;
   final String? bio;
+  final String? address;
+  final String? region;
 
   const UpdateUserProfileEvent({
     this.name,
     this.phone,
     this.avatarUrl,
     this.bio,
+    this.address,
+    this.region,
   });
 
   @override
-  List<Object?> get props => [name, phone, avatarUrl, bio];
+  List<Object?> get props => [name, phone, avatarUrl, bio, address, region];
 }
 
 /// User upgraded or switched active role.
