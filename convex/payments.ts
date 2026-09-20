@@ -21,6 +21,11 @@ import {
   requireNonEmpty,
   computeCommissionSplit,
 } from "./lib/validation";
+import {
+  sanitizeSierraLeonePhone,
+  parseCarrierResponse,
+  logGatewayError,
+} from "./lib/paymentErrors";
 
 // ─── COMMISSION RATES (basis points) ─────────────────────────────────
 
@@ -1583,12 +1588,20 @@ export const initializeMonerooPayment = action({
   handler: async (ctx, args) => {
     const apiKey = process.env.MONEROO_SECRET_KEY;
     if (!apiKey) {
-      throw new Error("MONEROO_SECRET_KEY environment variable is not configured");
+      logGatewayError(500, { error: "MONEROO_SECRET_KEY not set" }, args);
+      return {
+        success: false,
+        code: "GATEWAY_ERROR",
+        message: "Payment service is currently unavailable. Please contact support.",
+        statusCode: 500,
+        error: "MONEROO_SECRET_KEY environment variable is not configured",
+      };
     }
 
     const currency = args.currency ?? "SLE";
     const ref = `vktlx_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const returnUrl = args.returnUrl ?? "https://app.vektolux.com/payment/callback";
+    const sanitizedPhone = sanitizeSierraLeonePhone(args.customerPhone);
 
     const payload = {
       amount: args.amount,
@@ -1597,7 +1610,7 @@ export const initializeMonerooPayment = action({
         email: args.customerEmail,
         first_name: args.customerFirstName,
         last_name: args.customerLastName,
-        phone: args.customerPhone ?? "",
+        phone: sanitizedPhone,
       },
       return_url: returnUrl,
       description: args.description ?? `Vektolux Escrow Deposit - ${args.amount} ${currency}`,
@@ -1607,6 +1620,8 @@ export const initializeMonerooPayment = action({
         escrowOrderId: args.escrowOrderId ?? "",
         reContractId: args.reContractId ?? "",
         ref: ref,
+        rawPhone: args.customerPhone ?? "",
+        sanitizedPhone: sanitizedPhone,
       },
     };
 
@@ -1615,46 +1630,74 @@ export const initializeMonerooPayment = action({
       currency,
       ref,
       customerEmail: args.customerEmail,
+      sanitizedPhone,
     });
 
-    const response = await fetch("https://api.moneroo.io/v1/payments/initialize", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(payload),
-    });
+    try {
+      const response = await fetch("https://api.moneroo.io/v1/payments/initialize", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+      });
 
-    const resJson = await response.json();
+      let resJson: any = {};
+      try {
+        resJson = await response.json();
+      } catch (_) {
+        resJson = { message: await response.text().catch(() => "Unknown gateway error") };
+      }
 
-    if (!response.ok) {
-      console.error("Moneroo initialize error response:", resJson);
-      throw new Error(resJson.message ?? resJson.error ?? "Failed to initialize Moneroo payment");
+      if (!response.ok) {
+        logGatewayError(response.status, resJson, payload);
+        const parsed = parseCarrierResponse(response.status, resJson);
+        return {
+          success: false,
+          code: parsed.code,
+          message: parsed.message,
+          statusCode: parsed.statusCode,
+          error: parsed.message,
+          rawError: resJson,
+        };
+      }
+
+      const resData = resJson.data ?? resJson;
+      const checkoutUrl = resData.checkout_url ?? resData.link ?? "";
+      const paymentId = resData.id ?? ref;
+
+      // Record initial claim in Convex
+      await ctx.runMutation(internal.payments.recordMonerooClaimInit, {
+        userId: args.userId,
+        amount: args.amount,
+        currency: "SLE",
+        providerId: "moneroo_auto",
+        transactionReference: paymentId,
+        bookingId: args.bookingId,
+        escrowOrderId: args.escrowOrderId,
+        reContractId: args.reContractId,
+      });
+
+      return {
+        success: true,
+        code: "PAYMENT_INITIATED",
+        message: "Push prompt sent. Please approve on your phone.",
+        transactionId: paymentId,
+        checkout_url: checkoutUrl,
+        paymentId: paymentId,
+        reference: ref,
+      };
+    } catch (err: any) {
+      logGatewayError(500, { error: err.message ?? String(err) }, payload);
+      return {
+        success: false,
+        code: "GATEWAY_ERROR",
+        message: err.message ?? "Unexpected payment gateway error. Please try again.",
+        statusCode: 500,
+        error: err.message,
+      };
     }
-
-    const resData = resJson.data ?? resJson;
-    const checkoutUrl = resData.checkout_url ?? resData.link ?? "";
-    const paymentId = resData.id ?? ref;
-
-    // Record initial claim in Convex
-    await ctx.runMutation(internal.payments.recordMonerooClaimInit, {
-      userId: args.userId,
-      amount: args.amount,
-      currency: "SLE",
-      providerId: "moneroo_auto",
-      transactionReference: paymentId,
-      bookingId: args.bookingId,
-      escrowOrderId: args.escrowOrderId,
-      reContractId: args.reContractId,
-    });
-
-    return {
-      success: true,
-      checkout_url: checkoutUrl,
-      paymentId: paymentId,
-      reference: ref,
-    };
   },
 });
 

@@ -3494,6 +3494,54 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return clean;
   }
 
+  String _formatPhoneDisplay(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return 'No phone number set';
+    final clean = raw.trim();
+    var digits = clean.replaceAll(RegExp(r'\D'), '');
+    if (digits.startsWith('2320') && digits.length == 12) {
+      digits = '232${digits.substring(4)}';
+    } else if (digits.startsWith('0') && digits.length == 9) {
+      digits = '232${digits.substring(1)}';
+    } else if (digits.length == 8) {
+      digits = '232$digits';
+    }
+    if (digits.startsWith('232') && digits.length == 11) {
+      return '+232 ${digits.substring(3, 5)} ${digits.substring(5, 8)} ${digits.substring(8)}';
+    }
+    if (!clean.startsWith('+') && digits.startsWith('232')) {
+      return '+$digits';
+    }
+    return clean;
+  }
+
+  String _findDefaultPhoneForProvider(String providerCode, UserEntity? user) {
+    final matchingDefault = _userPaymentAccounts.cast<PaymentAccount?>().firstWhere(
+      (a) => a?.providerCode == providerCode && a?.isDefault == true,
+      orElse: () => null,
+    );
+    if (matchingDefault != null && matchingDefault.accountNumber.isNotEmpty) {
+      return matchingDefault.accountNumber;
+    }
+    final matchingAny = _userPaymentAccounts.cast<PaymentAccount?>().firstWhere(
+      (a) => a?.providerCode == providerCode,
+      orElse: () => null,
+    );
+    if (matchingAny != null && matchingAny.accountNumber.isNotEmpty) {
+      return matchingAny.accountNumber;
+    }
+    final anyDefault = _userPaymentAccounts.cast<PaymentAccount?>().firstWhere(
+      (a) => a?.isDefault == true,
+      orElse: () => null,
+    );
+    if (anyDefault != null && anyDefault.accountNumber.isNotEmpty) {
+      return anyDefault.accountNumber;
+    }
+    if (user?.phone != null && user!.phone.isNotEmpty) {
+      return user.phone;
+    }
+    return '';
+  }
+
   Widget _buildProviderIcon(String providerCode) {
     IconData iconData;
     Color bgColor;
@@ -4112,12 +4160,264 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  void _showChangeNumberSheet({
+    required BuildContext context,
+    required String currentProvider,
+    required String? currentPhone,
+    required ValueChanged<String> onSelected,
+  }) {
+    final newPhoneCtrl = TextEditingController();
+    bool saveAsDefault = false;
+    bool isSaving = false;
+    String? localError;
+
+    const providerLabels = {
+      'orange': 'Orange Money Sierra Leone',
+      'africell': 'Africell Afrimoney',
+      'qmoney': 'QCell QMoney',
+    };
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (modalCtx, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 28,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.gray300,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Row(
+                      children: [
+                        Icon(Icons.phonelink_setup_rounded, color: AppColors.emeraldDark, size: 22),
+                        SizedBox(width: 8),
+                        Text(
+                          'Change Payment Number',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Choose a saved number or enter a new number for ${providerLabels[currentProvider] ?? "Mobile Money"}.',
+                      style: const TextStyle(fontSize: 12.5, color: AppColors.gray500),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // ── Saved payment accounts list ───────────────────
+                    if (_userPaymentAccounts.isNotEmpty) ...[
+                      const Text(
+                        'Saved Payment Numbers',
+                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                      ),
+                      const SizedBox(height: 8),
+                      ..._userPaymentAccounts.map((account) {
+                        final isSelected = account.accountNumber == currentPhone;
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          decoration: BoxDecoration(
+                            color: isSelected ? AppColors.emeraldSurface : AppColors.gray50,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: isSelected ? AppColors.emerald : AppColors.border,
+                              width: isSelected ? 1.5 : 1.0,
+                            ),
+                          ),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                            leading: _buildProviderIcon(account.providerCode),
+                            title: Text(
+                              account.providerName,
+                              style: const TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                            subtitle: Text(
+                              account.maskedNumber,
+                              style: const TextStyle(fontSize: 12, color: AppColors.gray600),
+                            ),
+                            trailing: isSelected
+                                ? const Icon(Icons.check_circle_rounded, color: AppColors.emeraldDark, size: 20)
+                                : TextButton(
+                                    style: TextButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                      minimumSize: Size.zero,
+                                    ),
+                                    onPressed: () {
+                                      onSelected(account.accountNumber);
+                                      Navigator.of(sheetCtx).pop();
+                                    },
+                                    child: const Text('Use', style: TextStyle(color: AppColors.emeraldDark, fontWeight: FontWeight.w700, fontSize: 12)),
+                                  ),
+                            onTap: () {
+                              onSelected(account.accountNumber);
+                              Navigator.of(sheetCtx).pop();
+                            },
+                          ),
+                        );
+                      }),
+                      const SizedBox(height: 16),
+                      const Divider(color: AppColors.border),
+                      const SizedBox(height: 12),
+                    ],
+
+                    // ── Enter New Number ──────────────────────────────
+                    const Text(
+                      'Or Enter New Number',
+                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      controller: newPhoneCtrl,
+                      keyboardType: TextInputType.phone,
+                      style: const TextStyle(
+                        color: Color(0xFF0F172A),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      cursorColor: const Color(0xFF10B981),
+                      decoration: const InputDecoration(
+                        hintText: 'e.g. 076 123 456 or 23276123456',
+                        hintStyle: TextStyle(color: Color(0xFF94A3B8)),
+                        labelText: 'Phone Number',
+                        labelStyle: TextStyle(color: Color(0xFF64748B)),
+                        prefixIcon: Icon(Icons.phone_outlined, color: Color(0xFF64748B)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: saveAsDefault,
+                      activeColor: AppColors.emerald,
+                      onChanged: (val) => setSheetState(() => saveAsDefault = val ?? false),
+                      title: const Text(
+                        'Save as default payment method for this provider',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                      ),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+
+                    if (localError != null) ...[
+                      const SizedBox(height: 8),
+                      Text(localError!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                    ],
+
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.emerald,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          elevation: 0,
+                        ),
+                        onPressed: isSaving
+                            ? null
+                            : () async {
+                                final input = newPhoneCtrl.text.trim();
+                                if (input.isEmpty) {
+                                  setSheetState(() => localError = 'Please enter a phone number.');
+                                  return;
+                                }
+                                final digits = input.replaceAll(RegExp(r'\D'), '');
+                                if (digits.length < 8) {
+                                  setSheetState(() => localError = 'Please enter a valid Sierra Leone phone number.');
+                                  return;
+                                }
+
+                                if (saveAsDefault) {
+                                  setSheetState(() => isSaving = true);
+                                  try {
+                                    final client = context.read<ConvexClientWrapper>();
+                                    final userId = context.read<AuthBloc>().state.user?.id ?? '';
+                                    final pName = providerLabels[currentProvider] ?? 'Mobile Money';
+
+                                    await client.mutation(
+                                      'payments:addUserPaymentAccount',
+                                      args: {
+                                        'userId': userId,
+                                        'providerCode': currentProvider,
+                                        'providerName': pName,
+                                        'accountNumber': input,
+                                        'maskedNumber': _maskAccountNumber(input),
+                                        'isDefault': true,
+                                      },
+                                    );
+                                    await _fetchUserPaymentAccounts();
+                                  } catch (e) {
+                                    setSheetState(() {
+                                      localError = 'Failed to save payment account: $e';
+                                      isSaving = false;
+                                    });
+                                    return;
+                                  }
+                                }
+
+                                onSelected(input);
+                                if (sheetCtx.mounted) Navigator.of(sheetCtx).pop();
+                              },
+                        child: isSaving
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                              )
+                            : const Text(
+                                'Use This Number',
+                                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _showTopUpEscrowSheet(BuildContext context, UserEntity? user) {
     final amountCtrl = TextEditingController(text: '500');
     final referenceCtrl = TextEditingController();
     String selectedTopUpProvider = 'orange';
+    String activePhoneNumber = _findDefaultPhoneForProvider('orange', user);
     bool isProcessing = false;
     bool showReferenceStep = false; // Step 2 for manual providers
+    String? errorCode;
     String? errorMessage;
 
     // Provider display names
@@ -4153,6 +4453,89 @@ class _ProfileScreenState extends State<ProfileScreen> {
         return StatefulBuilder(
           builder: (modalCtx, setModalState) {
             final isManual = selectedTopUpProvider != 'orange';
+
+            Future<void> executeOrangeTopUp() async {
+              setModalState(() {
+                errorMessage = null;
+                errorCode = null;
+              });
+
+              final amt = double.tryParse(amountCtrl.text.trim()) ?? 0;
+              if (amt <= 0) {
+                setModalState(() => errorMessage = 'Please enter a valid amount.');
+                return;
+              }
+
+              if (activePhoneNumber.trim().isEmpty) {
+                setModalState(() => errorMessage = 'Please set or select a mobile money number.');
+                _showChangeNumberSheet(
+                  context: context,
+                  currentProvider: selectedTopUpProvider,
+                  currentPhone: activePhoneNumber,
+                  onSelected: (newPhone) {
+                    setModalState(() {
+                      activePhoneNumber = newPhone;
+                      errorCode = null;
+                      errorMessage = null;
+                    });
+                  },
+                );
+                return;
+              }
+
+              setModalState(() => isProcessing = true);
+              try {
+                final result = await PaymentMethodsService.instance.initializeMonerooPayment(
+                  amount: amt,
+                  currency: 'SLE',
+                  customerEmail: user?.email ?? 'user@vektolux.com',
+                  customerFirstName: (user?.name ?? 'Vektolux User').split(' ').first,
+                  customerLastName: (user?.name ?? 'User').split(' ').length > 1
+                      ? (user?.name ?? 'User').split(' ').last
+                      : 'User',
+                  customerPhone: activePhoneNumber,
+                  userId: user?.id ?? '',
+                  description: 'Escrow Wallet Top-Up — SLE $amt',
+                );
+
+                if (result['success'] == true) {
+                  final checkoutUrl = result['checkoutUrl'] as String? ?? '';
+                  if (checkoutUrl.isNotEmpty) {
+                    final uri = Uri.tryParse(checkoutUrl);
+                    if (uri != null && await canLaunchUrl(uri)) {
+                      await launchUrl(uri, mode: LaunchMode.externalApplication);
+                    }
+                  }
+                  if (modalCtx.mounted) Navigator.of(modalCtx).pop();
+                  _fetchWalletData();
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Push prompt sent to ${_formatPhoneDisplay(activePhoneNumber)}! Approve on your phone to complete top-up.',
+                        ),
+                        backgroundColor: AppColors.emeraldDark,
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                } else {
+                  final code = result['code'] as String? ?? 'PAYMENT_FAILED';
+                  final msg = result['message'] as String? ?? result['error'] as String? ?? 'Payment initialization failed.';
+                  setModalState(() {
+                    errorCode = code;
+                    errorMessage = msg;
+                    isProcessing = false;
+                  });
+                }
+              } catch (e) {
+                setModalState(() {
+                  errorCode = 'NETWORK_ERROR';
+                  errorMessage = 'Error: ${e.toString()}';
+                  isProcessing = false;
+                });
+              }
+            }
 
             return SingleChildScrollView(
               padding: EdgeInsets.only(
@@ -4245,8 +4628,96 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ],
                       onChanged: (val) {
-                        if (val != null) setModalState(() => selectedTopUpProvider = val);
+                        if (val != null) {
+                          setModalState(() {
+                            selectedTopUpProvider = val;
+                            activePhoneNumber = _findDefaultPhoneForProvider(val, user);
+                            errorCode = null;
+                            errorMessage = null;
+                          });
+                        }
                       },
+                    ),
+                    const SizedBox(height: 14),
+
+                    // ── Active Charging Number Card ───────────────────
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: AppColors.gray50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: const BoxDecoration(
+                              color: AppColors.emeraldSurface,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.phone_android_rounded, color: AppColors.emeraldDark, size: 18),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Charging: ${providerLabels[selectedTopUpProvider] ?? "Mobile Money"}',
+                                  style: const TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.gray500,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  activePhoneNumber.isNotEmpty
+                                      ? _formatPhoneDisplay(activePhoneNumber)
+                                      : 'No phone number set',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: activePhoneNumber.isNotEmpty
+                                        ? const Color(0xFF0F172A)
+                                        : AppColors.gray400,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          TextButton(
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            onPressed: () => _showChangeNumberSheet(
+                              context: context,
+                              currentProvider: selectedTopUpProvider,
+                              currentPhone: activePhoneNumber,
+                              onSelected: (newPhone) {
+                                setModalState(() {
+                                  activePhoneNumber = newPhone;
+                                  errorCode = null;
+                                  errorMessage = null;
+                                });
+                              },
+                            ),
+                            child: const Text(
+                              'Change Number',
+                              style: TextStyle(
+                                color: AppColors.emeraldDark,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 16),
 
@@ -4339,6 +4810,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             'Provider: ${providerLabels[selectedTopUpProvider] ?? selectedTopUpProvider}',
                             style: const TextStyle(fontSize: 12, color: AppColors.gray500),
                           ),
+                          if (activePhoneNumber.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              'Paying from: ${_formatPhoneDisplay(activePhoneNumber)}',
+                              style: const TextStyle(fontSize: 12, color: AppColors.gray600),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -4366,10 +4844,198 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ],
 
-                  // ── Error message ────────────────────────────────────
-                  if (errorMessage != null) ...[
-                    const SizedBox(height: 10),
-                    Text(errorMessage!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                  // ── Contextual Error / Status Banners ──────────────
+                  if (errorCode == 'INSUFFICIENT_FUNDS') ...[
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFFBEB),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFDE68A)),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.account_balance_wallet_outlined, color: Color(0xFFD97706), size: 20),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Insufficient Mobile Money Balance',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF92400E),
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  'Insufficient balance on ${_formatPhoneDisplay(activePhoneNumber)}. Please top up your SIM wallet and try again.',
+                                  style: const TextStyle(fontSize: 12, color: Color(0xFFB45309), height: 1.35),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else if (errorCode == 'INVALID_NUMBER') ...[
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF2F2),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFECACA)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.phone_missed_rounded, color: Color(0xFFDC2626), size: 20),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Unregistered Phone Number',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: Color(0xFF991B1B),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      'This number (${_formatPhoneDisplay(activePhoneNumber)}) is not registered for ${providerLabels[selectedTopUpProvider]}.',
+                                      style: const TextStyle(fontSize: 12, color: Color(0xFFB91C1C), height: 1.35),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              style: TextButton.styleFrom(
+                                foregroundColor: const Color(0xFFDC2626),
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              onPressed: () => _showChangeNumberSheet(
+                                context: context,
+                                currentProvider: selectedTopUpProvider,
+                                currentPhone: activePhoneNumber,
+                                onSelected: (newPhone) {
+                                  setModalState(() {
+                                    activePhoneNumber = newPhone;
+                                    errorCode = null;
+                                    errorMessage = null;
+                                  });
+                                },
+                              ),
+                              icon: const Icon(Icons.edit_rounded, size: 14),
+                              label: const Text(
+                                'Change Number',
+                                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else if (errorCode == 'PIN_TIMEOUT') ...[
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFFBEB),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFDE68A)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.timer_outlined, color: Color(0xFFD97706), size: 20),
+                              SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Authorization Prompt Expired',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: Color(0xFF92400E),
+                                      ),
+                                    ),
+                                    SizedBox(height: 3),
+                                    Text(
+                                      'The authorization prompt timed out or was cancelled. Please try again and approve promptly on your phone.',
+                                      style: TextStyle(fontSize: 12, color: Color(0xFFB45309), height: 1.35),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              style: TextButton.styleFrom(
+                                foregroundColor: const Color(0xFFD97706),
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              onPressed: isProcessing ? null : executeOrangeTopUp,
+                              icon: const Icon(Icons.refresh_rounded, size: 14),
+                              label: const Text(
+                                'Retry Now',
+                                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else if (errorMessage != null) ...[
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF2F2),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFECACA)),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.error_outline_rounded, color: Color(0xFFDC2626), size: 18),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              errorMessage!,
+                              style: const TextStyle(fontSize: 12, color: Color(0xFF991B1B), height: 1.35),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
 
                   const SizedBox(height: 20),
@@ -4388,79 +5054,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       onPressed: isProcessing
                           ? null
                           : () async {
-                              setModalState(() => errorMessage = null);
-
-                              final amt = double.tryParse(amountCtrl.text.trim()) ?? 0;
-                              if (amt <= 0) {
-                                setModalState(() => errorMessage = 'Please enter a valid amount.');
-                                return;
-                              }
-
                               // ── ORANGE MONEY (Moneroo Automated) ────
                               if (selectedTopUpProvider == 'orange') {
-                                setModalState(() => isProcessing = true);
-                                try {
-                                  final result = await PaymentMethodsService.instance.initializeMonerooPayment(
-                                    amount: amt,
-                                    currency: 'SLE',
-                                    customerEmail: user?.email ?? 'user@vektolux.com',
-                                    customerFirstName: (user?.name ?? 'Vektolux User').split(' ').first,
-                                    customerLastName: (user?.name ?? 'User').split(' ').length > 1
-                                        ? (user?.name ?? 'User').split(' ').last
-                                        : 'User',
-                                    customerPhone: user?.phone,
-                                    userId: user?.id ?? '',
-                                    description: 'Escrow Wallet Top-Up — SLE $amt',
-                                  );
-
-                                  if (result['success'] == true) {
-                                    final checkoutUrl = result['checkoutUrl'] as String? ?? '';
-                                    if (checkoutUrl.isNotEmpty) {
-                                      final uri = Uri.tryParse(checkoutUrl);
-                                      if (uri != null && await canLaunchUrl(uri)) {
-                                        await launchUrl(uri, mode: LaunchMode.externalApplication);
-                                      }
-                                    }
-                                    if (modalCtx.mounted) Navigator.of(modalCtx).pop();
-                                    _fetchWalletData();
-                                    if (context.mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Payment initiated. Your wallet will update once confirmed.'),
-                                          backgroundColor: AppColors.emeraldDark,
-                                          behavior: SnackBarBehavior.floating,
-                                        ),
-                                      );
-                                    }
-                                  } else {
-                                    setModalState(() {
-                                      errorMessage = result['error'] as String? ?? 'Failed to initialize payment. Try again.';
-                                      isProcessing = false;
-                                    });
-                                  }
-                                } catch (e) {
-                                  setModalState(() {
-                                    errorMessage = 'Error: ${e.toString()}';
-                                    isProcessing = false;
-                                  });
-                                }
+                                await executeOrangeTopUp();
                                 return;
                               }
 
                               // ── MANUAL PROVIDERS (Step navigation) ──
                               if (!showReferenceStep) {
-                                setModalState(() => showReferenceStep = true);
+                                final amt = double.tryParse(amountCtrl.text.trim()) ?? 0;
+                                if (amt <= 0) {
+                                  setModalState(() => errorMessage = 'Please enter a valid amount.');
+                                  return;
+                                }
+                                setModalState(() {
+                                  showReferenceStep = true;
+                                  errorMessage = null;
+                                  errorCode = null;
+                                });
                                 return;
                               }
 
                               // ── SUBMIT MANUAL CLAIM ──────────────────
+                              final amt = double.tryParse(amountCtrl.text.trim()) ?? 0;
                               final ref = referenceCtrl.text.trim();
                               if (ref.isEmpty) {
                                 setModalState(() => errorMessage = 'Please enter the Transaction ID from your SMS.');
                                 return;
                               }
 
-                              setModalState(() => isProcessing = true);
+                              setModalState(() {
+                                isProcessing = true;
+                                errorMessage = null;
+                                errorCode = null;
+                              });
+
                               try {
                                 final pid = providerIds[selectedTopUpProvider] ?? selectedTopUpProvider;
                                 final result = await PaymentMethodsService.instance.submitManualPaymentClaim(
@@ -4526,6 +5154,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   showReferenceStep = false;
                                   referenceCtrl.clear();
                                   errorMessage = null;
+                                  errorCode = null;
                                 }),
                         child: const Text('← Back', style: TextStyle(color: AppColors.gray500, fontWeight: FontWeight.w600)),
                       ),

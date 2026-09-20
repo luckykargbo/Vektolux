@@ -10,6 +10,11 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
+import {
+  sanitizeSierraLeonePhone,
+  parseCarrierResponse,
+  logGatewayError,
+} from "./lib/paymentErrors";
 
 const http = httpRouter();
 
@@ -21,9 +26,10 @@ http.route({
   path: "/payments/initialize",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    let body: any = {};
     try {
       // ── Parse & validate request body ─────────────────────────────
-      const body = await request.json();
+      body = await request.json();
 
       const {
         paymentIntentId,
@@ -38,7 +44,9 @@ http.route({
         return new Response(
           JSON.stringify({
             success: false,
+            code: "INVALID_ARGUMENTS",
             error: "paymentIntentId and customerEmail are required",
+            message: "paymentIntentId and customerEmail are required",
           }),
           { status: 400, headers: corsHeaders() }
         );
@@ -51,7 +59,12 @@ http.route({
 
       if (!intent) {
         return new Response(
-          JSON.stringify({ success: false, error: "Payment intent not found" }),
+          JSON.stringify({
+            success: false,
+            code: "INTENT_NOT_FOUND",
+            error: "Payment intent not found",
+            message: "Payment intent not found",
+          }),
           { status: 404, headers: corsHeaders() }
         );
       }
@@ -60,21 +73,25 @@ http.route({
         return new Response(
           JSON.stringify({
             success: false,
+            code: "INTENT_ALREADY_PROCESSED",
             error: `Payment intent is already ${intent.status}`,
+            message: `Payment intent is already ${intent.status}`,
           }),
           { status: 409, headers: corsHeaders() }
         );
       }
 
+      const sanitizedPhone = sanitizeSierraLeonePhone(customerPhone);
+
       // ── Route to correct gateway ──────────────────────────────────
-      let gatewayResponse;
+      let gatewayResponse: any;
 
       if (intent.gatewayProvider === "flutterwave") {
         gatewayResponse = await initializeFlutterwave({
           amount: intent.amount,
           currency: intent.currency,
           email: customerEmail,
-          phone: customerPhone,
+          phone: sanitizedPhone,
           name: customerName,
           txRef: `vktlx_${paymentIntentId}_${Date.now()}`,
           redirectUrl:
@@ -97,19 +114,25 @@ http.route({
         return new Response(
           JSON.stringify({
             success: false,
+            code: "UNSUPPORTED_GATEWAY",
             error: `Unsupported gateway: ${intent.gatewayProvider}`,
+            message: `Unsupported gateway: ${intent.gatewayProvider}`,
           }),
           { status: 400, headers: corsHeaders() }
         );
       }
 
       if (!gatewayResponse.success) {
+        logGatewayError(400, gatewayResponse, body);
+        const parsed = parseCarrierResponse(400, gatewayResponse.rawError ?? gatewayResponse.error);
         return new Response(
           JSON.stringify({
             success: false,
-            error: gatewayResponse.error,
+            code: parsed.code,
+            message: parsed.message,
+            error: parsed.message,
           }),
-          { status: 502, headers: corsHeaders() }
+          { status: 400, headers: corsHeaders() }
         );
       }
 
@@ -123,6 +146,9 @@ http.route({
       return new Response(
         JSON.stringify({
           success: true,
+          code: "PAYMENT_INITIATED",
+          message: "Push prompt sent. Please approve on your phone.",
+          transactionId: gatewayResponse.reference,
           paymentLink: gatewayResponse.paymentLink,
           reference: gatewayResponse.reference,
           provider: intent.gatewayProvider,
@@ -130,11 +156,13 @@ http.route({
         { status: 200, headers: corsHeaders() }
       );
     } catch (error: any) {
-      console.error("Payment initialization error:", error);
+      logGatewayError(500, error, body);
       return new Response(
         JSON.stringify({
           success: false,
+          code: "GATEWAY_ERROR",
           error: "Internal server error during payment initialization",
+          message: error.message ?? "Internal server error during payment initialization",
         }),
         { status: 500, headers: corsHeaders() }
       );
@@ -274,6 +302,98 @@ http.route({
 // ── CORS preflight for /payments/* routes ────────────────────────────
 http.route({
   path: "/payments/initialize",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, { status: 204, headers: corsHeaders() });
+  }),
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//          POST /api/payments/topup — Escrow Wallet Top-Up Endpoint
+// ═══════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/payments/topup",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let body: any = {};
+    try {
+      body = await request.json();
+      const {
+        amount,
+        currency = "SLE",
+        customerEmail,
+        customerFirstName = "Vektolux",
+        customerLastName = "User",
+        customerPhone,
+        userId,
+        description,
+      } = body;
+
+      if (!amount || typeof amount !== "number" || amount <= 0) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            code: "INVALID_AMOUNT",
+            message: "A valid positive amount is required.",
+          }),
+          { status: 400, headers: corsHeaders() }
+        );
+      }
+
+      const sanitizedPhone = sanitizeSierraLeonePhone(customerPhone);
+
+      const result: any = await ctx.runAction(api.payments.initializeMonerooPayment, {
+        amount,
+        currency,
+        customerEmail: customerEmail ?? "user@vektolux.com",
+        customerFirstName,
+        customerLastName,
+        customerPhone: sanitizedPhone,
+        userId: userId ?? "",
+        description: description ?? `Escrow Wallet Top-Up — ${amount} ${currency}`,
+      });
+
+      if (!result.success) {
+        logGatewayError(result.statusCode ?? 400, result, body);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            code: result.code ?? "PAYMENT_FAILED",
+            message: result.message ?? "Payment failed",
+          }),
+          { status: result.statusCode === 500 ? 502 : 400, headers: corsHeaders() }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          code: "PAYMENT_INITIATED",
+          message: "Push prompt sent. Please approve on your phone.",
+          transactionId: result.transactionId ?? result.paymentId,
+          checkoutUrl: result.checkout_url,
+          paymentId: result.paymentId,
+          reference: result.reference,
+        }),
+        { status: 200, headers: corsHeaders() }
+      );
+    } catch (error: any) {
+      logGatewayError(500, error, body);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          code: "GATEWAY_ERROR",
+          message: "Internal server error during top-up initialization",
+        }),
+        { status: 500, headers: corsHeaders() }
+      );
+    }
+  }),
+});
+
+http.route({
+  path: "/api/payments/topup",
   method: "OPTIONS",
   handler: httpAction(async () => {
     return new Response(null, { status: 204, headers: corsHeaders() });

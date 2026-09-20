@@ -242,21 +242,43 @@ class PaymentMethodsService {
 
       if (res.success && res.value is Map) {
         final val = res.value as Map;
-        return {
-          'success': true,
-          'checkoutUrl': val['checkout_url']?.toString() ?? '',
-          'paymentId': val['paymentId']?.toString() ?? '',
-          'reference': val['reference']?.toString() ?? '',
-        };
+        final bool isSuccess = val['success'] == true;
+        if (isSuccess) {
+          return {
+            'success': true,
+            'code': val['code']?.toString() ?? 'PAYMENT_INITIATED',
+            'message': val['message']?.toString() ?? 'Push prompt sent. Please approve on your phone.',
+            'transactionId': val['transactionId']?.toString() ?? val['paymentId']?.toString() ?? '',
+            'checkoutUrl': val['checkout_url']?.toString() ?? val['checkoutUrl']?.toString() ?? '',
+            'paymentId': val['paymentId']?.toString() ?? '',
+            'reference': val['reference']?.toString() ?? '',
+          };
+        } else {
+          return {
+            'success': false,
+            'code': val['code']?.toString() ?? 'PAYMENT_FAILED',
+            'message': val['message']?.toString() ?? val['error']?.toString() ?? 'Payment initialization failed',
+            'error': val['message']?.toString() ?? val['error']?.toString() ?? 'Payment initialization failed',
+            'rawError': val['rawError'],
+          };
+        }
       } else {
+        final errMsg = res.errorMessage ?? 'Failed to initialize Moneroo payment';
         return {
           'success': false,
-          'error': res.errorMessage ?? 'Failed to initialize Moneroo payment',
+          'code': 'GATEWAY_ERROR',
+          'message': errMsg,
+          'error': errMsg,
         };
       }
     } catch (e) {
       debugPrint('[PaymentMethodsService] Moneroo init error: $e');
-      return {'success': false, 'error': e.toString()};
+      return {
+        'success': false,
+        'code': 'NETWORK_ERROR',
+        'message': e.toString(),
+        'error': e.toString(),
+      };
     }
   }
 
