@@ -298,7 +298,7 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
           // ── Search & Filter Bar ───────────────────────────────────
           Container(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               color: Colors.white,
               border: Border(bottom: BorderSide(color: AppColors.border)),
             ),
@@ -346,14 +346,14 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                     child: CircularProgressIndicator(color: AppColors.emerald),
                   )
                 : filtered.isEmpty
-                    ? Center(
+                    ? const Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(Icons.directions_car_outlined,
+                            Icon(Icons.directions_car_outlined,
                                 size: 54, color: AppColors.gray300),
-                            const SizedBox(height: 12),
-                            const Text(
+                            SizedBox(height: 12),
+                            Text(
                               'No vehicles match your selection',
                               style: TextStyle(
                                 fontSize: 16,
@@ -361,8 +361,8 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                                 color: AppColors.obsidian,
                               ),
                             ),
-                            const SizedBox(height: 6),
-                            const Text(
+                            SizedBox(height: 6),
+                            Text(
                               'Try browsing other vehicle categories',
                               style: TextStyle(
                                   fontSize: 13, color: AppColors.gray500),

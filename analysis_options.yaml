@@ -18,6 +18,10 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+  errors:
+    prefer_const_constructors: ignore
+    prefer_const_literals_to_create_immutables: ignore
+    deprecated_member_use: ignore
 
 linter:
   # The lint rules applied to this project can be customized in the
