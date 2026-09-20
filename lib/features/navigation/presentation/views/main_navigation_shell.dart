@@ -46,6 +46,9 @@ class MainNavigationShell extends StatefulWidget {
 class _MainNavigationShellState extends State<MainNavigationShell> {
   late int _currentIndex;
   late final Set<int> _activatedTabs;
+  // Feature flag: toggle to true to re-enable automatic first-time onboarding walkthrough
+  // TODO: Re-enable guided tour when ready to redesign
+  static const bool _enableAutoGuidedTour = false;
   static bool _hasShownTourGlobally = false;
 
   @override
@@ -60,6 +63,8 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
   }
 
   void _checkAndShowTour() {
+    // TODO: Re-enable guided tour when ready to redesign
+    if (!_enableAutoGuidedTour) return;
     if (_hasShownTourGlobally || !mounted) return;
     _hasShownTourGlobally = true;
     ClientOnboardingTourModal.show(context, onFinish: () {});
