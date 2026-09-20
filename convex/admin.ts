@@ -29,41 +29,25 @@ export const quickSeedListings = mutation({
     const isPublished = args.isPublished ?? false;
     const now = Date.now();
 
-    // 1. Ensure a demo admin/agent user exists to own these listings
+    // 1. Ensure production admin user Alfred Manso Kargbo exists to own listings
     let adminUser = await ctx.db
       .query("users")
-      .withIndex("by_email", (q) => q.eq("email", "admin@vektolux.sl"))
+      .withIndex("by_email", (q) => q.eq("email", "alfred.kargbo@vektolux.com"))
       .first();
 
     if (!adminUser) {
-      const adminId = await ctx.db.insert("users", {
-        name: "Vektolux Dev/Admin",
-        email: "admin@vektolux.sl",
-        phone: "+232 76 000 999",
-        role: "admin",
-        activeRole: "admin",
-        passwordHash: "8f26796073cec5b2d34a862b351b7c15:519b4b98224792d0f7e3236126d0993b05b4f4b701da3f0d63d2661d8366f4bd",
-        isVerified: true,
-        isActive: true,
-        avatarUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400",
-        verificationStatus: "verified",
-        verificationBadge: "GREEN_TICK",
-        updatedAt: now,
-      });
-      adminUser = await ctx.db.get(adminId);
-    } else if (!adminUser.passwordHash) {
-      await ctx.db.patch(adminUser._id, {
-        passwordHash: "8f26796073cec5b2d34a862b351b7c15:519b4b98224792d0f7e3236126d0993b05b4f4b701da3f0d63d2661d8366f4bd",
-        role: "admin",
-        isActive: true,
-        isVerified: true,
-        updatedAt: now,
-      });
-      adminUser = (await ctx.db.get(adminUser._id))!;
+      const allUsers = await ctx.db.query("users").collect();
+      adminUser =
+        allUsers.find(
+          (u) =>
+            u.name.toLowerCase().includes("alfred manso kargbo") ||
+            u.phone === "+232688577868" ||
+            u.role === "admin"
+        ) ?? null;
     }
 
     if (!adminUser) {
-      throw new Error("Failed to resolve admin owner account.");
+      throw new Error("Failed to resolve production admin owner account (Alfred Manso Kargbo). Mock user creation is permanently disabled.");
     }
 
     let propertiesCount = 0;
@@ -1127,6 +1111,344 @@ export const purgeAllMockUsersAndEnforceSingleUser = mutation({
       reallocatedProperties,
       reallocatedVehicles,
       message: `Successfully enforced single-user mode. Purged ${deletedUsersCount} mock/demo accounts. Retained ${primaryUser.name} (${primaryUser.email}).`,
+    };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//               CLEAN MOCK DATA (ONE-TIME PURGE & SINGLE-USER)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const cleanMockData = mutation({
+  args: {
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const isDryRun = args.dryRun ?? false;
+
+    // 1. Inspect table 'users' -> keep ONLY Alfred Manso Kargbo
+    const allUsers = await ctx.db.query("users").collect();
+    let primaryUser = allUsers.find(
+      (u) =>
+        u.email.toLowerCase() === "alfred.kargbo@vektolux.com" ||
+        u.phone === "+232688577868" ||
+        u.name.toLowerCase().includes("alfred manso kargbo")
+    );
+
+    if (!primaryUser) {
+      if (!isDryRun) {
+        const primaryId = await ctx.db.insert("users", {
+          name: "Alfred Manso Kargbo",
+          email: "alfred.kargbo@vektolux.com",
+          phone: "+232688577868",
+          role: "admin",
+          activeRole: "admin",
+          isVerified: true,
+          isActive: true,
+          isVerifiedAgent: true,
+          isVerifiedMerchant: true,
+          isVerifiedDriver: true,
+          verificationStatus: "verified",
+          verificationBadge: "GREEN_TICK",
+          kycStatus: "VERIFIED",
+          updatedAt: now,
+        });
+        primaryUser = (await ctx.db.get(primaryId))!;
+      } else {
+        primaryUser = {
+          _id: "placeholder" as any,
+          _creationTime: now,
+          name: "Alfred Manso Kargbo",
+          email: "alfred.kargbo@vektolux.com",
+          phone: "+232688577868",
+          role: "admin",
+          isVerified: true,
+          isActive: true,
+          updatedAt: now,
+        };
+      }
+    } else if (!isDryRun) {
+      await ctx.db.patch(primaryUser._id, {
+        name: "Alfred Manso Kargbo",
+        email: "alfred.kargbo@vektolux.com",
+        phone: "+232688577868",
+        role: "admin",
+        activeRole: "admin",
+        isVerified: true,
+        isActive: true,
+        isVerifiedAgent: true,
+        isVerifiedMerchant: true,
+        isVerifiedDriver: true,
+        verificationStatus: "verified",
+        verificationBadge: "GREEN_TICK",
+        kycStatus: "VERIFIED",
+        updatedAt: now,
+      });
+    }
+
+    const primaryUserId = primaryUser._id;
+
+    // Delete all other users and their related records
+    let deletedUsersCount = 0;
+    const deletedUserSummaries: string[] = [];
+
+    for (const u of allUsers) {
+      if (u._id === primaryUserId) continue;
+
+      if (!isDryRun) {
+        // walletBalances
+        const wallets = await ctx.db
+          .query("walletBalances")
+          .withIndex("by_user", (q) => q.eq("userId", u._id))
+          .collect();
+        for (const w of wallets) {
+          await ctx.db.delete(w._id);
+        }
+
+        // follows
+        const f1 = await ctx.db
+          .query("follows")
+          .withIndex("by_follower", (q) => q.eq("followerId", u._id))
+          .collect();
+        for (const f of f1) await ctx.db.delete(f._id);
+        const f2 = await ctx.db
+          .query("follows")
+          .withIndex("by_following", (q) => q.eq("followingId", u._id))
+          .collect();
+        for (const f of f2) await ctx.db.delete(f._id);
+
+        // merchant_profiles
+        const mps = await ctx.db
+          .query("merchant_profiles")
+          .withIndex("by_user", (q) => q.eq("userId", u._id))
+          .collect();
+        for (const mp of mps) await ctx.db.delete(mp._id);
+
+        // user_payment_accounts
+        const upas = await ctx.db
+          .query("user_payment_accounts")
+          .withIndex("by_user", (q) => q.eq("userId", u._id))
+          .collect();
+        for (const upa of upas) await ctx.db.delete(upa._id);
+
+        // user_fcm_tokens
+        const tokens = await ctx.db
+          .query("user_fcm_tokens")
+          .withIndex("by_user", (q) => q.eq("userId", u._id as string))
+          .collect();
+        for (const tk of tokens) await ctx.db.delete(tk._id);
+
+        // role_applications
+        const apps = await ctx.db
+          .query("role_applications")
+          .withIndex("by_user", (q) => q.eq("userId", u._id))
+          .collect();
+        for (const app of apps) await ctx.db.delete(app._id);
+
+        // identity_checks
+        const checks = await ctx.db
+          .query("identity_checks")
+          .withIndex("by_user", (q) => q.eq("userId", u._id))
+          .collect();
+        for (const chk of checks) await ctx.db.delete(chk._id);
+
+        await ctx.db.delete(u._id);
+      }
+      deletedUsersCount++;
+      deletedUserSummaries.push(`${u.name} (${u.email}) [${u.role}]`);
+    }
+
+    // 2. Inspect table 'transactions' -> delete all fake/mock entries
+    const allTransactions = await ctx.db.query("transactions").collect();
+    let deletedTransactionsCount = 0;
+    for (const t of allTransactions) {
+      const isFake =
+        t.agentNumber === "001" ||
+        t.amount === 250 ||
+        t.amount === 1796 ||
+        t.userId !== primaryUserId ||
+        (t.description && t.description.toLowerCase().includes("mock")) ||
+        (t.description && t.description.toLowerCase().includes("test")) ||
+        (t.gatewayReference && t.gatewayReference.startsWith("MOCK-"));
+
+      if (isFake) {
+        if (!isDryRun) {
+          await ctx.db.delete(t._id);
+        }
+        deletedTransactionsCount++;
+      }
+    }
+
+    // 3. Inspect table 'walletBalances' -> reset Alfred to 0, delete others
+    const allWallets = await ctx.db.query("walletBalances").collect();
+    let resetWalletsCount = 0;
+    let deletedWalletsCount = 0;
+
+    for (const w of allWallets) {
+      if (w.userId === primaryUserId) {
+        if (!isDryRun) {
+          await ctx.db.patch(w._id, {
+            availableBalance: 0,
+            pendingBalance: 0,
+            escrowBalance: 0,
+            updatedAt: now,
+          });
+        }
+        resetWalletsCount++;
+      } else {
+        if (!isDryRun) {
+          await ctx.db.delete(w._id);
+        }
+        deletedWalletsCount++;
+      }
+    }
+
+    if (resetWalletsCount === 0 && !isDryRun) {
+      await ctx.db.insert("walletBalances", {
+        userId: primaryUserId,
+        availableBalance: 0,
+        pendingBalance: 0,
+        escrowBalance: 0,
+        currency: "SLE",
+        updatedAt: now,
+      });
+      resetWalletsCount = 1;
+    }
+
+    // 4. Inspect table 'bookings' -> clear mock records
+    const allBookings = await ctx.db.query("bookings").collect();
+    let deletedBookingsCount = 0;
+    for (const b of allBookings) {
+      const isMockBooking =
+        b.buyerId !== (primaryUserId as string) ||
+        (b.txRef && b.txRef.startsWith("MOCK-")) ||
+        (b.notes && b.notes.toLowerCase().includes("mock")) ||
+        (b.listingTitle && b.listingTitle.toLowerCase().includes("test"));
+
+      if (isMockBooking) {
+        if (!isDryRun) {
+          await ctx.db.delete(b._id);
+        }
+        deletedBookingsCount++;
+      }
+    }
+
+    // Also clear mock realEstateBookings if any
+    const allREBookings = await ctx.db.query("realEstateBookings").collect();
+    let deletedREBookingsCount = 0;
+    for (const reb of allREBookings) {
+      if (reb.buyerId !== primaryUserId && reb.ownerId !== primaryUserId) {
+        if (!isDryRun) {
+          await ctx.db.delete(reb._id);
+        }
+        deletedREBookingsCount++;
+      }
+    }
+
+    // 5. Inspect 'rideRequests' and 'trips_deliveries' (safely handled)
+    let deletedRideRequests = 0;
+    try {
+      const rideRequests = await ctx.db.query("rideRequests" as any).collect();
+      for (const rr of rideRequests) {
+        if (!isDryRun) await ctx.db.delete(rr._id);
+        deletedRideRequests++;
+      }
+    } catch {
+      // Table does not exist in schema
+    }
+
+    let deletedTripsDeliveries = 0;
+    try {
+      const trips = await ctx.db.query("trips_deliveries" as any).collect();
+      for (const tr of trips) {
+        if (!isDryRun) await ctx.db.delete(tr._id);
+        deletedTripsDeliveries++;
+      }
+    } catch {
+      // Table does not exist in schema
+    }
+
+    // 6. Inspect 'telco_webhook_logs' -> clear mock webhook records
+    const allWebhookLogs = await ctx.db.query("telco_webhook_logs").collect();
+    let deletedWebhookLogsCount = 0;
+    for (const wh of allWebhookLogs) {
+      if (!isDryRun) {
+        await ctx.db.delete(wh._id);
+      }
+      deletedWebhookLogsCount++;
+    }
+
+    // 7. Reallocate orphaned real estate and vehicle listings to Alfred
+    const allProps = await ctx.db.query("realEstateListings").collect();
+    let reallocatedProps = 0;
+    for (const p of allProps) {
+      if (p.ownerId !== primaryUserId) {
+        if (!isDryRun) {
+          await ctx.db.patch(p._id, {
+            ownerId: primaryUserId,
+            updatedAt: now,
+          });
+        }
+        reallocatedProps++;
+      }
+    }
+
+    const allVehs = await ctx.db.query("vehicleListings").collect();
+    let reallocatedVehs = 0;
+    for (const v of allVehs) {
+      if (v.ownerId !== primaryUserId) {
+        if (!isDryRun) {
+          await ctx.db.patch(v._id, {
+            ownerId: primaryUserId,
+            updatedAt: now,
+          });
+        }
+        reallocatedVehs++;
+      }
+    }
+
+    // 8. Count remaining documents
+    const remainingUsers = await ctx.db.query("users").collect();
+    const remainingTransactions = await ctx.db.query("transactions").collect();
+    const remainingWallets = await ctx.db.query("walletBalances").collect();
+    const remainingBookings = await ctx.db.query("bookings").collect();
+    const remainingWebhookLogs = await ctx.db.query("telco_webhook_logs").collect();
+
+    return {
+      success: true,
+      dryRun: isDryRun,
+      preservedUser: {
+        id: primaryUserId as string,
+        name: primaryUser.name,
+        email: primaryUser.email,
+        phone: primaryUser.phone,
+        role: primaryUser.role,
+      },
+      purged: {
+        deletedUsersCount,
+        deletedUserSummaries,
+        deletedTransactionsCount,
+        deletedWalletsCount,
+        resetWalletsCount,
+        deletedBookingsCount,
+        deletedREBookingsCount,
+        deletedRideRequests,
+        deletedTripsDeliveries,
+        deletedWebhookLogsCount,
+        reallocatedProps,
+        reallocatedVehs,
+      },
+      verification: {
+        remainingUsersCount: remainingUsers.length,
+        remainingTransactionsCount: remainingTransactions.length,
+        remainingWalletsCount: remainingWallets.length,
+        remainingBookingsCount: remainingBookings.length,
+        remainingWebhookLogsCount: remainingWebhookLogs.length,
+      },
+      message: isDryRun
+        ? `[DRY RUN] Would purge ${deletedUsersCount} users, ${deletedTransactionsCount} transactions, reset Alfred's wallet to 0.`
+        : `Successfully purged ${deletedUsersCount} mock users and ${deletedTransactionsCount} mock transactions. Reset Alfred's wallet to 0 SLE. Retained 1 production user: ${primaryUser.name} (${primaryUser.email}).`,
     };
   },
 });
