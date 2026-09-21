@@ -108,9 +108,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Vektolux Latest Mobile Release (v1.0.13)"
+          name: "Vektolux Mobile Release (v1.0.18) — Orange Money Webhook & Live Wallet Stream"
           body: |
-            ## Vektolux Mobile App Builds (v1.0.13) — Profile Re-Architecture & Convex Data Wiring
+            ## Vektolux Mobile App Builds (v1.0.18) — Orange Money SL Webhook & Real-Time Wallet Stream
 
             ### Direct Downloads:
             - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
@@ -118,18 +118,17 @@ jobs:
             - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
               * Direct sideload / install on any Android device.
 
-            ### What's New in this Build (v1.0.13):
-            - **Profile Screen Re-Architecture & Convex Data Wiring**:
-              * Live Convex wallet balance & active deals count on Escrow Hero Card.
-              * Real Convex-backed Saved Payment Methods (`user_payment_accounts` table).
-              * Real payout requests via `payments:requestWithdrawal` mutation.
-            - **Demo Escalation & Mock Purge**:
-              * Removed fake "Demo Unlock Driver Mode" button.
-              * Replaced instant Agent/Dealer demo approvals with legitimate `users:applyRoleUpgrade` submissions.
-              * Dynamic listings count & live KYC verification status.
-            - **Saved Addresses & Input UI Enhancements**:
-              * Renamed to Saved Addresses with clean Freetown defaults.
-              * Dark obsidian text and brand emerald carets on all modals and QR scanner inputs.
+            ### What's New in this Build (v1.0.18):
+            - **Orange Money Sierra Leone Webhook Integration**:
+              * Fully integrated with Convex Cloud backend (`ideal-poodle-813`).
+              * Cryptographic webhook signature verification and Sierra Leone telco phone resolution.
+              * Real-time double-entry ledger crediting for mobile money deposits.
+            - **Live Reactive Wallet Stream**:
+              * Real-time wallet balance streaming on ProfileScreen without requiring pull-to-refresh.
+              * Instant UI sync on deposit confirmation.
+            - **100% Cloud-Only Architecture**:
+              * Completely decoupled from local SQLite/Drift databases.
+              * Direct, type-safe queries and mutations to Convex Cloud.
           files: release-assets/*
           prerelease: false
           make_latest: true
