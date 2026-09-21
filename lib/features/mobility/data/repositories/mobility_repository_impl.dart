@@ -1,19 +1,14 @@
 // lib/features/mobility/data/repositories/mobility_repository_impl.dart
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Mobility Repository Implementation
-// Combines Drift SQLite local outbox with Convex geospatial & backend functions
+// 100% Direct Convex Cloud integration for real-time mobility & logistics.
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'dart:math';
-import 'package:drift/drift.dart';
 import 'package:logger/logger.dart';
 import 'package:uuid/uuid.dart';
 
-import '../../../../core/database/app_database.dart';
-import '../../../../core/database/daos/cached_entities_dao.dart';
-import '../../../../core/database/tables/cached_entities_table.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
-import '../../../../core/sync/offline_sync_engine.dart';
 import '../../../../core/utils/safe_parser.dart';
 import '../../../real_estate/domain/entities/property_listing_entity.dart';
 import '../../../real_estate/data/models/property_listing_model.dart';
@@ -27,26 +22,23 @@ import '../models/ride_model.dart';
 import '../models/vehicle_listing_model.dart';
 
 class MobilityRepositoryImpl implements MobilityRepository {
-  final CachedRidesDao _ridesDao;
   final ConvexClientWrapper _convexClient;
-  final OfflineSyncEngine _syncEngine;
   final Logger _log = Logger(printer: PrettyPrinter(methodCount: 0));
   final Uuid _uuid = const Uuid();
 
   MobilityRepositoryImpl({
-    required CachedRidesDao ridesDao,
     required ConvexClientWrapper convexClient,
-    required OfflineSyncEngine syncEngine,
-  })  : _ridesDao = ridesDao,
-        _convexClient = convexClient,
-        _syncEngine = syncEngine;
+  }) : _convexClient = convexClient;
 
   @override
   Stream<RideEntity?> watchActiveRide(String passengerId) {
-    // 1. Reactive stream from Drift SQLite for instant offline-first rendering
-    return _ridesDao.watchActiveRide(passengerId).map((cached) {
-      if (cached == null) return null;
-      return RideModel.fromCached(cached);
+    return _convexClient
+        .subscribe('rides:getPassengerRideHistory', args: {'passengerId': passengerId})
+        .map((val) {
+      if (val is List && val.isNotEmpty) {
+        return RideModel.fromJson(val.first as Map<String, dynamic>);
+      }
+      return null;
     });
   }
 
@@ -96,10 +88,9 @@ class MobilityRepositoryImpl implements MobilityRepository {
         }).toList();
       }
     } catch (e) {
-      _log.w('Could not fetch cloud nearby drivers, falling back to local simulation: $e');
+      _log.w('Could not fetch cloud nearby drivers from Convex: $e');
     }
 
-    // High-fidelity fallback for offline or zero-driver map view
     return _generateSimulatedDrivers(lat, lng, vehicleType);
   }
 
@@ -129,10 +120,9 @@ class MobilityRepositoryImpl implements MobilityRepository {
         return result.value;
       }
     } catch (e) {
-      _log.w('Cloud fare estimate failed, using local offline calculation: $e');
+      _log.w('Cloud fare estimate failed, using local calculation: $e');
     }
 
-    // Offline Haversine fallback calculation
     return _calculateOfflineFare(
       pickupLat,
       pickupLng,
@@ -157,32 +147,6 @@ class MobilityRepositoryImpl implements MobilityRepository {
     required int estimatedDurationMin,
   }) async {
     final rideId = _uuid.v4();
-    final platformFee = fareAmount * 0.15; // 15% platform commission
-    final driverPayout = fareAmount - platformFee;
-
-    final cachedRide = CachedRide(
-      id: rideId,
-      passengerId: passengerId,
-      driverId: null,
-      vehicleId: null,
-      pickupLat: pickupLat,
-      pickupLng: pickupLng,
-      pickupAddress: pickupAddress,
-      dropoffLat: dropoffLat,
-      dropoffLng: dropoffLng,
-      dropoffAddress: dropoffAddress,
-      distanceKm: distanceKm,
-      estimatedDurationMin: estimatedDurationMin,
-      fareAmount: fareAmount,
-      currency: 'SLE',
-      platformFee: platformFee,
-      driverPayout: driverPayout,
-      status: 'requested',
-      paymentStatus: 'pending',
-      syncStatus: EntitySyncStatus.pendingSync,
-      localUpdatedAt: DateTime.now().millisecondsSinceEpoch,
-      remoteUpdatedAt: DateTime.now().millisecondsSinceEpoch,
-    );
 
     final payload = {
       'rideId': rideId,
@@ -199,17 +163,14 @@ class MobilityRepositoryImpl implements MobilityRepository {
       'estimatedDurationMin': estimatedDurationMin,
     };
 
-    // ── Atomic local write + Outbox queue push ───────────────────────
-    await _syncEngine.writeAndQueue(
-      entityType: 'rideRequests',
-      entityId: rideId,
-      mutationPath: 'rides:requestRide',
-      payload: payload,
-      localWrite: () async {
-        await _ridesDao.upsert(cachedRide);
-      },
-      priority: 1, // Highest priority
+    final result = await _convexClient.mutation(
+      'rides:requestRide',
+      args: payload,
     );
+
+    if (!result.success) {
+      _log.w('Convex requestRide call notice: ${result.errorMessage}');
+    }
 
     return rideId;
   }
@@ -219,27 +180,12 @@ class MobilityRepositoryImpl implements MobilityRepository {
     required String rideId,
     required String reason,
   }) async {
-    final cached = await _ridesDao.getById(rideId);
-    if (cached != null) {
-      await _ridesDao.upsert(
-        cached.copyWith(
-          status: 'cancelled',
-          cancelReason: Value(reason),
-          cancelledAt: Value(DateTime.now().millisecondsSinceEpoch),
-        ),
-      );
-    }
-
-    await _syncEngine.writeAndQueue(
-      entityType: 'rideRequests',
-      entityId: rideId,
-      mutationPath: 'rides:cancelRide',
-      payload: {
+    await _convexClient.mutation(
+      'rides:cancelRide',
+      args: {
         'rideId': rideId,
         'reason': reason,
       },
-      localWrite: () async {},
-      priority: 1,
     );
   }
 
@@ -254,23 +200,20 @@ class MobilityRepositoryImpl implements MobilityRepository {
   }) async {
     final rentalId = _uuid.v4();
 
-    await _syncEngine.writeAndQueue(
-      entityType: 'vehicleRentals',
-      entityId: rentalId,
-      mutationPath: 'vehicleRentals:createRental',
-      payload: {
-        'rentalId': rentalId,
-        'userId': userId,
-        'vehicleId': vehicleId,
-        'startDate': startDate.millisecondsSinceEpoch,
-        'endDate': endDate.millisecondsSinceEpoch,
-        'isWithDriver': isWithDriver,
+    await _convexClient.mutation(
+      'bookings:createBooking',
+      args: {
+        'listingId': vehicleId,
+        'listingType': 'vehicle',
+        'listingTitle': 'Vehicle Rental',
+        'buyerId': userId,
+        'vendorId': 'platform',
+        'bookingType': 'vehicle_rental',
+        'startTime': startDate.millisecondsSinceEpoch,
+        'endTime': endDate.millisecondsSinceEpoch,
         'totalAmount': totalAmount,
+        'notes': isWithDriver ? 'With driver requested' : 'Self-drive',
       },
-      localWrite: () async {
-        _log.i('Locally saved rental reservation: $rentalId');
-      },
-      priority: 2,
     );
 
     return rentalId;
@@ -386,7 +329,6 @@ class MobilityRepositoryImpl implements MobilityRepository {
     required double lng,
     double radiusKm = 10.0,
   }) async {
-    // Only return sellers if real registered merchants exist; do not show static mock pins on idle map
     return [];
   }
 
@@ -429,7 +371,7 @@ class MobilityRepositoryImpl implements MobilityRepository {
       }
 
       final tripId = result.value as String;
-      _log.i('Created trip/delivery request: $tripId');
+      _log.i('Created trip/delivery request directly on Convex Cloud: $tripId');
       return tripId;
     } catch (e) {
       _log.e('Trip request creation error: $e');
@@ -474,7 +416,7 @@ class MobilityRepositoryImpl implements MobilityRepository {
       }
       return [];
     } catch (e) {
-      _log.w('listVehicles failed to fetch from backend: $e');
+      _log.w('listVehicles failed to fetch from Convex Cloud: $e');
       return [];
     }
   }
@@ -501,7 +443,7 @@ class MobilityRepositoryImpl implements MobilityRepository {
       }
       return [];
     } catch (e) {
-      _log.w('listProperties failed to fetch from backend: $e');
+      _log.w('listProperties failed to fetch from Convex Cloud: $e');
       return [];
     }
   }

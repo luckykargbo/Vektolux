@@ -1,12 +1,9 @@
 // lib/features/real_estate/data/models/property_listing_model.dart
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Real Estate Listing Data Model
-// Bridges SQLite Drift CachedProperty & Convex JSON with Domain Entity
+// Direct Convex Cloud JSON parser for PropertyListingEntity
 // ═══════════════════════════════════════════════════════════════════════
 
-import 'dart:convert';
-import '../../../../core/database/app_database.dart';
-import '../../../../core/database/tables/cached_entities_table.dart';
 import '../../../../core/utils/safe_parser.dart';
 import '../../domain/entities/property_listing_entity.dart';
 
@@ -39,39 +36,6 @@ class PropertyListingModel extends PropertyListingEntity {
     super.ownerPhone,
     super.ownerAvatarUrl,
   });
-
-  /// Convert from Drift SQLite CachedProperty record.
-  factory PropertyListingModel.fromCached(CachedProperty cached) {
-    List<String> images = [];
-    try {
-      final decoded = jsonDecode(cached.imageUrlsJson);
-      if (decoded is List) {
-        images = decoded.map((e) => e.toString()).toList();
-      }
-    } catch (_) {}
-
-    return PropertyListingModel(
-      id: cached.id,
-      ownerId: cached.ownerId,
-      title: cached.title,
-      description: cached.description,
-      category: RealEstateCategory.fromString(cached.category),
-      price: cached.price,
-      hourlyRate: cached.hourlyRate,
-      currency: cached.currency,
-      address: cached.address,
-      city: cached.city,
-      country: cached.country,
-      latitude: cached.latitude,
-      longitude: cached.longitude,
-      geohash: cached.geohash,
-      availabilityStatus: cached.availabilityStatus,
-      imageUrls: images,
-      isFeatured: cached.isFeatured,
-      isVerified: true, // Synced items from backend are vetted
-      viewCount: cached.viewCount,
-    );
-  }
 
   /// Convert from Convex Document JSON Map.
   factory PropertyListingModel.fromJson(Map<String, dynamic> rawJson) {
@@ -111,30 +75,34 @@ class PropertyListingModel extends PropertyListingEntity {
     );
   }
 
-  /// Convert to Drift SQLite Companion for caching.
-  CachedProperty toCached() {
-    return CachedProperty(
-      id: id,
-      ownerId: ownerId,
-      title: title,
-      description: description,
-      category: category.name,
-      price: price,
-      hourlyRate: hourlyRate,
-      currency: currency,
-      address: address,
-      city: city,
-      country: country,
-      latitude: latitude,
-      longitude: longitude,
-      geohash: geohash,
-      availabilityStatus: availabilityStatus,
-      imageUrlsJson: jsonEncode(imageUrls),
-      isFeatured: isFeatured,
-      viewCount: viewCount,
-      syncStatus: EntitySyncStatus.synced,
-      localUpdatedAt: DateTime.now().millisecondsSinceEpoch,
-      remoteUpdatedAt: DateTime.now().millisecondsSinceEpoch,
-    );
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'ownerId': ownerId,
+      'title': title,
+      'description': description,
+      'category': category.name,
+      'price': price,
+      if (hourlyRate != null) 'hourlyRate': hourlyRate,
+      'currency': currency,
+      'address': address,
+      'city': city,
+      'country': country,
+      'latitude': latitude,
+      'longitude': longitude,
+      'geohash': geohash,
+      'availabilityStatus': availabilityStatus,
+      'imageUrls': imageUrls,
+      'isFeatured': isFeatured,
+      'isVerified': isVerified,
+      'viewCount': viewCount,
+      if (bedrooms != null) 'bedrooms': bedrooms,
+      if (bathrooms != null) 'bathrooms': bathrooms,
+      if (areaSqM != null) 'areaSqM': areaSqM,
+      'amenities': amenities,
+      'ownerName': ownerName,
+      'ownerPhone': ownerPhone,
+      'ownerAvatarUrl': ownerAvatarUrl,
+    };
   }
 }

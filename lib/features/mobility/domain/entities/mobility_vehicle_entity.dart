@@ -158,7 +158,10 @@ class VehicleListingEntity extends Equatable {
   String get fullTitle => '$year $make $model';
 
   bool get isForRent => listingIntent == 'rental';
+
   bool get isForSale => listingIntent == 'sale';
+
+  String? get primaryImageUrl => imageUrls.isNotEmpty ? imageUrls.first : null;
 
   @override
   List<Object?> get props => [

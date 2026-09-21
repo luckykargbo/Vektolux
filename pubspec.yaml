@@ -18,11 +18,8 @@ dependencies:
   bloc_concurrency: ^0.2.5
   equatable: ^2.0.5
 
-  # ── Local Database (Drift / SQLite) ───────────────────────────────
-  drift: ^2.20.0
-  sqlite3_flutter_libs: ^0.5.24
-  path_provider: ^2.1.4
-  path: ^1.9.0
+  # ── Local Key-Value Preferences (Session Token) ─────────────────
+  shared_preferences: ^2.3.2
 
   # ── Networking & Connectivity ─────────────────────────────────────
   connectivity_plus: ^6.0.5
@@ -75,7 +72,6 @@ dev_dependencies:
 
   # ── Code Generation ──────────────────────────────────────────────
   build_runner: ^2.4.12
-  drift_dev: ^2.20.1
   json_serializable: ^6.8.0
   bloc_test: ^9.1.7
   mocktail: ^1.0.4

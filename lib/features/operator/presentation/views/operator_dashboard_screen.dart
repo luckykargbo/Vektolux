@@ -8,7 +8,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/domain/entities/user_entity.dart';
@@ -19,12 +18,10 @@ import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../mobility/presentation/views/driver_vehicle_registration_screen.dart';
 
 class OperatorDashboardScreen extends StatefulWidget {
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
 
   const OperatorDashboardScreen({
     super.key,
-    required this.database,
     required this.convexClient,
   });
 
@@ -370,7 +367,6 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
               Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => CreateListingScreen(
-                    database: widget.database,
                     convexClient: widget.convexClient,
                     currentUser: user,
                   ),
@@ -425,7 +421,6 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
               Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => CreateListingScreen(
-                    database: widget.database,
                     convexClient: widget.convexClient,
                     currentUser: user,
                   ),

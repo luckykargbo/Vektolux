@@ -10,8 +10,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
 
 import '../../../../core/network/convex_client_wrapper.dart';
-import '../../../../core/database/daos/cached_trips_deliveries_dao.dart';
-import '../../../../core/database/daos/cached_driver_profiles_dao.dart';
 import '../../data/services/driver_heartbeat_service.dart';
 import '../../domain/entities/trip_delivery_entity.dart';
 import 'driver_portal_event.dart';
@@ -20,8 +18,6 @@ import 'driver_portal_state.dart';
 class DriverPortalBloc extends Bloc<DriverPortalEvent, DriverPortalState> {
   final ConvexClientWrapper _convexClient;
   final DriverHeartbeatService _heartbeatService;
-  final CachedTripsDeliveriesDao _tripsDao;
-  final CachedDriverProfilesDao _driverDao;
   final Logger _log = Logger(printer: PrettyPrinter(methodCount: 0));
 
   Timer? _dispatchPollingTimer;
@@ -30,12 +26,8 @@ class DriverPortalBloc extends Bloc<DriverPortalEvent, DriverPortalState> {
   DriverPortalBloc({
     required ConvexClientWrapper convexClient,
     required DriverHeartbeatService heartbeatService,
-    required CachedTripsDeliveriesDao tripsDao,
-    required CachedDriverProfilesDao driverDao,
   })  : _convexClient = convexClient,
         _heartbeatService = heartbeatService,
-        _tripsDao = tripsDao,
-        _driverDao = driverDao,
         super(const DriverPortalState()) {
     on<InitDriverPortalEvent>(_onInit);
     on<ToggleDriverOnlineStatusEvent>(_onToggleOnline);
@@ -128,13 +120,6 @@ class DriverPortalBloc extends Bloc<DriverPortalEvent, DriverPortalState> {
             'isAvailable': true,
           },
         ).ignore();
-
-        // Update local Drift SQLite status
-        _driverDao.updateDriverStatus(
-          driverId: profileId,
-          isOnline: true,
-          isAvailable: true,
-        ).ignore();
       }
 
       emit(state.copyWith(
@@ -153,7 +138,7 @@ class DriverPortalBloc extends Bloc<DriverPortalEvent, DriverPortalState> {
       _stopDispatchPolling();
       _stopCountdown();
 
-      // Update Convex & SQLite online status
+      // Update Convex online status
       if (profileId != null) {
         _convexClient.mutation(
           'mobility:setDriverOnlineStatus',
@@ -162,12 +147,6 @@ class DriverPortalBloc extends Bloc<DriverPortalEvent, DriverPortalState> {
             'isOnline': false,
             'isAvailable': false,
           },
-        ).ignore();
-
-        _driverDao.updateDriverStatus(
-          driverId: profileId,
-          isOnline: false,
-          isAvailable: false,
         ).ignore();
       }
 
@@ -355,13 +334,6 @@ class DriverPortalBloc extends Bloc<DriverPortalEvent, DriverPortalState> {
         return;
       }
 
-      // Update local SQLite DAO
-      await _tripsDao.updateStatus(
-        tripId: dispatch.id,
-        status: 'accepted',
-        driverId: profileId,
-      );
-
       // Create active trip entity with accepted status
       final acceptedTrip = TripDeliveryEntity(
         id: dispatch.id,
@@ -427,11 +399,6 @@ class DriverPortalBloc extends Bloc<DriverPortalEvent, DriverPortalState> {
         },
       );
 
-      await _tripsDao.updateStatus(
-        tripId: trip.id,
-        status: 'arrived',
-      );
-
       emit(state.copyWith(
         isProcessingAction: false,
         lifecycleStep: DriverTripLifecycleStep.arrivedAtPickup,
@@ -473,11 +440,6 @@ class DriverPortalBloc extends Bloc<DriverPortalEvent, DriverPortalState> {
         ));
         return;
       }
-
-      await _tripsDao.updateStatus(
-        tripId: trip.id,
-        status: 'in_progress',
-      );
 
       emit(state.copyWith(
         isProcessingAction: false,
@@ -526,11 +488,6 @@ class DriverPortalBloc extends Bloc<DriverPortalEvent, DriverPortalState> {
       );
 
       final payout = trip.driverPayout ?? (trip.fareAmount * 0.85);
-
-      await _tripsDao.updateStatus(
-        tripId: trip.id,
-        status: 'completed',
-      );
 
       emit(state.copyWith(
         isProcessingAction: false,

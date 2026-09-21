@@ -10,7 +10,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../../../../core/database/daos/cached_users_dao.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -22,7 +21,6 @@ import '../../domain/entities/verification_record.dart';
 class IdentityVerificationScreen extends StatefulWidget {
   final ConvexClientWrapper convexClient;
   final UserEntity currentUser;
-  final CachedUsersDao? usersDao;
   final VoidCallback onVerificationComplete;
   final bool initialMockMode;
 
@@ -30,7 +28,6 @@ class IdentityVerificationScreen extends StatefulWidget {
     super.key,
     required this.convexClient,
     required this.currentUser,
-    this.usersDao,
     required this.onVerificationComplete,
     this.initialMockMode = true,
   });
@@ -76,7 +73,6 @@ class _IdentityVerificationScreenState
     _isMockMode = widget.initialMockMode;
     _kycService = KycVerificationServiceImpl(
       convexClient: widget.convexClient,
-      usersDao: widget.usersDao,
     );
 
     _pulseController = AnimationController(
@@ -97,20 +93,10 @@ class _IdentityVerificationScreenState
       return;
     }
 
-    if (widget.usersDao != null) {
-      try {
-        final active = await widget.usersDao!.getActiveSession();
-        if (active != null &&
-            active.sessionToken != null &&
-            active.sessionToken!.isNotEmpty) {
-          if (mounted) {
-            setState(() {
-              _sessionToken = active.sessionToken;
-            });
-          }
-          return;
-        }
-      } catch (_) {}
+    if (widget.convexClient.authToken != null &&
+        widget.convexClient.authToken!.isNotEmpty) {
+      _sessionToken = widget.convexClient.authToken;
+      return;
     }
 
     if (mounted) {

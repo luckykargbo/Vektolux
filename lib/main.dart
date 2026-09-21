@@ -1,7 +1,7 @@
 // lib/main.dart
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Application Entry Point
-// Initializes core services and launches the MaterialApp.
+// Initializes core services and launches the MaterialApp with direct Convex Cloud connection.
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
@@ -10,10 +10,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'core/theme/app_theme.dart';
-import 'core/database/app_database.dart';
 import 'core/network/connectivity_monitor.dart';
 import 'core/network/convex_client_wrapper.dart';
-import 'core/sync/offline_sync_engine.dart';
 import 'core/constants/app_constants.dart';
 import 'features/auth/auth.dart';
 import 'features/mobility/presentation/bloc/mobility_bloc.dart';
@@ -31,19 +29,11 @@ void main() async {
   ]);
 
   // ── Initialize Core Services ──────────────────────────────────────
-  final database = AppDatabase();
   final convexClient = ConvexClientWrapper(
     deploymentUrl: ApiConstants.convexUrl,
   );
-  final connectivityMonitor = ConnectivityMonitor();
-
-  final syncEngine = OfflineSyncEngine(
-    database: database,
-    convexClient: convexClient,
-    connectivityMonitor: connectivityMonitor,
-  );
-
-  await syncEngine.initialize();
+  // Optional connectivity monitor for connection status indicators
+  ConnectivityMonitor();
 
   // ── Initialize Push Notification Service ──────────────────────────
   try {
@@ -61,21 +51,15 @@ void main() async {
 
   // ── Launch App ────────────────────────────────────────────────────
   runApp(VektoluxApp(
-    syncEngine: syncEngine,
-    database: database,
     convexClient: convexClient,
   ));
 }
 
 class VektoluxApp extends StatelessWidget {
-  final OfflineSyncEngine syncEngine;
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
 
   const VektoluxApp({
     super.key,
-    required this.syncEngine,
-    required this.database,
     required this.convexClient,
   });
 
@@ -83,13 +67,10 @@ class VektoluxApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiRepositoryProvider(
       providers: [
-        RepositoryProvider<AppDatabase>.value(value: database),
         RepositoryProvider<ConvexClientWrapper>.value(value: convexClient),
-        RepositoryProvider<OfflineSyncEngine>.value(value: syncEngine),
         RepositoryProvider<AuthRepository>(
           create: (ctx) => AuthRepositoryImpl(
             convexClient: convexClient,
-            usersDao: database.cachedUsersDao,
           ),
         ),
       ],
@@ -103,9 +84,7 @@ class VektoluxApp extends StatelessWidget {
           BlocProvider<MobilityBloc>(
             create: (context) => MobilityBloc(
               repository: MobilityRepositoryImpl(
-                ridesDao: database.cachedRidesDao,
                 convexClient: convexClient,
-                syncEngine: syncEngine,
               ),
             ),
           ),

@@ -9,8 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
-import '../../../../core/database/app_database.dart';
-import '../../../../core/database/services/sqlite_post_archive_service.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
@@ -64,23 +62,6 @@ class VehicleDetailScreen extends StatefulWidget {
     this.mileage,
     this.location,
   });
-
-  /// Factory constructor for CachedVehicleListing from Drift SQLite
-  factory VehicleDetailScreen.fromCached(CachedVehicleListing cached) {
-    return VehicleDetailScreen(
-      id: cached.id,
-      make: cached.make,
-      model: cached.model,
-      year: cached.year,
-      vehicleType: cached.vehicleType,
-      listingIntent: cached.listingIntent,
-      salePrice: cached.salePrice,
-      pricePerDay: cached.pricePerDay,
-      pricePerKm: cached.pricePerKm,
-      imageUrls: cached.primaryImageUrl != null ? [cached.primaryImageUrl!] : [],
-      ownerId: cached.ownerId,
-    );
-  }
 
   /// Factory constructor for VehicleListingEntity
   factory VehicleDetailScreen.fromEntity(VehicleListingEntity entity) {
@@ -1383,15 +1364,13 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
     final scaffoldMessenger = ScaffoldMessenger.of(context);
     scaffoldMessenger.showSnackBar(
       const SnackBar(
-        content: Text('Evacuating vehicle post and archiving to local SQLite...'),
+        content: Text('Deleting vehicle post...'),
         duration: Duration(seconds: 1),
       ),
     );
 
     try {
       final convexClient = context.read<ConvexClientWrapper>();
-      final database = context.read<AppDatabase>();
-      final archiveService = SqlitePostArchiveService(database);
 
       final res = await convexClient.mutation(
         'mobility:deleteVehicleListing',
@@ -1402,37 +1381,19 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
         },
       );
 
-      if (res.success && res.value != null) {
-        final archivedMap = res.value['archivedData'] as Map<String, dynamic>?;
-        if (archivedMap != null) {
-          await archiveService.archivePost(
-            id: archivedMap['id']?.toString() ?? widget.id,
-            postType: 'vehicle',
-            ownerId: archivedMap['ownerId']?.toString() ?? user.id,
-            title: archivedMap['title']?.toString() ?? _title,
-            description: archivedMap['description']?.toString() ?? '',
-            category: archivedMap['category']?.toString() ?? widget.listingIntent,
-            price: (archivedMap['price'] as num?)?.toDouble() ?? _currentSalePrice ?? _currentPricePerDay ?? 0.0,
-            currency: archivedMap['currency']?.toString() ?? 'SLE',
-            location: archivedMap['location']?.toString() ?? (widget.location ?? 'Freetown, Sierra Leone'),
-            bedrooms: null,
-            bathrooms: null,
-            privateContactPhone: archivedMap['privateContactPhone']?.toString(),
-            imageUrls: (archivedMap['imageUrls'] as List?)?.cast<String>() ?? widget.imageUrls,
-            originalCreatedAt: (archivedMap['originalCreatedAt'] as num?)?.toInt(),
-          );
-        }
-
+      if (res.success) {
         if (context.mounted) {
           Navigator.of(context).pop();
           scaffoldMessenger.showSnackBar(
             const SnackBar(
-              content: Text('✓ Vehicle post successfully deleted and archived to local SQLite.'),
+              content: Text('✓ Vehicle post successfully deleted.'),
               backgroundColor: AppColors.obsidian,
               behavior: SnackBarBehavior.floating,
             ),
           );
         }
+      } else {
+        throw Exception(res.errorMessage ?? 'Failed to delete vehicle post');
       }
     } catch (e) {
       scaffoldMessenger.showSnackBar(

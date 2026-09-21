@@ -6,8 +6,6 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
-import '../../../../core/database/app_database.dart';
-import '../../../../core/database/services/sqlite_post_archive_service.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/vx_network_image.dart';
@@ -15,13 +13,11 @@ import '../../../auth/domain/entities/user_entity.dart';
 import 'create_listing_screen.dart';
 
 class MyListingsScreen extends StatefulWidget {
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
   final UserEntity currentUser;
 
   const MyListingsScreen({
     super.key,
-    required this.database,
     required this.convexClient,
     required this.currentUser,
   });
@@ -33,7 +29,6 @@ class MyListingsScreen extends StatefulWidget {
 class _MyListingsScreenState extends State<MyListingsScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  late SqlitePostArchiveService _archiveService;
 
   bool _isLoading = true;
   List<Map<String, dynamic>> _myProperties = [];
@@ -44,7 +39,6 @@ class _MyListingsScreenState extends State<MyListingsScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _archiveService = SqlitePostArchiveService(widget.database);
     _loadMyListings();
   }
 
@@ -145,11 +139,11 @@ class _MyListingsScreenState extends State<MyListingsScreen>
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.inventory_2_outlined, color: AppColors.emeraldDark, size: 18),
+                  Icon(Icons.delete_outline_rounded, color: AppColors.error, size: 18),
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'The post will immediately be removed from Convex public search and permanently archived into your local encrypted SQLite storage for future reference.',
+                      'The post will immediately be removed from the Convex cloud marketplace.',
                       style: TextStyle(fontSize: 11, color: AppColors.obsidianSoft, height: 1.4),
                     ),
                   ),
@@ -169,7 +163,7 @@ class _MyListingsScreenState extends State<MyListingsScreen>
               backgroundColor: AppColors.error,
               foregroundColor: Colors.white,
             ),
-            child: const Text('Sold? Delete & Archive'),
+            child: const Text('Delete Post'),
           ),
         ],
       ),
@@ -180,7 +174,7 @@ class _MyListingsScreenState extends State<MyListingsScreen>
     final scaffoldMessenger = ScaffoldMessenger.of(context);
     scaffoldMessenger.showSnackBar(
       const SnackBar(
-        content: Text('Deleting post and writing to local SQLite archive...'),
+        content: Text('Deleting post from Convex cloud...'),
         duration: Duration(seconds: 1),
       ),
     );
@@ -188,7 +182,7 @@ class _MyListingsScreenState extends State<MyListingsScreen>
     try {
       final listingId = item['_id']?.toString() ?? '';
       if (isProperty) {
-        final res = await widget.convexClient.mutation(
+        await widget.convexClient.mutation(
           'realEstate:deletePropertyListing',
           args: {
             'listingId': listingId,
@@ -197,26 +191,8 @@ class _MyListingsScreenState extends State<MyListingsScreen>
               'sessionToken': widget.currentUser.sessionToken!,
           },
         );
-
-        final archiveData = (res.value as Map<String, dynamic>?)?['archivedData'] ?? item;
-        await _archiveService.archivePost(
-          id: listingId,
-          postType: 'property',
-          ownerId: widget.currentUser.id,
-          title: archiveData['title']?.toString() ?? 'Untitled Property',
-          description: archiveData['description']?.toString() ?? '',
-          category: archiveData['category']?.toString() ?? 'sale',
-          price: (archiveData['price'] as num?)?.toDouble() ?? 0.0,
-          currency: archiveData['currency']?.toString() ?? 'SLE',
-          location: archiveData['location']?.toString() ?? '${item['address'] ?? ''}, ${item['city'] ?? ''}',
-          bedrooms: (archiveData['bedrooms'] as num?)?.toInt() ?? (item['bedrooms'] as num?)?.toInt(),
-          bathrooms: (archiveData['bathrooms'] as num?)?.toInt() ?? (item['bathrooms'] as num?)?.toInt(),
-          privateContactPhone: archiveData['privateContactPhone']?.toString() ?? item['privateContactPhone']?.toString(),
-          imageUrls: (archiveData['imageUrls'] as List?)?.map((e) => e.toString()).toList(),
-          originalCreatedAt: (archiveData['originalCreatedAt'] as num?)?.toInt(),
-        );
       } else {
-        final res = await widget.convexClient.mutation(
+        await widget.convexClient.mutation(
           'mobility:deleteVehicleListing',
           args: {
             'listingId': listingId,
@@ -225,29 +201,11 @@ class _MyListingsScreenState extends State<MyListingsScreen>
               'sessionToken': widget.currentUser.sessionToken!,
           },
         );
-
-        final archiveData = (res.value as Map<String, dynamic>?)?['archivedData'] ?? item;
-        await _archiveService.archivePost(
-          id: listingId,
-          postType: 'vehicle',
-          ownerId: widget.currentUser.id,
-          title: archiveData['title']?.toString() ?? '${item['year'] ?? ''} ${item['make'] ?? ''} ${item['model'] ?? ''}',
-          description: archiveData['description']?.toString() ?? '',
-          category: archiveData['category']?.toString() ?? item['listingIntent']?.toString() ?? 'rental',
-          price: (archiveData['price'] as num?)?.toDouble() ?? 0.0,
-          currency: archiveData['currency']?.toString() ?? 'SLE',
-          location: archiveData['location']?.toString() ?? 'Sierra Leone',
-          bedrooms: null,
-          bathrooms: null,
-          privateContactPhone: archiveData['privateContactPhone']?.toString() ?? item['privateContactPhone']?.toString(),
-          imageUrls: (archiveData['imageUrls'] as List?)?.map((e) => e.toString()).toList(),
-          originalCreatedAt: (archiveData['originalCreatedAt'] as num?)?.toInt(),
-        );
       }
 
       scaffoldMessenger.showSnackBar(
         const SnackBar(
-          content: Text('✓ Post removed from public and permanently archived in SQLite.'),
+          content: Text('✓ Post successfully deleted from Convex cloud.'),
           backgroundColor: AppColors.emeraldDark,
         ),
       );
@@ -700,7 +658,6 @@ class _MyListingsScreenState extends State<MyListingsScreen>
               Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => CreateListingScreen(
-                    database: widget.database,
                     convexClient: widget.convexClient,
                     currentUser: widget.currentUser,
                   ),
@@ -1081,7 +1038,6 @@ class _MyListingsScreenState extends State<MyListingsScreen>
                 Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => CreateListingScreen(
-                      database: widget.database,
                       convexClient: widget.convexClient,
                       currentUser: widget.currentUser,
                     ),

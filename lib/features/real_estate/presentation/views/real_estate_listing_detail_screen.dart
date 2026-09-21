@@ -9,8 +9,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../../core/database/app_database.dart';
-import '../../../../core/database/services/sqlite_post_archive_service.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -1246,15 +1244,13 @@ class _RealEstateListingDetailScreenState
     final scaffoldMessenger = ScaffoldMessenger.of(context);
     scaffoldMessenger.showSnackBar(
       const SnackBar(
-        content: Text('Evacuating post and archiving to local SQLite...'),
+        content: Text('Deleting property post...'),
         duration: Duration(seconds: 1),
       ),
     );
 
     try {
       final convexClient = context.read<ConvexClientWrapper>();
-      final database = context.read<AppDatabase>();
-      final archiveService = SqlitePostArchiveService(database);
 
       final res = await convexClient.mutation(
         'realEstate:deletePropertyListing',
@@ -1264,37 +1260,19 @@ class _RealEstateListingDetailScreenState
         },
       );
 
-      if (res.success && res.value != null) {
-        final archivedMap = res.value['archivedData'] as Map<String, dynamic>?;
-        if (archivedMap != null) {
-          await archiveService.archivePost(
-            id: archivedMap['id']?.toString() ?? listing.id,
-            postType: 'property',
-            ownerId: archivedMap['ownerId']?.toString() ?? widget.currentUserId,
-            title: archivedMap['title']?.toString() ?? listing.title,
-            description: archivedMap['description']?.toString() ?? listing.description,
-            category: archivedMap['category']?.toString() ?? listing.category.name,
-            price: (archivedMap['price'] as num?)?.toDouble() ?? listing.price,
-            currency: archivedMap['currency']?.toString() ?? listing.currency,
-            location: archivedMap['location']?.toString() ?? '${listing.address}, ${listing.city}',
-            bedrooms: (archivedMap['bedrooms'] as num?)?.toInt() ?? listing.bedrooms,
-            bathrooms: (archivedMap['bathrooms'] as num?)?.toInt() ?? listing.bathrooms,
-            privateContactPhone: archivedMap['privateContactPhone']?.toString(),
-            imageUrls: (archivedMap['imageUrls'] as List?)?.cast<String>() ?? listing.imageUrls,
-            originalCreatedAt: (archivedMap['originalCreatedAt'] as num?)?.toInt(),
-          );
-        }
-
+      if (res.success) {
         if (context.mounted) {
           Navigator.of(context).pop();
           scaffoldMessenger.showSnackBar(
             const SnackBar(
-              content: Text('✓ Property post successfully deleted and archived to local SQLite.'),
+              content: Text('✓ Property post successfully deleted.'),
               backgroundColor: AppColors.obsidian,
               behavior: SnackBarBehavior.floating,
             ),
           );
         }
+      } else {
+        throw Exception(res.errorMessage ?? 'Failed to delete listing');
       }
     } catch (e) {
       scaffoldMessenger.showSnackBar(

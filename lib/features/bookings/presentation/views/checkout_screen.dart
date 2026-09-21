@@ -6,16 +6,13 @@
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:drift/drift.dart' as drift;
 
-import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/domain/entities/user_entity.dart';
 import 'my_bookings_screen.dart';
 
 class CheckoutScreen extends StatefulWidget {
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
   final UserEntity currentUser;
   final String listingId;
@@ -35,7 +32,6 @@ class CheckoutScreen extends StatefulWidget {
 
   const CheckoutScreen({
     super.key,
-    required this.database,
     required this.convexClient,
     required this.currentUser,
     required this.listingId,
@@ -217,25 +213,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       } catch (_) {
         blockchainTxHash = '0x${DateTime.now().millisecondsSinceEpoch.toRadixString(16)}';
       }
-
-      // 6. Cache Confirmed Booking directly into Drift SQLite
-      await widget.database.cachedBookingsDao.insertOrUpdate(
-        CachedBookingsTableCompanion.insert(
-          id: bookingId,
-          listingId: widget.listingId,
-          listingTitle: drift.Value(widget.listingTitle),
-          buyerId: widget.currentUser.id,
-          vendorId: widget.vendorId,
-          bookingType: widget.bookingType,
-          startTime: widget.startTime,
-          endTime: widget.endTime,
-          totalAmount: widget.totalAmount,
-          currency: const drift.Value('SLE'),
-          paymentStatus: 'completed',
-          bookingStatus: const drift.Value('confirmed'),
-          cachedAt: DateTime.now().millisecondsSinceEpoch,
-        ),
-      );
 
       if (mounted) {
         _showSuccessDialog(bookingId, blockchainTxHash, partnerAmount);
@@ -419,7 +396,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   Navigator.of(context).pushReplacement(
                     MaterialPageRoute(
                       builder: (_) => MyBookingsScreen(
-                        database: widget.database,
                         convexClient: widget.convexClient,
                         currentUser: widget.currentUser,
                       ),

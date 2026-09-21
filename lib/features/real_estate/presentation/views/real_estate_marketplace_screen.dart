@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
-import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/vx_network_image.dart';
@@ -22,12 +21,10 @@ import 'inspection_pass_verification_screen.dart';
 import 'my_real_estate_escrows_screen.dart';
 
 class RealEstateMarketplaceScreen extends StatefulWidget {
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
 
   const RealEstateMarketplaceScreen({
     super.key,
-    required this.database,
     required this.convexClient,
   });
 
@@ -100,42 +97,10 @@ class _RealEstateMarketplaceScreenState
           });
         }
       } else {
-        _fetchCached();
+        if (mounted) setState(() => _isLoading = false);
       }
     } catch (_) {
-      _fetchCached();
-    }
-  }
-
-  Future<void> _fetchCached() async {
-    final cached =
-        await widget.database.cachedPropertyListingsDao.getAll();
-    if (mounted) {
-      setState(() {
-        _allListings = cached
-            .map((p) => {
-                  '_id': p.id,
-                  'title': p.title,
-                  'description': p.description,
-                  'category': p.category,
-                  'price': p.price,
-                  'hourlyRate': p.hourlyRate,
-                  'address': p.address,
-                  'city': p.address.contains('Bo')
-                      ? 'Bo'
-                      : p.address.contains('Waterloo')
-                          ? 'Waterloo'
-                          : 'Freetown',
-                  'imageUrls':
-                      p.primaryImageUrl != null ? [p.primaryImageUrl!] : [],
-                  'bedrooms': 3,
-                  'bathrooms': 2,
-                  'areaSqM': 180,
-                  'amenities': ['EDSA Power', 'Guma Water', 'Standby Generator'],
-                })
-            .toList();
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -288,7 +253,6 @@ class _RealEstateMarketplaceScreenState
     final res = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => CreateListingScreen(
-          database: widget.database,
           convexClient: widget.convexClient,
           currentUser: user,
         ),

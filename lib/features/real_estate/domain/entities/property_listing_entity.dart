@@ -98,6 +98,9 @@ class PropertyListingEntity extends Equatable {
   /// Effective hourly rate (falls back to price / 24 if not specified).
   double get effectiveHourlyRate => hourlyRate ?? (price > 0 ? price / 24 : 50.0);
 
+  /// Primary image URL
+  String? get primaryImageUrl => imageUrls.isNotEmpty ? imageUrls.first : null;
+
   @override
   List<Object?> get props => [
         id,

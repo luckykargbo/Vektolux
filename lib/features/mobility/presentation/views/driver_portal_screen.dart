@@ -10,7 +10,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
-import '../../../../core/database/app_database.dart';
 import '../../data/services/driver_heartbeat_service.dart';
 import '../bloc/driver_portal_bloc.dart';
 import '../bloc/driver_portal_event.dart';
@@ -41,20 +40,16 @@ class DriverPortalScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final db = context.read<AppDatabase>();
     final convexClient = context.read<ConvexClientWrapper>();
 
     final heartbeatService = DriverHeartbeatService(
       convexClient: convexClient,
-      driverDao: db.cachedDriverProfilesDao,
     );
 
     return BlocProvider<DriverPortalBloc>(
       create: (_) => DriverPortalBloc(
         convexClient: convexClient,
         heartbeatService: heartbeatService,
-        tripsDao: db.cachedTripsDeliveriesDao,
-        driverDao: db.cachedDriverProfilesDao,
       )..add(
           InitDriverPortalEvent(
             userId: currentUserId,

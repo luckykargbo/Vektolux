@@ -8,7 +8,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
@@ -81,7 +80,6 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
 
   @override
   Widget build(BuildContext context) {
-    final database = context.read<AppDatabase>();
     final convexClient = context.read<ConvexClientWrapper>();
 
     return BlocBuilder<AuthBloc, AuthState>(
@@ -91,7 +89,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
         final pages = [
           // 0: Home Super App Discovery
           _activatedTabs.contains(0)
-              ? ClientHomeScreen(database: database, convexClient: convexClient)
+              ? ClientHomeScreen(convexClient: convexClient)
               : const SizedBox.shrink(),
 
           // 1: Explore — Social Feed (listings from followed agents/dealers)
@@ -101,12 +99,12 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
 
           // 2: Real Estate Vertical Marketplace
           _activatedTabs.contains(2)
-              ? RealEstateMarketplaceScreen(database: database, convexClient: convexClient)
+              ? RealEstateMarketplaceScreen(convexClient: convexClient)
               : const SizedBox.shrink(),
 
           // 3: Auto Market & Car Rentals + Delivery Van Bookings
           _activatedTabs.contains(3)
-              ? AutoMarketplaceScreen(database: database, convexClient: convexClient)
+              ? AutoMarketplaceScreen(convexClient: convexClient)
               : const SizedBox.shrink(),
 
           // 4: Account & Vendor Profile

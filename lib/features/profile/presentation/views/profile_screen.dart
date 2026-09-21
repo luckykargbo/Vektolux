@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -33,7 +32,6 @@ import '../../../../core/models/payment_account.dart';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 
@@ -785,12 +783,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               onPressed: () async {
                 Navigator.of(dialogCtx).pop();
-                // Clear local database session
-                try {
-                  final db = context.read<AppDatabase>();
-                  await db.cachedUsersDao.clearSession();
-                } catch (_) {}
-
                 if (!context.mounted) return;
 
                 // Dispatch AuthBloc logout event
@@ -1505,12 +1497,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                         onTap: () {
                           if (user != null) {
-                            final db = context.read<AppDatabase>();
                             final client = context.read<ConvexClientWrapper>();
                             Navigator.of(context).push(
                               MaterialPageRoute(
                                 builder: (_) => MyListingsScreen(
-                                  database: db,
                                   convexClient: client,
                                   currentUser: user,
                                 ),
@@ -1531,12 +1521,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                         onTap: () {
                           if (user != null) {
-                            final db = context.read<AppDatabase>();
                             final client = context.read<ConvexClientWrapper>();
                             Navigator.of(context).push(
                               MaterialPageRoute(
                                 builder: (_) => CreateListingScreen(
-                                  database: db,
                                   convexClient: client,
                                   currentUser: user,
                                 ),
@@ -1629,12 +1617,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 horizontal: 14, vertical: 10),
                           ),
                           onPressed: () {
-                            final db = context.read<AppDatabase>();
                             final client = context.read<ConvexClientWrapper>();
                             Navigator.of(context).push(
                               MaterialPageRoute(
                                 builder: (_) => OperatorDashboardScreen(
-                                  database: db,
                                   convexClient: client,
                                 ),
                               ),
@@ -3235,7 +3221,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
                           if (byteData != null) {
                             final pngBytes = byteData.buffer.asUint8List();
-                            final tempDir = await getTemporaryDirectory();
+                            final tempDir = Directory.systemTemp;
                             final filePath = '${tempDir.path}/vektolux_qr_${userId.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_')}.png';
                             final file = File(filePath);
                             await file.writeAsBytes(pngBytes, flush: true);

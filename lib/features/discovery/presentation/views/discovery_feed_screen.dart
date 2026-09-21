@@ -1,15 +1,13 @@
 // lib/features/discovery/presentation/views/discovery_feed_screen.dart
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Marketplace Discovery Feed
-// Tabbed browsing for Real Estate & Mobility with Drift SQLite offline cache.
+// Tabbed browsing for Real Estate & Mobility directly from Convex Cloud.
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
-import 'package:drift/drift.dart' show Value;
 
-import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/safe_parser.dart';
@@ -23,14 +21,15 @@ import '../../../bookings/presentation/views/my_bookings_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
 import '../../../listings/presentation/views/vehicle_detail_screen.dart';
+import '../../../real_estate/data/models/property_listing_model.dart';
+import '../../../real_estate/domain/entities/property_listing_entity.dart';
+import '../../../mobility/domain/entities/mobility_vehicle_entity.dart';
 
 class DiscoveryFeedScreen extends StatefulWidget {
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
 
   const DiscoveryFeedScreen({
     super.key,
-    required this.database,
     required this.convexClient,
   });
 
@@ -45,6 +44,9 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
   String _selectedMobilityIntent = 'all';
   bool _isSyncing = false;
 
+  List<PropertyListingEntity> _properties = [];
+  List<VehicleListingEntity> _vehicles = [];
+
   final _currencyFormat = NumberFormat('#,##0', 'en_US');
 
   @override
@@ -57,7 +59,7 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
       }
     });
 
-    // Background sync from Convex cloud
+    // Background fetch from Convex Cloud
     _syncFromConvex();
   }
 
@@ -67,7 +69,7 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
     super.dispose();
   }
 
-  /// Sync listings from Convex cloud and update local SQLite cache.
+  /// Sync listings directly from Convex Cloud.
   Future<void> _syncFromConvex() async {
     if (_isSyncing) return;
     setState(() => _isSyncing = true);
@@ -80,33 +82,14 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
       );
 
       if (propertiesResult.success && propertiesResult.value != null) {
-        final companions = mapConvexList<CachedPropertyListingsTableCompanion>(
+        final list = mapConvexList<PropertyListingEntity>(
           propertiesResult.value,
-          (m) {
-            final id = asString(m['_id'] ?? m['id']);
-            if (id.isEmpty) return null;
-            final images = asStringList(m['imageUrls']);
-            return CachedPropertyListingsTableCompanion.insert(
-              id: id,
-              ownerId: asString(m['ownerId']),
-              title: asString(m['title'], 'Untitled Property'),
-              description: asString(m['description']),
-              category: asString(m['category'], 'sale'),
-              price: asDouble(m['price'], 0.0),
-              hourlyRate: Value(m['hourlyRate'] != null
-                  ? asDouble(m['hourlyRate'])
-                  : null),
-              address: asString(m['address'], 'Location Unavailable'),
-              latitude: asDouble(m['latitude'], 0.0),
-              longitude: asDouble(m['longitude'], 0.0),
-              primaryImageUrl: Value(images.isNotEmpty ? images.first : null),
-              cachedAt: DateTime.now().millisecondsSinceEpoch,
-            );
-          },
+          (m) => PropertyListingModel.fromJson(m),
         );
-
-        if (companions.isNotEmpty) {
-          await widget.database.cachedPropertyListingsDao.insertAll(companions);
+        if (mounted) {
+          setState(() {
+            _properties = list;
+          });
         }
       }
 
@@ -117,41 +100,17 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
       );
 
       if (vehiclesResult.success && vehiclesResult.value != null) {
-        final companions = mapConvexList<CachedVehicleListingsTableCompanion>(
+        final list = mapConvexList<VehicleListingEntity>(
           vehiclesResult.value,
-          (m) {
-            final id = asString(m['_id'] ?? m['id']);
-            if (id.isEmpty) return null;
-            final images = asStringList(m['imageUrls']);
-            return CachedVehicleListingsTableCompanion.insert(
-              id: id,
-              ownerId: asString(m['ownerId']),
-              vehicleType: asString(m['vehicleType'], 'taxi'),
-              listingIntent: asString(m['listingIntent'], 'rental'),
-              make: asString(m['make'], 'Vehicle'),
-              model: asString(m['model'], 'Listing'),
-              year: asInt(m['year'], 2022),
-              pricePerKm: Value(m['pricePerKm'] != null
-                  ? asDouble(m['pricePerKm'])
-                  : null),
-              pricePerDay: Value(m['pricePerDay'] != null
-                  ? asDouble(m['pricePerDay'])
-                  : null),
-              salePrice: Value(m['salePrice'] != null
-                  ? asDouble(m['salePrice'])
-                  : null),
-              primaryImageUrl: Value(images.isNotEmpty ? images.first : null),
-              cachedAt: DateTime.now().millisecondsSinceEpoch,
-            );
-          },
+          (m) => VehicleListingEntity.fromConvex(m),
         );
-
-        if (companions.isNotEmpty) {
-          await widget.database.cachedVehicleListingsDao.insertAll(companions);
+        if (mounted) {
+          setState(() {
+            _vehicles = list;
+          });
         }
       }
     } catch (_) {
-      // Offline fallback: SQLite already holds cached items
     } finally {
       if (mounted) {
         setState(() => _isSyncing = false);
@@ -208,7 +167,6 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
                         Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (_) => MyBookingsScreen(
-                              database: widget.database,
                               convexClient: widget.convexClient,
                               currentUser: user,
                             ),
@@ -232,10 +190,10 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
                       )
                     else
                       IconButton(
-                      icon: const Icon(Icons.sync, color: AppColors.gray300),
-                      tooltip: 'Refresh feed',
-                      onPressed: _syncFromConvex,
-                    ),
+                        icon: const Icon(Icons.sync, color: AppColors.gray300),
+                        tooltip: 'Refresh feed',
+                        onPressed: _syncFromConvex,
+                      ),
                     Padding(
                       padding: const EdgeInsets.only(right: 12, left: 4),
                       child: GestureDetector(
@@ -253,7 +211,8 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
                           height: 34,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            border: Border.all(color: AppColors.emerald, width: 1.5),
+                            border:
+                                Border.all(color: AppColors.emerald, width: 1.5),
                             color: AppColors.obsidianLight,
                           ),
                           child: Center(
@@ -298,6 +257,14 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
                             fontWeight: FontWeight.w600,
                             fontSize: 13,
                           ),
+                          unselectedLabelStyle: const TextStyle(
+                            fontWeight: FontWeight.w500,
+                            fontSize: 13,
+                          ),
+                          indicatorSize: TabBarIndicatorSize.tab,
+                          dividerColor: Colors.transparent,
+                          overlayColor:
+                              WidgetStateProperty.all(Colors.transparent),
                           tabs: const [
                             Tab(text: '🏡  Real Estate'),
                             Tab(text: '🚗  Mobility & Fleets'),
@@ -323,7 +290,6 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
                     final created = await Navigator.of(context).push<bool>(
                       MaterialPageRoute(
                         builder: (_) => CreateListingScreen(
-                          database: widget.database,
                           convexClient: widget.convexClient,
                           currentUser: authState.user!,
                         ),
@@ -361,98 +327,95 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
       {'label': 'Hourly Guest House', 'value': 'hourly_guesthouse'},
     ];
 
-    return StreamBuilder<List<CachedPropertyListing>>(
-      stream: _selectedPropertyCategory == 'all'
-          ? widget.database.cachedPropertyListingsDao.watchAll()
-          : widget.database.cachedPropertyListingsDao
-              .watchByCategory(_selectedPropertyCategory),
-      builder: (context, snapshot) {
-        final listings = snapshot.data ?? [];
+    final listings = _selectedPropertyCategory == 'all'
+        ? _properties
+        : _properties
+            .where((p) =>
+                p.category ==
+                RealEstateCategory.fromString(_selectedPropertyCategory))
+            .toList();
 
-        return RefreshIndicator(
-          onRefresh: _syncFromConvex,
-          color: AppColors.emerald,
-          child: CustomScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              // Category Filter Chips
-              SliverToBoxAdapter(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Row(
-                    children: categories.map((cat) {
-                      final isSelected = _selectedPropertyCategory == cat['value'];
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: FilterChip(
-                          selected: isSelected,
-                          label: Text(cat['label']!),
-                          labelStyle: TextStyle(
-                            fontSize: 12,
-                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                            color: isSelected ? AppColors.white : AppColors.obsidian,
-                          ),
-                          selectedColor: AppColors.emerald,
-                          backgroundColor: AppColors.white,
-                          checkmarkColor: AppColors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                            side: BorderSide(
-                              color: isSelected ? AppColors.emerald : AppColors.border,
-                            ),
-                          ),
-                          onSelected: (selected) {
-                            setState(() {
-                              _selectedPropertyCategory = cat['value']!;
-                            });
-                          },
+    return RefreshIndicator(
+      onRefresh: _syncFromConvex,
+      color: AppColors.emerald,
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          // Category Filter Chips
+          SliverToBoxAdapter(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: categories.map((cat) {
+                  final isSelected = _selectedPropertyCategory == cat['value'];
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      selected: isSelected,
+                      label: Text(cat['label']!),
+                      labelStyle: TextStyle(
+                        fontSize: 12,
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                        color: isSelected ? AppColors.white : AppColors.obsidian,
+                      ),
+                      selectedColor: AppColors.emerald,
+                      backgroundColor: AppColors.white,
+                      checkmarkColor: AppColors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        side: BorderSide(
+                          color: isSelected ? AppColors.emerald : AppColors.border,
                         ),
-                      );
-                    }).toList(),
-                  ),
+                      ),
+                      onSelected: (selected) {
+                        setState(() {
+                          _selectedPropertyCategory = cat['value']!;
+                        });
+                      },
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+
+          if (_isSyncing && _properties.isEmpty)
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: CircularProgressIndicator(color: AppColors.emerald),
+              ),
+            )
+          else if (listings.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _buildEmptyState(
+                icon: Icons.home_work_outlined,
+                title: 'No properties found',
+                subtitle: _isSyncing
+                    ? 'Fetching from cloud...'
+                    : 'Check back soon or adjust filters.',
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    return _PropertyListingCard(
+                      listing: listings[index],
+                      currencyFormat: _currencyFormat,
+                      convexClient: widget.convexClient,
+                    );
+                  },
+                  childCount: listings.length,
                 ),
               ),
-
-              if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData)
-                const SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Center(
-                    child: CircularProgressIndicator(color: AppColors.emerald),
-                  ),
-                )
-              else if (listings.isEmpty)
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: _buildEmptyState(
-                    icon: Icons.home_work_outlined,
-                    title: 'No properties found',
-                    subtitle: _isSyncing
-                        ? 'Fetching from cloud...'
-                        : 'Check back soon or adjust filters.',
-                  ),
-                )
-              else
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  sliver: SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        return _PropertyListingCard(
-                          listing: listings[index],
-                          currencyFormat: _currencyFormat,
-                          database: widget.database,
-                          convexClient: widget.convexClient,
-                        );
-                      },
-                      childCount: listings.length,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        );
-      },
+            ),
+        ],
+      ),
     );
   }
 
@@ -468,98 +431,93 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
       {'label': 'Vehicles for Sale', 'value': 'sale'},
     ];
 
-    return StreamBuilder<List<CachedVehicleListing>>(
-      stream: _selectedMobilityIntent == 'all'
-          ? widget.database.cachedVehicleListingsDao.watchAll()
-          : widget.database.cachedVehicleListingsDao
-              .watchByIntent(_selectedMobilityIntent),
-      builder: (context, snapshot) {
-        final vehicles = snapshot.data ?? [];
+    final vehicles = _selectedMobilityIntent == 'all'
+        ? _vehicles
+        : _vehicles
+            .where((v) => v.listingIntent == _selectedMobilityIntent)
+            .toList();
 
-        return RefreshIndicator(
-          onRefresh: _syncFromConvex,
-          color: AppColors.emerald,
-          child: CustomScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              // Intent Filter Chips
-              SliverToBoxAdapter(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Row(
-                    children: intents.map((intent) {
-                      final isSelected = _selectedMobilityIntent == intent['value'];
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: FilterChip(
-                          selected: isSelected,
-                          label: Text(intent['label']!),
-                          labelStyle: TextStyle(
-                            fontSize: 12,
-                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                            color: isSelected ? AppColors.white : AppColors.obsidian,
-                          ),
-                          selectedColor: AppColors.emerald,
-                          backgroundColor: AppColors.white,
-                          checkmarkColor: AppColors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                            side: BorderSide(
-                              color: isSelected ? AppColors.emerald : AppColors.border,
-                            ),
-                          ),
-                          onSelected: (selected) {
-                            setState(() {
-                              _selectedMobilityIntent = intent['value']!;
-                            });
-                          },
+    return RefreshIndicator(
+      onRefresh: _syncFromConvex,
+      color: AppColors.emerald,
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          // Intent Filter Chips
+          SliverToBoxAdapter(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: intents.map((intent) {
+                  final isSelected = _selectedMobilityIntent == intent['value'];
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      selected: isSelected,
+                      label: Text(intent['label']!),
+                      labelStyle: TextStyle(
+                        fontSize: 12,
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                        color: isSelected ? AppColors.white : AppColors.obsidian,
+                      ),
+                      selectedColor: AppColors.emerald,
+                      backgroundColor: AppColors.white,
+                      checkmarkColor: AppColors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        side: BorderSide(
+                          color: isSelected ? AppColors.emerald : AppColors.border,
                         ),
-                      );
-                    }).toList(),
-                  ),
+                      ),
+                      onSelected: (selected) {
+                        setState(() {
+                          _selectedMobilityIntent = intent['value']!;
+                        });
+                      },
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+
+          if (_isSyncing && _vehicles.isEmpty)
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: CircularProgressIndicator(color: AppColors.emerald),
+              ),
+            )
+          else if (vehicles.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _buildEmptyState(
+                icon: Icons.directions_car_outlined,
+                title: 'No vehicles found',
+                subtitle: _isSyncing
+                    ? 'Fetching from cloud...'
+                    : 'Check back soon or adjust filters.',
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    return _VehicleListingCard(
+                      vehicle: vehicles[index],
+                      currencyFormat: _currencyFormat,
+                      convexClient: widget.convexClient,
+                    );
+                  },
+                  childCount: vehicles.length,
                 ),
               ),
-
-              if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData)
-                const SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Center(
-                    child: CircularProgressIndicator(color: AppColors.emerald),
-                  ),
-                )
-              else if (vehicles.isEmpty)
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: _buildEmptyState(
-                    icon: Icons.directions_car_outlined,
-                    title: 'No vehicles found',
-                    subtitle: _isSyncing
-                        ? 'Fetching from cloud...'
-                        : 'Check back soon or adjust filters.',
-                  ),
-                )
-              else
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  sliver: SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        return _VehicleListingCard(
-                          vehicle: vehicles[index],
-                          currencyFormat: _currencyFormat,
-                          database: widget.database,
-                          convexClient: widget.convexClient,
-                        );
-                      },
-                      childCount: vehicles.length,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        );
-      },
+            ),
+        ],
+      ),
     );
   }
 
@@ -598,27 +556,25 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
 // ═══════════════════════════════════════════════════════════════════
 
 class _PropertyListingCard extends StatelessWidget {
-  final CachedPropertyListing listing;
+  final PropertyListingEntity listing;
   final NumberFormat currencyFormat;
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
 
   const _PropertyListingCard({
     required this.listing,
     required this.currencyFormat,
-    required this.database,
     required this.convexClient,
   });
 
   String get _categoryBadgeText => switch (listing.category) {
-        'sale' => 'FOR SALE',
-        'long_term_rent' => 'ANNUAL RENT',
-        'hourly_guesthouse' => 'HOURLY GUESTHOUSE',
-        _ => listing.category.toUpperCase(),
+        RealEstateCategory.sale => 'FOR SALE',
+        RealEstateCategory.longTermRent => 'ANNUAL RENT',
+        RealEstateCategory.hourlyGuestHouse => 'HOURLY GUESTHOUSE',
       };
 
   String get _priceText {
-    if (listing.category == 'hourly_guesthouse' && listing.hourlyRate != null) {
+    if (listing.category == RealEstateCategory.hourlyGuestHouse &&
+        listing.hourlyRate != null) {
       return 'SLE ${currencyFormat.format(listing.hourlyRate)}/hr';
     }
     return 'SLE ${currencyFormat.format(listing.price)}';
@@ -630,7 +586,7 @@ class _PropertyListingCard extends StatelessWidget {
       onTap: () {
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => PropertyDetailScreen.fromCached(listing),
+            builder: (_) => PropertyDetailScreen.fromEntity(listing),
           ),
         );
       },
@@ -638,208 +594,210 @@ class _PropertyListingCard extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.only(bottom: 16),
         decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Image / Thumbnail
-          Stack(
-            children: [
-              Container(
-                height: 160,
-                width: double.infinity,
-                color: AppColors.gray100,
-                child: listing.primaryImageUrl != null &&
-                        listing.primaryImageUrl!.isNotEmpty
-                    ? Image.network(
-                        listing.primaryImageUrl!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _buildFallbackImage(),
-                      )
-                    : _buildFallbackImage(),
-              ),
-              // Category Chip
-              Positioned(
-                top: 12,
-                left: 12,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.obsidian.withValues(alpha: 0.85),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _categoryBadgeText,
-                    style: const TextStyle(
-                      color: AppColors.emerald,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ),
-              ),
-              // Price Tag
-              Positioned(
-                bottom: 12,
-                right: 12,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: AppColors.emerald,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _priceText,
-                    style: const TextStyle(
-                      color: AppColors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          // Details Body
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Image / Thumbnail
+            Stack(
               children: [
-                Text(
-                  listing.title,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.obsidian,
+                Container(
+                  height: 160,
+                  width: double.infinity,
+                  color: AppColors.gray100,
+                  child: listing.primaryImageUrl != null &&
+                          listing.primaryImageUrl!.isNotEmpty
+                      ? Image.network(
+                          listing.primaryImageUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => _buildFallbackImage(),
+                        )
+                      : _buildFallbackImage(),
+                ),
+                // Category Chip
+                Positioned(
+                  top: 12,
+                  left: 12,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.obsidian.withValues(alpha: 0.85),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _categoryBadgeText,
+                      style: const TextStyle(
+                        color: AppColors.emerald,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.location_on_outlined,
-                      size: 15,
-                      color: AppColors.gray500,
+                // Price Tag
+                Positioned(
+                  bottom: 12,
+                  right: 12,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: AppColors.emerald,
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        listing.address,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textSecondary,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    child: Text(
+                      _priceText,
+                      style: const TextStyle(
+                        color: AppColors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                // Action Buttons
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  PropertyDetailScreen.fromCached(listing),
-                            ),
-                          );
-                        },
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.obsidian,
-                          side: const BorderSide(color: AppColors.border),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                        ),
-                        child: const Text('View Details',
-                            style: TextStyle(fontSize: 12)),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () {
-                          final user = context.read<AuthBloc>().state.user;
-                          if (user == null) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Please log in to book or schedule a visit.'),
-                                backgroundColor: AppColors.obsidian,
-                                behavior: SnackBarBehavior.floating,
-                              ),
-                            );
-                            return;
-                          }
-
-                          if (listing.category == 'hourly_guesthouse') {
-                            HourlyBookingModal.show(
-                              context,
-                              property: listing,
-                              currentUser: user,
-                              database: database,
-                              convexClient: convexClient,
-                            );
-                          } else {
-                            PropertyInspectionModal.show(
-                              context,
-                              property: listing,
-                              currentUser: user,
-                              database: database,
-                              convexClient: convexClient,
-                            );
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.emerald,
-                          foregroundColor: AppColors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                        ),
-                        child: Text(
-                          listing.category == 'hourly_guesthouse'
-                              ? 'Instant Book'
-                              : 'Schedule Visit',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ),
-          ),
-        ],
+
+            // Details Body
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    listing.title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.obsidian,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.location_on_outlined,
+                        size: 15,
+                        color: AppColors.gray500,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          listing.address,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  // Action Buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    PropertyDetailScreen.fromEntity(listing),
+                              ),
+                            );
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.obsidian,
+                            side: const BorderSide(color: AppColors.border),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          child: const Text('View Details',
+                              style: TextStyle(fontSize: 12)),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            final user = context.read<AuthBloc>().state.user;
+                            if (user == null) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                      'Please log in to book or schedule a visit.'),
+                                  backgroundColor: AppColors.obsidian,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                              return;
+                            }
+
+                            if (listing.category ==
+                                RealEstateCategory.hourlyGuestHouse) {
+                              HourlyBookingModal.show(
+                                context,
+                                property: listing,
+                                currentUser: user,
+                                convexClient: convexClient,
+                              );
+                            } else {
+                              PropertyInspectionModal.show(
+                                context,
+                                property: listing,
+                                currentUser: user,
+                                convexClient: convexClient,
+                              );
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.emerald,
+                            foregroundColor: AppColors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          child: Text(
+                            listing.category ==
+                                    RealEstateCategory.hourlyGuestHouse
+                                ? 'Instant Book'
+                                : 'Schedule Visit',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
-    ));
+    );
   }
 
   Widget _buildFallbackImage() {
@@ -856,15 +814,13 @@ class _PropertyListingCard extends StatelessWidget {
 // ═══════════════════════════════════════════════════════════════════
 
 class _VehicleListingCard extends StatelessWidget {
-  final CachedVehicleListing vehicle;
+  final VehicleListingEntity vehicle;
   final NumberFormat currencyFormat;
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
 
   const _VehicleListingCard({
     required this.vehicle,
     required this.currencyFormat,
-    required this.database,
     required this.convexClient,
   });
 
@@ -889,13 +845,7 @@ class _VehicleListingCard extends StatelessWidget {
     return 'Contact for Price';
   }
 
-  IconData get _vehicleIcon => switch (vehicle.vehicleType) {
-        'bike' => Icons.two_wheeler_outlined,
-        'taxi' => Icons.local_taxi_outlined,
-        'delivery_van' => Icons.local_shipping_outlined,
-        'truck' => Icons.rv_hookup_outlined,
-        _ => Icons.directions_car_outlined,
-      };
+  IconData get _vehicleIcon => vehicle.vehicleType.iconData;
 
   @override
   Widget build(BuildContext context) {
@@ -903,7 +853,7 @@ class _VehicleListingCard extends StatelessWidget {
       onTap: () {
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => VehicleDetailScreen.fromCached(vehicle),
+            builder: (_) => VehicleDetailScreen.fromEntity(vehicle),
           ),
         );
       },
@@ -911,231 +861,234 @@ class _VehicleListingCard extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.only(bottom: 16),
         decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Image / Thumbnail
-          Stack(
-            children: [
-              Container(
-                height: 160,
-                width: double.infinity,
-                color: AppColors.gray100,
-                child: vehicle.primaryImageUrl != null &&
-                        vehicle.primaryImageUrl!.isNotEmpty
-                    ? Image.network(
-                        vehicle.primaryImageUrl!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _buildFallbackImage(),
-                      )
-                    : _buildFallbackImage(),
-              ),
-              // Intent Badge
-              Positioned(
-                top: 12,
-                left: 12,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.obsidian.withValues(alpha: 0.85),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _intentBadgeText,
-                    style: const TextStyle(
-                      color: AppColors.emerald,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ),
-              ),
-              // Price Tag
-              Positioned(
-                bottom: 12,
-                right: 12,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: AppColors.emerald,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _priceText,
-                    style: const TextStyle(
-                      color: AppColors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          // Details Body
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Image / Thumbnail
+            Stack(
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '${vehicle.make} ${vehicle.model}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.obsidian,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                Container(
+                  height: 160,
+                  width: double.infinity,
+                  color: AppColors.gray100,
+                  child: vehicle.primaryImageUrl != null &&
+                          vehicle.primaryImageUrl!.isNotEmpty
+                      ? Image.network(
+                          vehicle.primaryImageUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => _buildFallbackImage(),
+                        )
+                      : _buildFallbackImage(),
+                ),
+                // Intent Badge
+                Positioned(
+                  top: 12,
+                  left: 12,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.obsidian.withValues(alpha: 0.85),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _intentBadgeText,
+                      style: const TextStyle(
+                        color: AppColors.emerald,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
                       ),
                     ),
-                    Text(
-                      '${vehicle.year}',
+                  ),
+                ),
+                // Price Tag
+                Positioned(
+                  bottom: 12,
+                  right: 12,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: AppColors.emerald,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _priceText,
                       style: const TextStyle(
+                        color: AppColors.white,
                         fontSize: 13,
-                        color: AppColors.textSecondary,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Icon(_vehicleIcon, size: 16, color: AppColors.gray500),
-                    const SizedBox(width: 4),
-                    Text(
-                      vehicle.vehicleType.toUpperCase(),
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.textSecondary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                // Action Buttons
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  VehicleDetailScreen.fromCached(vehicle),
-                            ),
-                          );
-                        },
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.obsidian,
-                          side: const BorderSide(color: AppColors.border),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                        ),
-                        child: const Text('View Specs',
-                            style: TextStyle(fontSize: 12)),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () {
-                          final user = context.read<AuthBloc>().state.user;
-                          if (user == null) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Please log in to rent or book this vehicle.'),
-                                backgroundColor: AppColors.obsidian,
-                                behavior: SnackBarBehavior.floating,
-                              ),
-                            );
-                            return;
-                          }
-
-                          if (vehicle.listingIntent == 'rental') {
-                            VehicleRentalModal.show(
-                              context,
-                              vehicle: vehicle,
-                              currentUser: user,
-                              database: database,
-                              convexClient: convexClient,
-                            );
-                          } else if (vehicle.listingIntent == 'ride_hailing') {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Ride-hailing for ${vehicle.make} ${vehicle.model} - Opening driver dispatch...'),
-                                backgroundColor: AppColors.emerald,
-                                behavior: SnackBarBehavior.floating,
-                              ),
-                            );
-                          } else {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Purchase inquiry for ${vehicle.make} ${vehicle.model} sent to dealer.'),
-                                backgroundColor: AppColors.emerald,
-                                behavior: SnackBarBehavior.floating,
-                              ),
-                            );
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.emerald,
-                          foregroundColor: AppColors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                        ),
-                        child: Text(
-                          vehicle.listingIntent == 'ride_hailing'
-                              ? 'Book Ride'
-                              : (vehicle.listingIntent == 'rental'
-                                  ? 'Rent Now'
-                                  : 'Buy Vehicle'),
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ),
-          ),
-        ],
+
+            // Details Body
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${vehicle.make} ${vehicle.model}',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.obsidian,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Text(
+                        '${vehicle.year}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(_vehicleIcon, size: 16, color: AppColors.gray500),
+                      const SizedBox(width: 4),
+                      Text(
+                        vehicle.vehicleType.displayName.toUpperCase(),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  // Action Buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    VehicleDetailScreen.fromEntity(vehicle),
+                              ),
+                            );
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.obsidian,
+                            side: const BorderSide(color: AppColors.border),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          child: const Text('View Specs',
+                              style: TextStyle(fontSize: 12)),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            final user = context.read<AuthBloc>().state.user;
+                            if (user == null) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                      'Please log in to rent or book this vehicle.'),
+                                  backgroundColor: AppColors.obsidian,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                              return;
+                            }
+
+                            if (vehicle.listingIntent == 'rental') {
+                              VehicleRentalModal.show(
+                                context,
+                                vehicle: vehicle,
+                                currentUser: user,
+                                convexClient: convexClient,
+                              );
+                            } else if (vehicle.listingIntent == 'ride_hailing') {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                      'Ride-hailing for ${vehicle.make} ${vehicle.model} - Opening driver dispatch...'),
+                                  backgroundColor: AppColors.emerald,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                      'Purchase inquiry for ${vehicle.make} ${vehicle.model} sent to dealer.'),
+                                  backgroundColor: AppColors.emerald,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.emerald,
+                            foregroundColor: AppColors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          child: Text(
+                            vehicle.listingIntent == 'ride_hailing'
+                                ? 'Book Ride'
+                                : (vehicle.listingIntent == 'rental'
+                                    ? 'Rent Now'
+                                    : 'Buy Vehicle'),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
-    ));
+    );
   }
 
   Widget _buildFallbackImage() {
     return brandedMediaFallback(
-      icon: _vehicleIcon,
+      icon: Icons.directions_car_rounded,
       banner: _intentBadgeText,
       height: 160,
     );

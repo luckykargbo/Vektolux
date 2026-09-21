@@ -1,26 +1,23 @@
 // lib/features/bookings/presentation/views/my_bookings_screen.dart
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — My Bookings & Trips
-// Tabbed browsing for Active vs Historical bookings with Drift SQLite streams.
+// Tabbed browsing for Active vs Historical bookings powered directly by Convex Cloud.
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:drift/drift.dart' as drift;
 
-import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/domain/entities/user_entity.dart';
+import '../../domain/entities/booking_entity.dart';
 
 class MyBookingsScreen extends StatefulWidget {
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
   final UserEntity currentUser;
 
   const MyBookingsScreen({
     super.key,
-    required this.database,
     required this.convexClient,
     required this.currentUser,
   });
@@ -32,14 +29,15 @@ class MyBookingsScreen extends StatefulWidget {
 class _MyBookingsScreenState extends State<MyBookingsScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  bool _isSyncing = false;
+  bool _isLoading = true;
+  List<BookingEntity> _allBookings = [];
   final _currencyFormat = NumberFormat('#,##0', 'en_US');
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _syncBookingsFromConvex();
+    _fetchBookingsFromConvex();
   }
 
   @override
@@ -48,9 +46,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
     super.dispose();
   }
 
-  Future<void> _syncBookingsFromConvex() async {
-    if (_isSyncing) return;
-    setState(() => _isSyncing = true);
+  Future<void> _fetchBookingsFromConvex() async {
+    if (!mounted) return;
+    setState(() => _isLoading = true);
 
     try {
       final result = await widget.convexClient.query(
@@ -60,36 +58,26 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
 
       if (result.success && result.value is List) {
         final rawList = result.value as List;
-        final companions = rawList.map((item) {
-          final m = item as Map<String, dynamic>;
-          return CachedBookingsTableCompanion.insert(
-            id: m['_id'] as String,
-            listingId: m['listingId'] as String,
-            listingTitle: drift.Value(m['listingTitle'] as String? ?? ''),
-            buyerId: m['buyerId'] as String,
-            vendorId: m['vendorId'] as String,
-            bookingType: m['bookingType'] as String,
-            startTime: (m['startTime'] as num).toInt(),
-            endTime: (m['endTime'] as num).toInt(),
-            totalAmount: (m['totalAmount'] as num).toDouble(),
-            currency: drift.Value(m['currency'] as String? ?? 'SLE'),
-            paymentStatus: m['paymentStatus'] as String,
-            bookingStatus:
-                drift.Value(m['status'] as String? ?? 'pending_payment'),
-            cachedAt: DateTime.now().millisecondsSinceEpoch,
-          );
-        }).toList();
+        final list = rawList
+            .map((item) => BookingEntity.fromJson(item as Map<String, dynamic>))
+            .toList();
 
-        await widget.database.cachedBookingsDao.insertAll(companions);
+        if (mounted) {
+          setState(() {
+            _allBookings = list;
+            _isLoading = false;
+          });
+        }
+        return;
       }
     } catch (_) {
-      // Offline fallback
-    } finally {
-      if (mounted) setState(() => _isSyncing = false);
+      // Ignore or log error
     }
+
+    if (mounted) setState(() => _isLoading = false);
   }
 
-  Future<void> _cancelBooking(CachedBooking booking) async {
+  Future<void> _cancelBooking(BookingEntity booking) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) {
@@ -142,8 +130,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
     if (confirmed != true) return;
 
     try {
-      // 1. Convex Mutation
-      await widget.convexClient.mutation(
+      final res = await widget.convexClient.mutation(
         'bookings:cancelBooking',
         args: {
           'bookingId': booking.id,
@@ -152,26 +139,24 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
         },
       );
 
-      // 2. Update local Drift SQLite
-      await widget.database.cachedBookingsDao.updateStatus(
-        id: booking.id,
-        bookingStatus: 'cancelled',
-        paymentStatus: booking.paymentStatus,
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Booking successfully cancelled'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+      if (res.success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Booking successfully cancelled'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        _fetchBookingsFromConvex();
+      } else {
+        throw Exception(res.errorMessage ?? 'Failed to cancel booking');
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: ${e.toString()}'),
+            content: Text('Error: ${e.toString().replaceAll("Exception: ", "")}'),
             backgroundColor: AppColors.error,
             behavior: SnackBarBehavior.floating,
           ),
@@ -182,6 +167,18 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
 
   @override
   Widget build(BuildContext context) {
+    final activeBookings = _allBookings
+        .where((b) =>
+            b.status != BookingStatus.completed &&
+            b.status != BookingStatus.cancelled)
+        .toList();
+
+    final historicalBookings = _allBookings
+        .where((b) =>
+            b.status == BookingStatus.completed ||
+            b.status == BookingStatus.cancelled)
+        .toList();
+
     return Scaffold(
       backgroundColor: AppColors.gray50,
       appBar: AppBar(
@@ -194,7 +191,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
         ),
         actions: [
           IconButton(
-            icon: _isSyncing
+            icon: _isLoading
                 ? const SizedBox(
                     width: 18,
                     height: 18,
@@ -205,7 +202,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
                     ),
                   )
                 : const Icon(Icons.refresh_rounded, color: AppColors.emerald),
-            onPressed: _syncBookingsFromConvex,
+            onPressed: _fetchBookingsFromConvex,
           ),
         ],
         bottom: TabBar(
@@ -225,17 +222,12 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
       body: TabBarView(
         controller: _tabController,
         children: [
-          // Tab 1: Active
           _buildBookingList(
-            stream: widget.database.cachedBookingsDao
-                .watchActiveUserBookings(widget.currentUser.id),
+            list: activeBookings,
             emptyMessage: 'No upcoming stays or trips scheduled.',
           ),
-
-          // Tab 2: Historical
           _buildBookingList(
-            stream: widget.database.cachedBookingsDao
-                .watchHistoricalUserBookings(widget.currentUser.id),
+            list: historicalBookings,
             emptyMessage: 'No past completed or cancelled bookings.',
           ),
         ],
@@ -244,62 +236,64 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
   }
 
   Widget _buildBookingList({
-    required Stream<List<CachedBooking>> stream,
+    required List<BookingEntity> list,
     required String emptyMessage,
   }) {
-    return StreamBuilder<List<CachedBooking>>(
-      stream: stream,
-      builder: (context, snapshot) {
-        final list = snapshot.data ?? [];
+    if (_isLoading && list.isEmpty) {
+      return const Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(AppColors.emerald),
+        ),
+      );
+    }
 
-        if (list.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(
-                  Icons.event_available_outlined,
-                  size: 56,
-                  color: AppColors.gray400,
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  emptyMessage,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: AppColors.textSecondary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                OutlinedButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Explore Discovery Feed'),
-                ),
-              ],
+    if (list.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.event_available_outlined,
+              size: 56,
+              color: AppColors.gray400,
             ),
-          );
-        }
+            const SizedBox(height: 14),
+            Text(
+              emptyMessage,
+              style: const TextStyle(
+                fontSize: 14,
+                color: AppColors.textSecondary,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 18),
+            OutlinedButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Explore Discovery Feed'),
+            ),
+          ],
+        ),
+      );
+    }
 
-        return RefreshIndicator(
-          onRefresh: _syncBookingsFromConvex,
-          color: AppColors.emerald,
-          child: ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: list.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 12),
-            itemBuilder: (context, index) {
-              final booking = list[index];
-              return _buildBookingCard(booking);
-            },
-          ),
-        );
-      },
+    return RefreshIndicator(
+      onRefresh: _fetchBookingsFromConvex,
+      color: AppColors.emerald,
+      child: ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: list.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (context, index) {
+          final booking = list[index];
+          return _buildBookingCard(booking);
+        },
+      ),
     );
   }
 
-  Widget _buildBookingCard(CachedBooking booking) {
-    final isInspection = booking.bookingType.contains('inspection');
+  Widget _buildBookingCard(BookingEntity booking) {
+    final isInspection = booking.bookingType == BookingType.propertyInspection ||
+        booking.bookingType == BookingType.vehicleInspection;
     final startDate =
         DateTime.fromMillisecondsSinceEpoch(booking.startTime);
 
@@ -329,7 +323,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
                   Icon(
                     isInspection
                         ? Icons.visibility_outlined
-                        : (booking.bookingType.contains('vehicle')
+                        : (booking.bookingType == BookingType.vehicleRental
                             ? Icons.directions_car_outlined
                             : Icons.bed_outlined),
                     size: 16,
@@ -337,7 +331,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    booking.bookingType.replaceAll('_', ' ').toUpperCase(),
+                    booking.bookingType.displayName.toUpperCase(),
                     style: const TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
@@ -346,7 +340,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
                   ),
                 ],
               ),
-              _buildStatusBadge(booking.bookingStatus),
+              _buildStatusBadge(booking.status),
             ],
           ),
           const SizedBox(height: 10),
@@ -355,7 +349,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
           Text(
             booking.listingTitle.isNotEmpty
                 ? booking.listingTitle
-                : 'Listing #${booking.listingId.substring(0, 8)}',
+                : 'Listing #${booking.listingId.length > 8 ? booking.listingId.substring(0, 8) : booking.listingId}',
             style: const TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w700,
@@ -407,8 +401,8 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
                   ),
                 ],
               ),
-              if (booking.bookingStatus != 'cancelled' &&
-                  booking.bookingStatus != 'completed') ...[
+              if (booking.status != BookingStatus.cancelled &&
+                  booking.status != BookingStatus.completed) ...[
                 TextButton(
                   onPressed: () => _cancelBooking(booking),
                   style: TextButton.styleFrom(
@@ -424,36 +418,32 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
     );
   }
 
-  Widget _buildStatusBadge(String status) {
+  Widget _buildStatusBadge(BookingStatus status) {
     Color bg;
     Color fg;
-    String label;
+    String label = status.displayName;
 
     switch (status) {
-      case 'confirmed':
+      case BookingStatus.confirmed:
         bg = AppColors.emeraldSurface;
         fg = AppColors.emeraldDark;
-        label = 'CONFIRMED';
         break;
-      case 'pending_payment':
+      case BookingStatus.pendingPayment:
         bg = AppColors.amberSurface;
         fg = AppColors.amber;
-        label = 'PENDING PAYMENT';
         break;
-      case 'completed':
+      case BookingStatus.completed:
         bg = AppColors.gray100;
         fg = AppColors.gray700;
-        label = 'COMPLETED';
         break;
-      case 'cancelled':
+      case BookingStatus.cancelled:
         bg = AppColors.errorLight;
         fg = AppColors.error;
-        label = 'CANCELLED';
         break;
-      default:
-        bg = AppColors.gray100;
-        fg = AppColors.obsidian;
-        label = status.toUpperCase();
+      case BookingStatus.inProgress:
+        bg = AppColors.emeraldSurface;
+        fg = AppColors.emerald;
+        break;
     }
 
     return Container(
@@ -463,7 +453,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
-        label,
+        label.toUpperCase(),
         style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: fg),
       ),
     );

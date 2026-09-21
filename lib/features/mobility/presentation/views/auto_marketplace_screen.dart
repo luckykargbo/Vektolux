@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
-import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/vx_network_image.dart';
@@ -21,12 +20,10 @@ import 'delivery_van_booking_screen.dart';
 import 'my_escrow_orders_screen.dart';
 
 class AutoMarketplaceScreen extends StatefulWidget {
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
 
   const AutoMarketplaceScreen({
     super.key,
-    required this.database,
     required this.convexClient,
   });
 
@@ -88,38 +85,10 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
           });
         }
       } else {
-        _fetchCached();
+        if (mounted) setState(() => _isLoading = false);
       }
     } catch (_) {
-      _fetchCached();
-    }
-  }
-
-  Future<void> _fetchCached() async {
-    final cached =
-        await widget.database.cachedVehicleListingsDao.getAll();
-    if (mounted) {
-      setState(() {
-        _allVehicles = cached
-            .map((v) => {
-                  '_id': v.id,
-                  'title': '${v.year} ${v.make} ${v.model}',
-                  'make': v.make,
-                  'model': v.model,
-                  'year': v.year,
-                  'salePrice': v.salePrice ?? 120000.0,
-                  'pricePerDay': v.pricePerDay,
-                  'imageUrls':
-                      v.primaryImageUrl != null ? [v.primaryImageUrl!] : [],
-                  'vehicleType': v.vehicleType,
-                  'listingIntent': v.listingIntent,
-                  'category': v.listingIntent == 'rental' ? 'car_rental' : 'car_sale',
-                  'transmission': 'Automatic',
-                  'fuelType': 'Petrol',
-                })
-            .toList();
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -205,7 +174,6 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
     final res = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => CreateListingScreen(
-          database: widget.database,
           convexClient: widget.convexClient,
           currentUser: user,
         ),

@@ -7,7 +7,6 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -15,18 +14,15 @@ import '../../../../core/theme/components/verified_badge.dart';
 import '../../../auth/domain/entities/user_entity.dart';
 import '../../../verification/presentation/views/identity_verification_screen.dart';
 import '../../../verification/presentation/widgets/verification_gate_banner.dart';
-import 'package:drift/drift.dart' show Value;
 
 enum ListingType { property, vehicle }
 
 class CreateListingScreen extends StatefulWidget {
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
   final UserEntity currentUser;
 
   const CreateListingScreen({
     super.key,
-    required this.database,
     required this.convexClient,
     required this.currentUser,
   });
@@ -164,7 +160,6 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
         builder: (ctx) => IdentityVerificationScreen(
           convexClient: widget.convexClient,
           currentUser: widget.currentUser,
-          usersDao: widget.database.cachedUsersDao,
           onVerificationComplete: () {
             Navigator.of(ctx).pop();
             setState(() {
@@ -388,28 +383,9 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
           },
         );
 
-        final listingId = result.success && result.value != null
-            ? result.value as String
-            : 'local_${DateTime.now().millisecondsSinceEpoch}';
-
-        // 2. Cache into SQLite for instant offline availability
-        await widget.database.cachedPropertyListingsDao.insertOrUpdate(
-          CachedPropertyListingsTableCompanion.insert(
-            id: listingId,
-            ownerId: widget.currentUser.id,
-            title: _propTitleController.text.trim(),
-            description: _propDescController.text.trim(),
-            category: _propCategory,
-            price: price,
-            hourlyRate: Value(hourlyRate),
-            address: _propAddressController.text.trim(),
-            latitude: _propLat,
-            longitude: _propLng,
-            primaryImageUrl:
-                Value(_imageUrls.isNotEmpty ? _imageUrls.first : null),
-            cachedAt: DateTime.now().millisecondsSinceEpoch,
-          ),
-        );
+        if (!result.success) {
+          throw Exception(result.errorMessage ?? 'Failed to create property listing');
+        }
       } else {
         // Vehicle Listing
         final pricePerKm =
@@ -451,34 +427,15 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
           },
         );
 
-        final listingId = result.success && result.value != null
-            ? result.value as String
-            : 'local_${DateTime.now().millisecondsSinceEpoch}';
-
-        // 2. Cache into SQLite
-        await widget.database.cachedVehicleListingsDao.insertOrUpdate(
-          CachedVehicleListingsTableCompanion.insert(
-            id: listingId,
-            ownerId: widget.currentUser.id,
-            vehicleType: _vehType,
-            listingIntent: _vehIntent,
-            make: _vehMakeController.text.trim(),
-            model: _vehModelController.text.trim(),
-            year: year,
-            pricePerKm: Value(pricePerKm),
-            pricePerDay: Value(pricePerDay),
-            salePrice: Value(salePrice),
-            primaryImageUrl:
-                Value(_imageUrls.isNotEmpty ? _imageUrls.first : null),
-            cachedAt: DateTime.now().millisecondsSinceEpoch,
-          ),
-        );
+        if (!result.success) {
+          throw Exception(result.errorMessage ?? 'Failed to create vehicle listing');
+        }
       }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Listing published and cached successfully!'),
+            content: Text('Listing published successfully!'),
             backgroundColor: AppColors.emerald,
             behavior: SnackBarBehavior.floating,
           ),

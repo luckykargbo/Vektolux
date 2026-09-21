@@ -11,7 +11,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../../core/theme/app_colors.dart';
-import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../widgets/smooth_driver_marker.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
@@ -161,7 +160,6 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => CheckoutScreen(
-          database: context.read<AppDatabase>(),
           convexClient: context.read<ConvexClientWrapper>(),
           currentUser: user,
           listingId: vehicle.id,
@@ -892,7 +890,6 @@ class _MobilityHomeScreenState extends State<MobilityHomeScreen> {
               Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => DiscoveryFeedScreen(
-                    database: context.read<AppDatabase>(),
                     convexClient: context.read<ConvexClientWrapper>(),
                   ),
                 ),

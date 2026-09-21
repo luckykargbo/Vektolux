@@ -129,6 +129,37 @@ class BookingEntity extends Equatable {
     required this.updatedAt,
   });
 
+  factory BookingEntity.fromJson(Map<String, dynamic> json) {
+    return BookingEntity(
+      id: (json['_id'] ?? json['id'] ?? '') as String,
+      listingId: (json['listingId'] ?? '') as String,
+      listingTitle: (json['listingTitle'] ?? '') as String,
+      listingType: (json['listingType'] ?? 'property') as String,
+      buyerId: (json['buyerId'] ?? '') as String,
+      buyerName: json['buyerName'] as String?,
+      buyerPhone: json['buyerPhone'] as String?,
+      vendorId: (json['vendorId'] ?? '') as String,
+      bookingType: BookingTypeX.fromString((json['bookingType'] ?? '') as String),
+      status: BookingStatusX.fromString((json['status'] ?? json['bookingStatus'] ?? 'pending_payment') as String),
+      startTime: (json['startTime'] as num?)?.toInt() ?? 0,
+      endTime: (json['endTime'] as num?)?.toInt() ?? 0,
+      hours: (json['hours'] as num?)?.toInt(),
+      days: (json['days'] as num?)?.toInt(),
+      subtotal: (json['subtotal'] as num?)?.toDouble() ?? 0.0,
+      serviceFee: (json['serviceFee'] as num?)?.toDouble() ?? 0.0,
+      totalAmount: (json['totalAmount'] as num?)?.toDouble() ?? 0.0,
+      currency: (json['currency'] ?? 'SLE') as String,
+      paymentStatus: (json['paymentStatus'] ?? 'pending') as String,
+      paymentMethod: json['paymentMethod'] as String?,
+      txRef: json['txRef'] as String?,
+      flwRef: json['flwRef'] as String?,
+      notes: json['notes'] as String?,
+      updatedAt: (json['updatedAt'] as num?)?.toInt() ??
+          (json['_creationTime'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
   @override
   List<Object?> get props => [
         id,

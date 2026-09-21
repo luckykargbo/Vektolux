@@ -1,11 +1,9 @@
 // lib/features/mobility/data/models/ride_model.dart
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Ride Data Model
-// Bridges SQLite Drift CachedRide & Convex JSON to RideEntity
+// Direct Convex Cloud JSON parser for RideEntity
 // ═══════════════════════════════════════════════════════════════════════
 
-import '../../../../core/database/app_database.dart';
-import '../../../../core/database/tables/cached_entities_table.dart';
 import '../../domain/entities/ride_entity.dart';
 
 class RideModel extends RideEntity {
@@ -40,36 +38,6 @@ class RideModel extends RideEntity {
     super.vehicleColor,
     super.vehiclePlate,
   });
-
-  /// Convert from Drift SQLite CachedRide record.
-  factory RideModel.fromCached(CachedRide cached) {
-    return RideModel(
-      id: cached.id,
-      passengerId: cached.passengerId,
-      driverId: cached.driverId,
-      vehicleId: cached.vehicleId,
-      pickupLat: cached.pickupLat,
-      pickupLng: cached.pickupLng,
-      pickupAddress: cached.pickupAddress ?? 'Pickup Point',
-      dropoffLat: cached.dropoffLat,
-      dropoffLng: cached.dropoffLng,
-      dropoffAddress: cached.dropoffAddress ?? 'Destination',
-      distanceKm: cached.distanceKm,
-      estimatedDurationMin: cached.estimatedDurationMin,
-      fareAmount: cached.fareAmount,
-      currency: cached.currency,
-      platformFee: cached.platformFee,
-      driverPayout: cached.driverPayout,
-      status: RideStatus.fromString(cached.status),
-      paymentStatus: cached.paymentStatus,
-      paymentReference: cached.paymentReference,
-      blockchainLogHash: cached.blockchainLogHash,
-      // Default fallback values until enriched from driver lookup
-      driverName: cached.driverId != null ? 'Assigned Driver' : null,
-      driverPhone: cached.driverId != null ? '+232 76 123456' : null,
-      driverRating: 4.9,
-    );
-  }
 
   /// Convert from Convex JSON response.
   factory RideModel.fromJson(Map<String, dynamic> json) {
@@ -109,32 +77,37 @@ class RideModel extends RideEntity {
     );
   }
 
-  /// Convert to Drift SQLite CachedRide record.
-  CachedRide toCached() {
-    return CachedRide(
-      id: id,
-      passengerId: passengerId,
-      driverId: driverId,
-      vehicleId: vehicleId,
-      pickupLat: pickupLat,
-      pickupLng: pickupLng,
-      pickupAddress: pickupAddress,
-      dropoffLat: dropoffLat,
-      dropoffLng: dropoffLng,
-      dropoffAddress: dropoffAddress,
-      distanceKm: distanceKm,
-      estimatedDurationMin: estimatedDurationMin,
-      fareAmount: fareAmount,
-      currency: currency,
-      platformFee: platformFee,
-      driverPayout: driverPayout,
-      status: status.name,
-      paymentStatus: paymentStatus,
-      paymentReference: paymentReference,
-      blockchainLogHash: blockchainLogHash,
-      syncStatus: EntitySyncStatus.synced,
-      localUpdatedAt: DateTime.now().millisecondsSinceEpoch,
-      remoteUpdatedAt: DateTime.now().millisecondsSinceEpoch,
-    );
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'passengerId': passengerId,
+      'driverId': driverId,
+      'vehicleId': vehicleId,
+      'pickupLat': pickupLat,
+      'pickupLng': pickupLng,
+      'pickupAddress': pickupAddress,
+      'dropoffLat': dropoffLat,
+      'dropoffLng': dropoffLng,
+      'dropoffAddress': dropoffAddress,
+      'distanceKm': distanceKm,
+      'estimatedDurationMin': estimatedDurationMin,
+      'fareAmount': fareAmount,
+      'currency': currency,
+      'platformFee': platformFee,
+      'driverPayout': driverPayout,
+      'status': status.name,
+      'paymentStatus': paymentStatus,
+      'paymentReference': paymentReference,
+      'blockchainLogHash': blockchainLogHash,
+      'driverName': driverName,
+      'driverPhone': driverPhone,
+      'driverRating': driverRating,
+      'driverLat': driverLat,
+      'driverLng': driverLng,
+      'vehicleMake': vehicleMake,
+      'vehicleModel': vehicleModel,
+      'vehicleColor': vehicleColor,
+      'vehiclePlate': vehiclePlate,
+    };
   }
 }

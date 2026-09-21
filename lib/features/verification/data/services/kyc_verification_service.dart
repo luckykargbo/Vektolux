@@ -9,7 +9,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:logger/logger.dart';
 
-import '../../../../core/database/daos/cached_users_dao.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../domain/entities/verification_record.dart';
 
@@ -80,16 +79,13 @@ abstract class KycVerificationService {
 /// Production implementation of KycVerificationService.
 class KycVerificationServiceImpl implements KycVerificationService {
   final ConvexClientWrapper _convexClient;
-  final CachedUsersDao? _usersDao;
   final http.Client _httpClient;
   final Logger _log = Logger(printer: PrettyPrinter(methodCount: 0));
 
   KycVerificationServiceImpl({
     required ConvexClientWrapper convexClient,
-    CachedUsersDao? usersDao,
     http.Client? httpClient,
   })  : _convexClient = convexClient,
-        _usersDao = usersDao,
         _httpClient = httpClient ?? http.Client();
 
   @override
@@ -180,13 +176,6 @@ class KycVerificationServiceImpl implements KycVerificationService {
             ? result.value as Map<String, dynamic>
             : <String, dynamic>{};
 
-        if (_usersDao != null) {
-          await _usersDao.updateVerificationStatus(
-            userId: userId,
-            isVerified: true,
-          );
-        }
-
         _log.i('Simulated verification successful for user $userId');
         return KycResult(
           success: true,
@@ -199,13 +188,7 @@ class KycVerificationServiceImpl implements KycVerificationService {
 
       // If Convex backend returned an error or is unreachable during mock mode,
       // gracefully complete mock verification locally so the developer/tester is never blocked.
-      _log.w('Convex mock mutation returned: ${result.errorMessage}. Gracefully completing mock verification locally.');
-      if (_usersDao != null) {
-        await _usersDao.updateVerificationStatus(
-          userId: userId,
-          isVerified: true,
-        );
-      }
+      _log.w('Convex mock mutation returned: ${result.errorMessage}. Gracefully completing mock verification.');
 
       return KycResult(
         success: true,
@@ -214,13 +197,7 @@ class KycVerificationServiceImpl implements KycVerificationService {
         referenceId: 'vkt_mock_${DateTime.now().millisecondsSinceEpoch}',
       );
     } catch (e) {
-      _log.w('Mock verification caught exception: $e. Gracefully completing mock verification locally.');
-      if (_usersDao != null) {
-        await _usersDao.updateVerificationStatus(
-          userId: userId,
-          isVerified: true,
-        );
-      }
+      _log.w('Mock verification caught exception: $e. Gracefully completing mock verification.');
 
       return KycResult(
         success: true,

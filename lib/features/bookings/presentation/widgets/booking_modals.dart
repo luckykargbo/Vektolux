@@ -9,12 +9,12 @@
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:drift/drift.dart' as drift;
 
-import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/domain/entities/user_entity.dart';
+import '../../../mobility/domain/entities/mobility_vehicle_entity.dart';
+import '../../../real_estate/domain/entities/property_listing_entity.dart';
 import '../views/checkout_screen.dart';
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -22,24 +22,21 @@ import '../views/checkout_screen.dart';
 // ═══════════════════════════════════════════════════════════════════════
 
 class PropertyInspectionModal extends StatefulWidget {
-  final CachedPropertyListing property;
+  final PropertyListingEntity property;
   final UserEntity currentUser;
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
 
   const PropertyInspectionModal({
     super.key,
     required this.property,
     required this.currentUser,
-    required this.database,
     required this.convexClient,
   });
 
   static Future<void> show(
     BuildContext context, {
-    required CachedPropertyListing property,
+    required PropertyListingEntity property,
     required UserEntity currentUser,
-    required AppDatabase database,
     required ConvexClientWrapper convexClient,
   }) {
     return showModalBottomSheet(
@@ -49,7 +46,6 @@ class PropertyInspectionModal extends StatefulWidget {
       builder: (_) => PropertyInspectionModal(
         property: property,
         currentUser: currentUser,
-        database: database,
         convexClient: convexClient,
       ),
     );
@@ -97,7 +93,7 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
       final endDateTime = startDateTime.add(const Duration(hours: 1));
 
       // 1. Convex Mutation
-      final result = await widget.convexClient.mutation(
+      await widget.convexClient.mutation(
         'bookings:createBooking',
         args: {
           'listingId': widget.property.id,
@@ -116,28 +112,6 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
         },
       );
 
-      final bookingId = result.success && result.value != null
-          ? (result.value as Map<String, dynamic>)['bookingId'] as String
-          : 'insp_${DateTime.now().millisecondsSinceEpoch}';
-
-      // 2. Cache into Drift SQLite
-      await widget.database.cachedBookingsDao.insertOrUpdate(
-        CachedBookingsTableCompanion.insert(
-          id: bookingId,
-          listingId: widget.property.id,
-          listingTitle: drift.Value(widget.property.title),
-          buyerId: widget.currentUser.id,
-          vendorId: widget.property.ownerId,
-          bookingType: 'property_inspection',
-          startTime: startDateTime.millisecondsSinceEpoch,
-          endTime: endDateTime.millisecondsSinceEpoch,
-          totalAmount: 0.0,
-          currency: const drift.Value('SLE'),
-          paymentStatus: 'completed',
-          bookingStatus: const drift.Value('confirmed'),
-          cachedAt: DateTime.now().millisecondsSinceEpoch,
-        ),
-      );
 
       if (mounted) {
         Navigator.of(context).pop();
@@ -387,24 +361,21 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
 // ═══════════════════════════════════════════════════════════════════════
 
 class HourlyBookingModal extends StatefulWidget {
-  final CachedPropertyListing property;
+  final PropertyListingEntity property;
   final UserEntity currentUser;
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
 
   const HourlyBookingModal({
     super.key,
     required this.property,
     required this.currentUser,
-    required this.database,
     required this.convexClient,
   });
 
   static Future<void> show(
     BuildContext context, {
-    required CachedPropertyListing property,
+    required PropertyListingEntity property,
     required UserEntity currentUser,
-    required AppDatabase database,
     required ConvexClientWrapper convexClient,
   }) {
     return showModalBottomSheet(
@@ -414,7 +385,6 @@ class HourlyBookingModal extends StatefulWidget {
       builder: (_) => HourlyBookingModal(
         property: property,
         currentUser: currentUser,
-        database: database,
         convexClient: convexClient,
       ),
     );
@@ -443,13 +413,12 @@ class _HourlyBookingModalState extends State<HourlyBookingModal> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => CheckoutScreen(
-          database: widget.database,
           convexClient: widget.convexClient,
           currentUser: widget.currentUser,
           listingId: widget.property.id,
           listingType: 'property',
           listingTitle: widget.property.title,
-          listingSubtitle: '${widget.property.address}, ${widget.property.category.replaceAll('_', ' ').toUpperCase()}',
+          listingSubtitle: '${widget.property.address}, ${widget.property.category.displayName.toUpperCase()}',
           primaryImageUrl: widget.property.primaryImageUrl,
           vendorId: widget.property.ownerId,
           bookingType: 'hourly_guesthouse',
@@ -719,24 +688,21 @@ class _HourlyBookingModalState extends State<HourlyBookingModal> {
 // ═══════════════════════════════════════════════════════════════════════
 
 class VehicleRentalModal extends StatefulWidget {
-  final CachedVehicleListing vehicle;
+  final VehicleListingEntity vehicle;
   final UserEntity currentUser;
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
 
   const VehicleRentalModal({
     super.key,
     required this.vehicle,
     required this.currentUser,
-    required this.database,
     required this.convexClient,
   });
 
   static Future<void> show(
     BuildContext context, {
-    required CachedVehicleListing vehicle,
+    required VehicleListingEntity vehicle,
     required UserEntity currentUser,
-    required AppDatabase database,
     required ConvexClientWrapper convexClient,
   }) {
     return showModalBottomSheet(
@@ -746,7 +712,6 @@ class VehicleRentalModal extends StatefulWidget {
       builder: (_) => VehicleRentalModal(
         vehicle: vehicle,
         currentUser: currentUser,
-        database: database,
         convexClient: convexClient,
       ),
     );
@@ -777,13 +742,12 @@ class _VehicleRentalModalState extends State<VehicleRentalModal> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => CheckoutScreen(
-          database: widget.database,
           convexClient: widget.convexClient,
           currentUser: widget.currentUser,
           listingId: widget.vehicle.id,
           listingType: 'vehicle',
           listingTitle: '${widget.vehicle.make} ${widget.vehicle.model} (${widget.vehicle.year})',
-          listingSubtitle: '${widget.vehicle.vehicleType.toUpperCase()} · ${_includeDriver ? 'With Dedicated Driver' : 'Self-Drive'}',
+          listingSubtitle: '${widget.vehicle.vehicleType.displayName.toUpperCase()} · ${_includeDriver ? 'With Dedicated Driver' : 'Self-Drive'}',
           primaryImageUrl: widget.vehicle.primaryImageUrl,
           vendorId: widget.vehicle.ownerId,
           bookingType: 'vehicle_rental',

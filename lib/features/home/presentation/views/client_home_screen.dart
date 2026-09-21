@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
-import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/services/image_upload_service.dart';
@@ -26,12 +25,10 @@ import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../../../notifications/presentation/views/notifications_screen.dart';
 
 class ClientHomeScreen extends StatefulWidget {
-  final AppDatabase database;
   final ConvexClientWrapper convexClient;
 
   const ClientHomeScreen({
     super.key,
-    required this.database,
     required this.convexClient,
   });
 
@@ -111,10 +108,10 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           });
         }
       } else {
-        _loadCachedProperties();
+        if (mounted) setState(() => _isLoadingProperties = false);
       }
     } catch (_) {
-      _loadCachedProperties();
+      if (mounted) setState(() => _isLoadingProperties = false);
     }
 
     // 2. Fetch vehicles from Convex
@@ -133,52 +130,10 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           });
         }
       } else {
-        _loadCachedVehicles();
+        if (mounted) setState(() => _isLoadingVehicles = false);
       }
     } catch (_) {
-      _loadCachedVehicles();
-    }
-  }
-
-  Future<void> _loadCachedProperties() async {
-    final cached = await widget.database.cachedPropertyListingsDao.getAll();
-    if (mounted) {
-      setState(() {
-        _properties = cached.map((p) => {
-          '_id': p.id,
-          'title': p.title,
-          'description': p.description,
-          'category': p.category,
-          'price': p.price,
-          'hourlyRate': p.hourlyRate,
-          'address': p.address,
-          'imageUrls': p.primaryImageUrl != null ? [p.primaryImageUrl!] : [],
-          'bedrooms': 3,
-          'bathrooms': 2,
-          'areaSqM': 180,
-          'amenities': ['EDSA Power', 'Guma Water'],
-        }).toList();
-        _isLoadingProperties = false;
-      });
-    }
-  }
-
-  Future<void> _loadCachedVehicles() async {
-    final cached = await widget.database.cachedVehicleListingsDao.getAll();
-    if (mounted) {
-      setState(() {
-        _vehicles = cached.map((v) => {
-          '_id': v.id,
-          'make': v.make,
-          'model': v.model,
-          'year': v.year,
-          'salePrice': v.salePrice ?? 120000.0,
-          'pricePerDay': v.pricePerDay,
-          'imageUrls': v.primaryImageUrl != null ? [v.primaryImageUrl!] : [],
-          'vehicleType': v.vehicleType,
-        }).toList();
-        _isLoadingVehicles = false;
-      });
+      if (mounted) setState(() => _isLoadingVehicles = false);
     }
   }
 
@@ -245,7 +200,6 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     final res = await Navigator.of(context).push<bool>(
                       MaterialPageRoute(
                         builder: (_) => CreateListingScreen(
-                          database: widget.database,
                           convexClient: widget.convexClient,
                           currentUser: user,
                         ),

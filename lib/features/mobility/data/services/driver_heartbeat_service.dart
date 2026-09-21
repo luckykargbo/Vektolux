@@ -1,8 +1,8 @@
 // lib/features/mobility/data/services/driver_heartbeat_service.dart
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Driver Location Heartbeat & Background Service
-// Periodically updates driver coordinates in Convex Cloud and local Drift SQLite
-// every 5-10 seconds while the driver is toggled online.
+// Periodically updates driver coordinates in Convex Cloud
+// every 4 seconds while the driver is toggled online.
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
@@ -11,11 +11,9 @@ import 'package:geolocator/geolocator.dart';
 import 'package:logger/logger.dart';
 
 import '../../../../core/network/convex_client_wrapper.dart';
-import '../../../../core/database/daos/cached_driver_profiles_dao.dart';
 
 class DriverHeartbeatService {
   final ConvexClientWrapper _convexClient;
-  final CachedDriverProfilesDao _driverDao;
   final Logger _log = Logger(printer: PrettyPrinter(methodCount: 0));
 
   Timer? _heartbeatTimer;
@@ -33,9 +31,7 @@ class DriverHeartbeatService {
 
   DriverHeartbeatService({
     required ConvexClientWrapper convexClient,
-    required CachedDriverProfilesDao driverDao,
-  })  : _convexClient = convexClient,
-        _driverDao = driverDao;
+  }) : _convexClient = convexClient;
 
   bool get isOnline => _isOnline;
   String? get activeDriverProfileId => _activeDriverProfileId;
@@ -125,24 +121,15 @@ class DriverHeartbeatService {
             },
           )
           .ignore();
-
-      _driverDao
-          .updateDriverStatus(
-            driverId: profileId,
-            isOnline: false,
-            isAvailable: false,
-          )
-          .ignore();
     }
 
     _log.i('Driver location heartbeat stopped');
   }
 
-  /// Execute a single location ping to Convex & SQLite.
+  /// Execute a single location ping to Convex.
   Future<void> _sendLocationHeartbeat() async {
     if (_activeDriverProfileId == null) return;
 
-    // Subtle micro-movement simulation fallback if vehicle is simulated on emulator
     if (_currentSpeed == 0 && _positionStreamSub == null) {
       final latDelta = (_random.nextDouble() - 0.5) * 0.00012;
       final lngDelta = (_random.nextDouble() - 0.5) * 0.00012;
@@ -151,7 +138,6 @@ class DriverHeartbeatService {
     }
 
     try {
-      // 1. Send update with heading & speed telemetry to Convex Cloud backend
       await _convexClient.mutation(
         'mobility:updateDriverLocation',
         args: {
@@ -161,14 +147,6 @@ class DriverHeartbeatService {
           'heading': _currentHeading,
           'speed': _currentSpeed,
         },
-      );
-
-      // 2. Persist to local Drift SQLite cache
-      await _driverDao.updateDriverLocation(
-        driverId: _activeDriverProfileId!,
-        lat: _currentLat,
-        lng: _currentLng,
-        geohash: '', // Handled by server or query
       );
     } catch (e) {
       _log.w('Driver heartbeat ping failed: $e');

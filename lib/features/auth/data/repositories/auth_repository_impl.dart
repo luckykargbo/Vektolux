@@ -1,14 +1,13 @@
 // lib/features/auth/data/repositories/auth_repository_impl.dart
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Auth Repository Implementation
-// Combines Convex backend calls with local SQLite session caching.
+// Direct Convex Cloud backend integration with SharedPreferences session persistence.
 // ═══════════════════════════════════════════════════════════════════════
 
-import 'package:drift/drift.dart';
+import 'dart:convert';
 import 'package:logger/logger.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../../../core/database/app_database.dart';
-import '../../../../core/database/daos/cached_users_dao.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/utils/safe_parser.dart';
 import '../../domain/entities/user_entity.dart';
@@ -16,14 +15,15 @@ import '../../domain/repositories/auth_repository.dart';
 
 class AuthRepositoryImpl implements AuthRepository {
   final ConvexClientWrapper _convexClient;
-  final CachedUsersDao _usersDao;
   final Logger _log = Logger(printer: PrettyPrinter(methodCount: 0));
+
+  static const String _keySessionToken = 'vkt_session_token';
+  static const String _keyUserId = 'vkt_user_id';
+  static const String _keyUserData = 'vkt_user_data';
 
   AuthRepositoryImpl({
     required ConvexClientWrapper convexClient,
-    required CachedUsersDao usersDao,
-  })  : _convexClient = convexClient,
-        _usersDao = usersDao;
+  }) : _convexClient = convexClient;
 
   @override
   Future<UserEntity> register({
@@ -88,13 +88,13 @@ class AuthRepositoryImpl implements AuthRepository {
       region: data['region']?.toString() ?? region,
     );
 
-    // Cache session locally
+    // Save session in SharedPreferences
     await _cacheUser(user);
     if (user.sessionToken != null) {
       _convexClient.setAuthToken(user.sessionToken!);
     }
 
-    _log.i('User registered: ${user.email} as ${user.role.displayName}');
+    _log.i('User registered on Convex Cloud: ${user.email} as ${user.role.displayName}');
     return user;
   }
 
@@ -165,32 +165,54 @@ class AuthRepositoryImpl implements AuthRepository {
       _convexClient.setAuthToken(user.sessionToken!);
     }
 
-    _log.i('User logged in: ${user.email}');
+    _log.i('User logged in from Convex Cloud: ${user.email}');
     return user;
   }
 
   @override
   Future<UserEntity?> getActiveSession() async {
     try {
-      final cached = await _usersDao.getActiveSession();
-      if (cached == null) return null;
+      final prefs = await SharedPreferences.getInstance();
+      final sessionToken = prefs.getString(_keySessionToken);
+      final userId = prefs.getString(_keyUserId);
 
-      return UserEntity(
-        id: cached.id,
-        name: cached.name,
-        email: cached.email,
-        phone: cached.phone,
-        role: UserRoleX.fromConvex(cached.role),
-        isVerified: cached.isVerified,
-        avatarUrl: cached.avatarUrl,
-        walletAddress: cached.walletAddress,
-        sessionToken: cached.sessionToken,
-        activeMode: cached.role == 'driver' ? 'driver' : 'passenger',
-        isDriverVerified: cached.role == 'driver',
-        driverStatus: cached.role == 'driver' ? 'online' : 'offline',
-      );
+      if (sessionToken == null || userId == null) return null;
+
+      final userDataStr = prefs.getString(_keyUserData);
+      if (userDataStr != null) {
+        try {
+          final decoded = jsonDecode(userDataStr) as Map<String, dynamic>;
+          final cachedUser = UserEntity(
+            id: asString(decoded['id'], userId),
+            name: asString(decoded['name']),
+            email: asString(decoded['email']),
+            phone: asString(decoded['phone']),
+            role: UserRoleX.fromConvex(asString(decoded['role'], 'client')),
+            isVerified: asBool(decoded['isVerified']),
+            avatarUrl: decoded['avatarUrl'] as String?,
+            walletAddress: decoded['walletAddress'] as String?,
+            sessionToken: sessionToken,
+            activeMode: asString(decoded['activeMode'], 'passenger'),
+            isDriverVerified: asBool(decoded['isDriverVerified']),
+            driverStatus: asString(decoded['driverStatus'], 'offline'),
+            verificationStatus: asString(decoded['verificationStatus']),
+            businessName: decoded['businessName'] as String?,
+            tinNumber: decoded['tinNumber'] as String?,
+            documentUrl: decoded['documentUrl'] as String?,
+            address: decoded['address'] as String?,
+            region: decoded['region'] as String?,
+            bio: decoded['bio'] as String?,
+            kycStatus: decoded['kycStatus'] as String?,
+          );
+          _convexClient.setAuthToken(sessionToken);
+          return cachedUser;
+        } catch (_) {}
+      }
+
+      // If jsonDecode failed, validate directly with Convex Cloud
+      return await validateSession(userId: userId, sessionToken: sessionToken);
     } catch (e) {
-      _log.e('Failed to read cached session: $e');
+      _log.e('Failed to read active session: $e');
       return null;
     }
   }
@@ -238,7 +260,7 @@ class AuthRepositoryImpl implements AuthRepository {
         region: data['region'] as String?,
       );
 
-      // Refresh local cache with latest data
+      // Refresh stored session
       await _cacheUser(user);
       _convexClient.setAuthToken(sessionToken);
 
@@ -251,7 +273,13 @@ class AuthRepositoryImpl implements AuthRepository {
 
   @override
   Future<void> logout() async {
-    await _usersDao.clearSession();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_keySessionToken);
+      await prefs.remove(_keyUserId);
+      await prefs.remove(_keyUserData);
+    } catch (_) {}
+
     _convexClient.clearAuth();
     _log.i('User session cleared');
   }
@@ -314,7 +342,7 @@ class AuthRepositoryImpl implements AuthRepository {
     );
 
     await _cacheUser(updated);
-    _log.i('Profile updated on Convex and locally cached: ${updated.name}');
+    _log.i('Profile updated directly on Convex Cloud: ${updated.name}');
     return updated;
   }
 
@@ -356,27 +384,43 @@ class AuthRepositoryImpl implements AuthRepository {
     );
 
     await _cacheUser(updated);
-    _log.i('User switched mode to $targetMode');
+    _log.i('User switched mode directly on Convex Cloud to $targetMode');
     return updated;
   }
 
   // ── Private Helpers ──────────────────────────────────────────────
 
   Future<void> _cacheUser(UserEntity user) async {
-    await _usersDao.saveUserSession(
-      CachedUsersTableCompanion.insert(
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role.convexValue,
-        isVerified: Value(user.isVerified),
-        avatarUrl: Value(user.avatarUrl),
-        walletAddress: Value(user.walletAddress),
-        sessionToken: Value(user.sessionToken),
-        isActiveSession: const Value(true),
-        cachedAt: DateTime.now().millisecondsSinceEpoch,
-      ),
-    );
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (user.sessionToken != null) {
+        await prefs.setString(_keySessionToken, user.sessionToken!);
+      }
+      await prefs.setString(_keyUserId, user.id);
+      final jsonMap = {
+        'id': user.id,
+        'name': user.name,
+        'email': user.email,
+        'phone': user.phone,
+        'role': user.role.convexValue,
+        'isVerified': user.isVerified,
+        'avatarUrl': user.avatarUrl,
+        'walletAddress': user.walletAddress,
+        'activeMode': user.activeMode,
+        'isDriverVerified': user.isDriverVerified,
+        'driverStatus': user.driverStatus,
+        'verificationStatus': user.verificationStatus,
+        'businessName': user.businessName,
+        'tinNumber': user.tinNumber,
+        'documentUrl': user.documentUrl,
+        'address': user.address,
+        'region': user.region,
+        'bio': user.bio,
+        'kycStatus': user.kycStatus,
+      };
+      await prefs.setString(_keyUserData, jsonEncode(jsonMap));
+    } catch (e) {
+      _log.w('Could not persist session to SharedPreferences: $e');
+    }
   }
 }

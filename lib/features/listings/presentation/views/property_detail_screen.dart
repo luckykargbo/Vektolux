@@ -10,7 +10,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
-import '../../../../core/database/app_database.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
@@ -68,23 +67,6 @@ class PropertyDetailScreen extends StatefulWidget {
       'Gated Compound Parking',
     ],
   });
-
-  /// Factory from CachedPropertyListing (Drift SQLite)
-  factory PropertyDetailScreen.fromCached(CachedPropertyListing cached) {
-    return PropertyDetailScreen(
-      id: cached.id,
-      title: cached.title,
-      description: cached.description,
-      category: cached.category,
-      price: cached.price,
-      hourlyRate: cached.hourlyRate,
-      address: cached.address,
-      latitude: cached.latitude,
-      longitude: cached.longitude,
-      imageUrls: cached.primaryImageUrl != null ? [cached.primaryImageUrl!] : [],
-      ownerId: cached.ownerId,
-    );
-  }
 
   /// Factory from PropertyListingEntity
   factory PropertyDetailScreen.fromEntity(PropertyListingEntity entity) {
@@ -161,12 +143,14 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
     return 'SLE ${_currencyFormat.format(widget.price)}';
   }
 
-  void _handleBookingAction(BuildContext context) {
-    final user = context.read<AuthBloc>().state.user;
+  void _handlePrimaryAction() {
+    final authState = context.read<AuthBloc>().state;
+    final user = authState.user;
+
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please log in to book or schedule a site visit.'),
+          content: Text('Please log in to book or schedule visits'),
           backgroundColor: AppColors.obsidian,
           behavior: SnackBarBehavior.floating,
         ),
@@ -174,40 +158,44 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
       return;
     }
 
-    final database = context.read<AppDatabase>();
     final convexClient = context.read<ConvexClientWrapper>();
 
-    // Adapt to CachedPropertyListing for standard modals
-    final cachedListing = CachedPropertyListing(
+    final propertyEntity = PropertyListingEntity(
       id: widget.id,
       ownerId: widget.ownerId,
       title: widget.title,
       description: widget.description,
-      category: widget.category,
+      category: RealEstateCategory.fromString(widget.category),
       price: widget.price,
       hourlyRate: widget.hourlyRate,
       address: widget.address,
+      city: 'Freetown',
+      country: 'Sierra Leone',
       latitude: widget.latitude,
       longitude: widget.longitude,
-      primaryImageUrl: widget.imageUrls.isNotEmpty ? widget.imageUrls.first : null,
-      isSynced: true,
-      cachedAt: DateTime.now().millisecondsSinceEpoch,
+      geohash: '',
+      availabilityStatus: 'available',
+      imageUrls: widget.imageUrls,
+      ownerName: widget.ownerName,
+      ownerPhone: widget.ownerPhone,
+      bedrooms: widget.bedrooms,
+      bathrooms: widget.bathrooms,
+      areaSqM: widget.squareMeters,
+      amenities: widget.amenities,
     );
 
     if (_isHourly) {
       HourlyBookingModal.show(
         context,
-        property: cachedListing,
+        property: propertyEntity,
         currentUser: user,
-        database: database,
         convexClient: convexClient,
       );
     } else {
       PropertyInspectionModal.show(
         context,
-        property: cachedListing,
+        property: propertyEntity,
         currentUser: user,
-        database: database,
         convexClient: convexClient,
       );
     }
@@ -638,12 +626,12 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
                   ? VxButton(
                       label: 'Instant Booking & Pay',
                       icon: Icons.flash_on_rounded,
-                      onPressed: () => _handleBookingAction(context),
+                      onPressed: _handlePrimaryAction,
                     )
                   : VxButton(
                       label: 'Book Site Visit / Inspection',
                       icon: Icons.calendar_today_rounded,
-                      onPressed: () => _handleBookingAction(context),
+                      onPressed: _handlePrimaryAction,
                     ),
             ),
           ],
