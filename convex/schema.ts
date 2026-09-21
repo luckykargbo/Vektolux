@@ -27,7 +27,11 @@ export const userRole = v.union(
   v.literal("CLIENT"),
   v.literal("AGENT"),
   v.literal("DRIVER"),
-  v.literal("ADMIN")
+  v.literal("ADMIN"),
+  v.literal("Client / Buyer"),
+  v.literal("Real Estate Agent"),
+  v.literal("Vehicle Merchant"),
+  v.literal("Fleet & Logistics Operator")
 );
 
 export const accountTypeEnum = v.union(

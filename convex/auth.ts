@@ -231,13 +231,26 @@ export async function findUserByIdentifier(ctx: any, identifier: string) {
 //                        REGISTER USER
 // ═══════════════════════════════════════════════════════════════════════
 
+/**
+ * Canonicalize incoming user role string to standard Convex database enum value.
+ * Safely handles UI display names (e.g. "Client / Buyer" -> "client", "Real Estate Agent" -> "agent").
+ */
+export function canonicalizeUserRole(rawRole: string): "client" | "agent" | "merchant" | "driver" | "admin" {
+  const normalized = (rawRole ?? "").toLowerCase().trim();
+  if (normalized.includes("agent") || normalized.includes("property")) return "agent";
+  if (normalized.includes("merchant") || normalized.includes("dealer") || normalized.includes("dealership")) return "merchant";
+  if (normalized.includes("driver") || normalized.includes("logistics") || normalized.includes("fleet")) return "driver";
+  if (normalized.includes("admin")) return "admin";
+  return "client"; // default for "client", "buyer", "client / buyer", etc.
+}
+
 export const registerUser = mutation({
   args: {
     name: v.string(),
     email: v.string(),
     phone: v.string(),
     password: v.string(),
-    role: userRole,
+    role: v.string(), // Accepts canonical "client" or UI display strings like "Client / Buyer"
     avatarUrl: v.optional(v.string()),
     businessName: v.optional(v.string()),
     tinNumber: v.optional(v.string()),
@@ -260,98 +273,125 @@ export const registerUser = mutation({
     region: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
-    const normalizedEmail = args.email.trim().toLowerCase();
-    const normalizedPhone = args.phone.trim();
+    try {
+      const normalizedEmail = args.email.trim().toLowerCase();
+      const normalizedPhone = args.phone.trim();
+      const canonicalRole = canonicalizeUserRole(args.role);
 
-    // 1. Check for duplicate email (case-insensitive)
-    const existingByEmail = await findUserByIdentifier(ctx, normalizedEmail);
-    if (existingByEmail) {
-      return {
-        success: false,
-        errorMessage: "An account with this email already exists.",
-      };
-    }
+      // 1. Check for duplicate email (case-insensitive)
+      const existingByEmail = await findUserByIdentifier(ctx, normalizedEmail);
+      if (existingByEmail) {
+        return {
+          success: false,
+          errorMessage: "An account with this email already exists.",
+        };
+      }
 
-    // 2. Check for duplicate phone
-    const existingByPhone = await findUserByIdentifier(ctx, normalizedPhone);
-    if (existingByPhone) {
-      return {
-        success: false,
-        errorMessage: "An account with this phone number already exists.",
-      };
-    }
+      // 2. Check for duplicate phone
+      const existingByPhone = await findUserByIdentifier(ctx, normalizedPhone);
+      if (existingByPhone) {
+        return {
+          success: false,
+          errorMessage: "An account with this phone number already exists.",
+        };
+      }
 
-    // 3. Hash password
-    const passwordHash = await hashPassword(args.password);
-    const sessionToken = generateSessionToken();
-    const now = Date.now();
+      // 3. Hash password
+      const passwordHash = await hashPassword(args.password);
+      const sessionToken = generateSessionToken();
+      const now = Date.now();
 
-    const normalizedRole = args.role.toLowerCase();
-    const isRestrictedRole = normalizedRole === "agent" || normalizedRole === "merchant";
-    const verificationStatus = isRestrictedRole ? "pending" : "unverified";
+      const isRestrictedRole = canonicalRole === "agent" || canonicalRole === "merchant";
+      const verificationStatus = isRestrictedRole ? "pending" : "unverified";
 
-    // 4. Insert user record
-    const userId = await ctx.db.insert("users", {
-      name: args.name.trim(),
-      email: normalizedEmail,
-      phone: normalizedPhone,
-      role: args.role,
-      avatarUrl: args.avatarUrl,
-      address: args.address,
-      region: args.region,
-      passwordHash,
-      sessionToken,
-      isVerified: false,
-      isActive: true,
-      verificationStatus,
-      businessName: args.businessName,
-      tinNumber: args.tinNumber,
-      documentStorageId: args.documentStorageId,
-      documentUrl: args.documentUrl,
-      updatedAt: now,
-    });
-
-    // 5. Create wallet with zero balance
-    await ctx.db.insert("walletBalances", {
-      userId,
-      availableBalance: 0,
-      pendingBalance: 0,
-      currency: "SLE",
-      updatedAt: now,
-    });
-
-    // 6. Create merchant profile if role is agent or merchant
-    if (isRestrictedRole) {
-      await ctx.db.insert("merchant_profiles", {
-        userId,
+      // 4. Insert user record
+      const userId = await ctx.db.insert("users", {
+        name: args.name.trim(),
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        role: canonicalRole,
+        avatarUrl: args.avatarUrl,
+        address: args.address,
+        region: args.region,
+        passwordHash,
+        sessionToken,
+        isVerified: false,
+        isActive: true,
+        verificationStatus,
         businessName: args.businessName,
         tinNumber: args.tinNumber,
+        documentStorageId: args.documentStorageId,
         documentUrl: args.documentUrl,
-        verificationStatus: "pending",
         updatedAt: now,
       });
 
-      await ctx.db.insert("role_applications", {
-        userId,
-        targetRole: args.role as "agent" | "merchant",
-        businessName: args.businessName,
-        tinNumber: args.tinNumber,
-        documentUrls: args.documentUrl ? [args.documentUrl] : [],
-        status: "pending",
-        updatedAt: now,
+      // 5. Initialize user wallet with zero balance (idempotently)
+      const existingWallet = await ctx.db
+        .query("walletBalances")
+        .withIndex("by_user_currency", (q) =>
+          q.eq("userId", userId).eq("currency", "SLE")
+        )
+        .first();
+
+      if (!existingWallet) {
+        await ctx.db.insert("walletBalances", {
+          userId,
+          availableBalance: 0,
+          pendingBalance: 0,
+          escrowBalance: 0,
+          currency: "SLE",
+          updatedAt: now,
+        });
+      }
+
+      // 6. Create merchant profile and role application if role is agent or merchant
+      if (isRestrictedRole) {
+        await ctx.db.insert("merchant_profiles", {
+          userId,
+          businessName: args.businessName,
+          tinNumber: args.tinNumber,
+          documentUrl: args.documentUrl,
+          verificationStatus: "pending",
+          updatedAt: now,
+        });
+
+        await ctx.db.insert("role_applications", {
+          userId,
+          targetRole: canonicalRole as "agent" | "merchant",
+          businessName: args.businessName,
+          tinNumber: args.tinNumber,
+          documentUrls: args.documentUrl ? [args.documentUrl] : [],
+          status: "pending",
+          updatedAt: now,
+        });
+      }
+
+      return {
+        success: true,
+        userId: userId as string,
+        sessionToken,
+        name: args.name,
+        email: args.email,
+        phone: args.phone,
+        role: canonicalRole,
+        avatarUrl: args.avatarUrl,
+      };
+    } catch (err: any) {
+      console.error("[registerUser] Error during user registration:", {
+        error: err?.message || String(err),
+        stack: err?.stack,
+        payload: {
+          name: args.name,
+          email: args.email,
+          phone: args.phone,
+          role: args.role,
+        },
       });
+      return {
+        success: false,
+        errorMessage: `Registration failed: ${err?.message || "Internal server error"}`,
+      };
     }
-
-    return {
-      success: true,
-      userId: userId as string,
-      sessionToken,
-      name: args.name,
-      email: args.email,
-      phone: args.phone,
-      role: args.role,
-      avatarUrl: args.avatarUrl,
-    };
   },
 });
 

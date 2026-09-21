@@ -1966,7 +1966,12 @@ export const requestWithdrawal = mutation({
  * Generate Sierra Leone phone variations for database lookup.
  * Handles inputs like +23276123456, 23276123456, 076123456, 76123456.
  */
-function getSierraLeonePhoneCandidates(phone: string): string[] {
+/**
+ * Generate Sierra Leone phone variations for database lookup.
+ * Robustly handles raw, spaced, hyphenated, and local/international formats:
+ * e.g. "+232 73 623 761", "+23273623761", "073623761", "73623761", "232-73-623-761".
+ */
+export function getSierraLeonePhoneCandidates(phone: string): string[] {
   if (!phone) return [];
   const trimmed = phone.trim();
   const digits = trimmed.replace(/\D/g, "");
@@ -1980,6 +1985,21 @@ function getSierraLeonePhoneCandidates(phone: string): string[] {
       candidates.add(`232${core8}`);
       candidates.add(`0${core8}`);
       candidates.add(core8);
+
+      // Spaced variations (e.g. "+232 73 623 761")
+      const prefix = core8.slice(0, 2);
+      const mid = core8.slice(2, 5);
+      const rest = core8.slice(5);
+      candidates.add(`+232 ${prefix} ${mid} ${rest}`);
+      candidates.add(`232 ${prefix} ${mid} ${rest}`);
+      candidates.add(`0${prefix} ${mid} ${rest}`);
+      candidates.add(`${prefix} ${mid} ${rest}`);
+      candidates.add(`+232 ${prefix} ${core8.slice(2)}`);
+      candidates.add(`0${prefix} ${core8.slice(2)}`);
+
+      // Hyphenated variations
+      candidates.add(`+232-${prefix}-${mid}-${rest}`);
+      candidates.add(`0${prefix}-${mid}-${rest}`);
     }
   }
   return Array.from(candidates);
@@ -2006,212 +2026,277 @@ async function executeOrangeMoneyWebhook(
   const currency = args.currency || "SLE";
   const rawPayloadStr = args.rawPayload ?? JSON.stringify({});
 
-  // 1. Idempotency & Raw Logging via 'telco_webhook_logs'
-  const existingLog = await ctx.db
-    .query("telco_webhook_logs")
-    .withIndex("by_ext_id", (q) => q.eq("externalTransactionId", args.txnId))
-    .first();
+  try {
+    // 1. Idempotency & Raw Logging via 'telco_webhook_logs'
+    const existingLog = await ctx.db
+      .query("telco_webhook_logs")
+      .withIndex("by_ext_id", (q) => q.eq("externalTransactionId", args.txnId))
+      .first();
 
-  if (existingLog && existingLog.isProcessed) {
-    return {
-      success: true,
-      status: "ALREADY_PROCESSED",
-      message: "Transaction has already been processed",
-      txnId: args.txnId,
-    };
-  }
-
-  // Also check existing transaction ledger records for double-spend defense
-  const existingTx = await ctx.db
-    .query("transactions")
-    .withIndex("by_gateway_ref", (q) =>
-      q.eq("gatewayProvider", "ORANGE_MONEY_SL").eq("gatewayReference", args.txnId)
-    )
-    .first();
-
-  if (existingTx) {
-    if (existingLog && !existingLog.isProcessed) {
-      await ctx.db.patch(existingLog._id, {
-        isProcessed: true,
-        processedAt: now,
+    if (existingLog && existingLog.isProcessed) {
+      return {
+        success: true,
         status: "ALREADY_PROCESSED",
+        message: "Transaction has already been processed",
+        txnId: args.txnId,
+      };
+    }
+
+    // Also check existing transaction ledger records for double-spend defense
+    const existingTx = await ctx.db
+      .query("transactions")
+      .withIndex("by_gateway_ref", (q) =>
+        q.eq("gatewayProvider", "ORANGE_MONEY_SL").eq("gatewayReference", args.txnId)
+      )
+      .first();
+
+    if (existingTx) {
+      if (existingLog && !existingLog.isProcessed) {
+        await ctx.db.patch(existingLog._id, {
+          isProcessed: true,
+          processedAt: now,
+          status: "ALREADY_PROCESSED",
+        });
+      }
+      return {
+        success: true,
+        status: "ALREADY_PROCESSED",
+        message: "Transaction already exists in transaction ledger",
+        txnId: args.txnId,
+      };
+    }
+
+    // Create or reuse pending telco webhook log entry
+    let logId = existingLog ? existingLog._id : null;
+    if (!logId) {
+      logId = await ctx.db.insert("telco_webhook_logs", {
+        provider: "ORANGE_MONEY_SL",
+        externalTransactionId: args.txnId,
+        idempotencyKey: `om_${args.txnId}`,
+        requestPayload: rawPayloadStr,
+        isProcessed: false,
+        amount: args.amount,
+        status: args.status,
+        phoneNumber: args.phoneNumber,
+        receivedAt: now,
       });
     }
-    return {
-      success: true,
-      status: "ALREADY_PROCESSED",
-      message: "Transaction already exists in transaction ledger",
-      txnId: args.txnId,
-    };
-  }
 
-  // Create or reuse pending telco webhook log entry
-  let logId = existingLog ? existingLog._id : null;
-  if (!logId) {
-    logId = await ctx.db.insert("telco_webhook_logs", {
-      provider: "ORANGE_MONEY_SL",
-      externalTransactionId: args.txnId,
-      idempotencyKey: `om_${args.txnId}`,
-      requestPayload: rawPayloadStr,
-      isProcessed: false,
-      amount: args.amount,
-      status: args.status,
-      phoneNumber: args.phoneNumber,
-      receivedAt: now,
-    });
-  }
-
-  // 2. Identify target user in 'users'
-  let user: Doc<"users"> | null = null;
-  if (args.userId) {
-    const userNorm = ctx.db.normalizeId("users", args.userId);
-    if (userNorm) user = await ctx.db.get(userNorm);
-  }
-
-  if (!user && args.phoneNumber) {
-    const candidates = getSierraLeonePhoneCandidates(args.phoneNumber);
-    for (const candidate of candidates) {
-      user = await ctx.db
-        .query("users")
-        .withIndex("by_phone", (q) => q.eq("phone", candidate))
-        .first();
-      if (user) break;
+    // 2. Identify target user in 'users'
+    let user: Doc<"users"> | null = null;
+    if (args.userId) {
+      const userNorm = ctx.db.normalizeId("users", args.userId);
+      if (userNorm) user = await ctx.db.get(userNorm);
     }
 
-    if (!user && candidates.length > 0) {
-      const allUsers = await ctx.db.query("users").take(50);
-      const core8 = args.phoneNumber.replace(/\D/g, "").slice(-8);
-      if (core8.length === 8) {
-        user =
-          allUsers.find(
-            (u) => u.phone && u.phone.replace(/\D/g, "").endsWith(core8)
-          ) ?? null;
+    if (!user && args.phoneNumber) {
+      const candidates = getSierraLeonePhoneCandidates(args.phoneNumber);
+      for (const candidate of candidates) {
+        user = await ctx.db
+          .query("users")
+          .withIndex("by_phone", (q) => q.eq("phone", candidate))
+          .first();
+        if (user) break;
+      }
+
+      if (!user && candidates.length > 0) {
+        const allUsers = await ctx.db.query("users").collect();
+        const targetDigits = args.phoneNumber.replace(/\D/g, "");
+        const core8 = targetDigits.length >= 8 ? targetDigits.slice(-8) : targetDigits;
+        if (core8.length >= 6) {
+          user =
+            allUsers.find((u) => {
+              if (!u.phone) return false;
+              const uDigits = u.phone.replace(/\D/g, "");
+              return (
+                uDigits === targetDigits ||
+                uDigits.endsWith(core8) ||
+                core8.endsWith(uDigits)
+              );
+            }) ?? null;
+        }
       }
     }
-  }
 
-  // If no user matches the phone number, log as ORPHANED_USER and exit cleanly
-  if (!user) {
-    await ctx.db.patch(logId, {
-      status: "ORPHANED_USER",
-      errorMessage: `No user matches phone number ${args.phoneNumber}`,
-      processedAt: now,
+    // If no user matches the phone number, log as ORPHANED_USER and exit cleanly
+    if (!user) {
+      if (logId) {
+        await ctx.db.patch(logId, {
+          status: "ORPHANED_USER",
+          errorMessage: `No user matches phone number ${args.phoneNumber}`,
+          processedAt: now,
+        });
+      }
+      return {
+        success: false,
+        status: "ORPHANED_USER",
+        message: `No user found matching phone number ${args.phoneNumber}. Transaction held for manual resolution.`,
+        txnId: args.txnId,
+      };
+    }
+
+    // 3. Check status
+    const normalizedStatus = args.status.toUpperCase();
+    const isSuccess =
+      normalizedStatus === "SUCCESS" ||
+      normalizedStatus === "COMPLETED" ||
+      normalizedStatus === "SUCCESSFUL";
+
+    if (!isSuccess) {
+      if (logId) {
+        await ctx.db.patch(logId, {
+          status: args.status,
+          errorMessage: `Telco webhook status reported as ${args.status}`,
+          processedAt: now,
+          isProcessed: true,
+        });
+      }
+      return {
+        success: true,
+        status: args.status,
+        message: `Payment status ${args.status} recorded without crediting wallet.`,
+        txnId: args.txnId,
+      };
+    }
+
+    // 4. Double-Entry Ledger: Insert into 'ledger_transactions' and 'ledger_entries'
+    const ledgerTxId = await ctx.db.insert("ledger_transactions", {
+      transactionCode: `LTX_OM_${args.txnId}`,
+      description: `Orange Money SL Webhook Deposit - Ref: ${args.txnId}`,
+      createdAt: now,
+    });
+
+    await ctx.db.insert("ledger_entries", {
+      transactionId: ledgerTxId,
+      accountType: "CLIENT_AVAILABLE",
+      userId: user._id,
+      direction: "CREDIT",
+      amount: args.amount,
+      currency,
+      createdAt: now,
+    });
+
+    // 5. Atomically update or insert 'walletBalances'
+    let wallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user_currency", (q) =>
+        q.eq("userId", user!._id).eq("currency", currency)
+      )
+      .first();
+
+    let newBalance = args.amount;
+    if (!wallet) {
+      const walletId = await ctx.db.insert("walletBalances", {
+        userId: user._id,
+        availableBalance: args.amount,
+        pendingBalance: 0,
+        escrowBalance: 0,
+        currency,
+        updatedAt: now,
+      });
+      wallet = (await ctx.db.get(walletId))!;
+    } else {
+      newBalance = wallet.availableBalance + args.amount;
+      await ctx.db.patch(wallet._id, {
+        availableBalance: newBalance,
+        updatedAt: now,
+      });
+    }
+
+    // 6. Record transaction ledger entry
+    await ctx.db.insert("transactions", {
+      walletId: wallet._id,
+      userId: user._id,
+      type: "top_up",
+      amount: args.amount,
+      currency,
+      gatewayProvider: "ORANGE_MONEY_SL",
+      gatewayReference: args.txnId,
+      status: "completed",
+      description: `Orange Money SL deposit of ${args.amount} ${currency} (Ref: ${args.txnId})`,
+      updatedAt: now,
+    });
+
+    // 7. Mark 'telco_webhook_logs' as processed
+    if (logId) {
+      await ctx.db.patch(logId, {
+        isProcessed: true,
+        processedAt: now,
+        status: "COMPLETED",
+      });
+    }
+
+    // 8. In-app notification for the user
+    await ctx.db.insert("user_notifications", {
+      userId: user._id as string,
+      targetType: "single_user",
+      title: "Wallet Credited",
+      body: `Your wallet has been credited with ${args.amount} ${currency} via Orange Money SL.`,
+      read: false,
+      createdAt: now,
+    });
+
+    return {
+      success: true,
+      status: "COMPLETED",
+      creditedUserId: user._id,
+      amount: args.amount,
+      currency,
+      newBalance,
+      txnId: args.txnId,
+    };
+  } catch (err: any) {
+    console.error("[executeOrangeMoneyWebhook] Unexpected processing error:", {
+      error: err?.message || String(err),
+      stack: err?.stack,
+      args,
     });
     return {
       success: false,
-      status: "ORPHANED_USER",
-      message: `No user found matching phone number ${args.phoneNumber}. Transaction held for manual resolution.`,
+      status: "ERROR",
+      message: `Orange Money deposit error: ${err?.message || "Internal transaction failure"}`,
       txnId: args.txnId,
     };
   }
-
-  // 3. Check status
-  const normalizedStatus = args.status.toUpperCase();
-  const isSuccess =
-    normalizedStatus === "SUCCESS" ||
-    normalizedStatus === "COMPLETED" ||
-    normalizedStatus === "SUCCESSFUL";
-
-  if (!isSuccess) {
-    await ctx.db.patch(logId, {
-      status: args.status,
-      errorMessage: `Telco webhook status reported as ${args.status}`,
-      processedAt: now,
-      isProcessed: true,
-    });
-    return {
-      success: true,
-      status: args.status,
-      message: `Payment status ${args.status} recorded without crediting wallet.`,
-      txnId: args.txnId,
-    };
-  }
-
-  // 4. Double-Entry Ledger: Insert into 'ledger_transactions' and 'ledger_entries'
-  const ledgerTxId = await ctx.db.insert("ledger_transactions", {
-    transactionCode: `LTX_OM_${args.txnId}`,
-    description: `Orange Money SL Webhook Deposit - Ref: ${args.txnId}`,
-    createdAt: now,
-  });
-
-  await ctx.db.insert("ledger_entries", {
-    transactionId: ledgerTxId,
-    accountType: "CLIENT_AVAILABLE",
-    userId: user._id,
-    direction: "CREDIT",
-    amount: args.amount,
-    currency,
-    createdAt: now,
-  });
-
-  // 5. Atomically update or insert 'walletBalances'
-  let wallet = await ctx.db
-    .query("walletBalances")
-    .withIndex("by_user_currency", (q) =>
-      q.eq("userId", user!._id).eq("currency", currency)
-    )
-    .first();
-
-  let newBalance = args.amount;
-  if (!wallet) {
-    const walletId = await ctx.db.insert("walletBalances", {
-      userId: user._id,
-      availableBalance: args.amount,
-      pendingBalance: 0,
-      escrowBalance: 0,
-      currency,
-      updatedAt: now,
-    });
-    wallet = (await ctx.db.get(walletId))!;
-  } else {
-    newBalance = wallet.availableBalance + args.amount;
-    await ctx.db.patch(wallet._id, {
-      availableBalance: newBalance,
-      updatedAt: now,
-    });
-  }
-
-  // 6. Record transaction ledger entry
-  await ctx.db.insert("transactions", {
-    walletId: wallet._id,
-    userId: user._id,
-    type: "top_up",
-    amount: args.amount,
-    currency,
-    gatewayProvider: "ORANGE_MONEY_SL",
-    gatewayReference: args.txnId,
-    status: "completed",
-    description: `Orange Money SL deposit of ${args.amount} ${currency} (Ref: ${args.txnId})`,
-    updatedAt: now,
-  });
-
-  // 7. Mark 'telco_webhook_logs' as processed
-  await ctx.db.patch(logId, {
-    isProcessed: true,
-    processedAt: now,
-    status: "COMPLETED",
-  });
-
-  // 8. In-app notification for the user
-  await ctx.db.insert("user_notifications", {
-    userId: user._id as string,
-    targetType: "single_user",
-    title: "Wallet Credited",
-    body: `Your wallet has been credited with ${args.amount} ${currency} via Orange Money SL.`,
-    read: false,
-    createdAt: now,
-  });
-
-  return {
-    success: true,
-    status: "COMPLETED",
-    creditedUserId: user._id,
-    amount: args.amount,
-    currency,
-    newBalance,
-    txnId: args.txnId,
-  };
 }
+
+/**
+ * Public mutation allowing users / operators to top up a wallet via Orange Money Sierra Leone.
+ * Accepts formatted phone numbers (e.g. "+232 73 623 761"), normalizes them, and credits
+ * the wallet atomically with full double-entry ledger tracking.
+ */
+export const depositOrangeMoney = mutation({
+  args: {
+    phoneNumber: v.string(),
+    amount: v.number(),
+    currency: v.optional(v.string()),
+    txId: v.optional(v.string()),
+    userId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    try {
+      const generatedTxId =
+        args.txId ||
+        `OM_DEP_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+      return await executeOrangeMoneyWebhook(ctx, {
+        txnId: generatedTxId,
+        phoneNumber: args.phoneNumber,
+        amount: args.amount,
+        status: "COMPLETED",
+        currency: args.currency || "SLE",
+        userId: args.userId,
+      });
+    } catch (err: any) {
+      console.error("[depositOrangeMoney] Error during Orange Money deposit:", err);
+      return {
+        success: false,
+        status: "FAILED",
+        message: err?.message || "Deposit processing failed",
+      };
+    }
+  },
+});
 
 export const processOrangeMoneyWebhook = internalMutation({
   args: {
