@@ -34,6 +34,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../../wallet_payments/presentation/views/transaction_receipt_screen.dart';
 
 
 class ProfileScreen extends StatefulWidget {
@@ -3307,8 +3308,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   void _showScanQrModal(BuildContext context, UserEntity? user) {
     final codeCtrl = TextEditingController();
-    final amountCtrl = TextEditingController(text: '150');
+    final amountCtrl = TextEditingController();
     bool isProcessing = false;
+    bool isResolving = false;
+    Map<String, dynamic>? resolvedRecipient;
+    String? recipientError;
+    String? amountError;
+    Timer? debounceTimer;
 
     showModalBottomSheet(
       context: context,
@@ -3320,6 +3326,100 @@ class _ProfileScreenState extends State<ProfileScreen> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (modalCtx, setModalState) {
+            final double currentBal = _walletBalance ?? 0.0;
+
+            void validateAmount(String raw) {
+              final amt = double.tryParse(raw.trim()) ?? 0;
+              if (raw.trim().isEmpty) {
+                amountError = null;
+              } else if (amt <= 0) {
+                amountError = 'Please enter a valid amount greater than 0 SLE.';
+              } else if (amt > currentBal) {
+                amountError =
+                    'Insufficient balance! Available: SLE ${currentBal.toStringAsFixed(2)}';
+              } else {
+                amountError = null;
+              }
+            }
+
+            void onCodeChanged(String val) {
+              debounceTimer?.cancel();
+              final trimmed = val.trim();
+              if (trimmed.isEmpty) {
+                setModalState(() {
+                  resolvedRecipient = null;
+                  recipientError = null;
+                  isResolving = false;
+                });
+                return;
+              }
+              if (trimmed.length < 3) {
+                setModalState(() {
+                  resolvedRecipient = null;
+                  recipientError = 'Please enter at least 3 characters.';
+                  isResolving = false;
+                });
+                return;
+              }
+
+              setModalState(() {
+                isResolving = true;
+                recipientError = null;
+              });
+
+              debounceTimer = Timer(const Duration(milliseconds: 500), () async {
+                try {
+                  final client = context.read<ConvexClientWrapper>();
+                  final res = await client.query('payments:resolveRecipient', args: {
+                    'query': trimmed,
+                    if (user?.id != null) 'senderUserId': user!.id,
+                  });
+
+                  if (modalCtx.mounted) {
+                    if (res.success && res.value is Map) {
+                      final data = Map<String, dynamic>.from(res.value as Map);
+                      if (data['found'] == true) {
+                        setModalState(() {
+                          resolvedRecipient = data;
+                          recipientError = null;
+                          isResolving = false;
+                        });
+                      } else {
+                        setModalState(() {
+                          resolvedRecipient = null;
+                          recipientError = data['error']?.toString() ??
+                              'Recipient not found.';
+                          isResolving = false;
+                        });
+                      }
+                    } else {
+                      setModalState(() {
+                        resolvedRecipient = null;
+                        recipientError =
+                            res.errorMessage ?? 'Recipient not found.';
+                        isResolving = false;
+                      });
+                    }
+                  }
+                } catch (e) {
+                  if (modalCtx.mounted) {
+                    setModalState(() {
+                      resolvedRecipient = null;
+                      recipientError = 'Could not verify recipient.';
+                      isResolving = false;
+                    });
+                  }
+                }
+              });
+            }
+
+            final parsedAmount = double.tryParse(amountCtrl.text.trim()) ?? 0;
+            final bool canSubmit = !isProcessing &&
+                !isResolving &&
+                resolvedRecipient != null &&
+                parsedAmount > 0 &&
+                parsedAmount <= currentBal;
+
             return Padding(
               padding: EdgeInsets.only(
                 left: 20,
@@ -3350,7 +3450,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           color: AppColors.emeraldSurface,
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: const Icon(Icons.qr_code_scanner_rounded,
+                        child: const Icon(Icons.send_rounded,
                             color: AppColors.emeraldDark, size: 24),
                       ),
                       const SizedBox(width: 12),
@@ -3359,7 +3459,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Scan to Pay / Transfer',
+                              'Verified Ledger Transfer',
                               style: TextStyle(
                                 fontSize: 17,
                                 fontWeight: FontWeight.w700,
@@ -3368,7 +3468,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                             SizedBox(height: 2),
                             Text(
-                              'Pay driver, property agent, or vehicle merchant',
+                              'Instant, atomic transfer to any Vektolux user',
                               style: TextStyle(
                                   fontSize: 12, color: AppColors.gray500),
                             ),
@@ -3377,103 +3477,201 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 18),
-
-                  // Simulated Camera Reticle Viewfinder
-                  Center(
-                    child: Container(
-                      width: 220,
-                      height: 170,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0F172A),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: AppColors.emerald, width: 2),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.emerald.withValues(alpha: 0.2),
-                            blurRadius: 12,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          const Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.center_focus_strong_rounded,
-                                  size: 48, color: AppColors.emerald),
-                              SizedBox(height: 8),
-                              Text(
-                                'Align QR in camera frame',
-                                style: TextStyle(
-                                    color: Colors.white70, fontSize: 11),
-                              ),
-                            ],
-                          ),
-                          Positioned(
-                            top: 8,
-                            right: 8,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: AppColors.emeraldDark,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: const Text(
-                                'ACTIVE SENSOR',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 8,
-                                    fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
                   const SizedBox(height: 16),
 
+                  // Wallet Balance Indicator Card
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Your Available Balance:',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                        Text(
+                          'SLE ${currentBal.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.obsidian,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Recipient Input
                   TextField(
                     controller: codeCtrl,
                     cursorColor: const Color(0xFF10B981),
+                    onChanged: (val) => onCodeChanged(val),
                     style: const TextStyle(
                       color: AppColors.obsidian,
                       fontWeight: FontWeight.w600,
                       fontSize: 15,
                     ),
-                    decoration: const InputDecoration(
-                      labelText: 'Or enter Recipient Phone / Wallet ID / Agent 001',
-                      hintText: 'e.g. +232 76 123456, 001, or VLX-SL-9821',
-                      prefixIcon: Icon(Icons.perm_identity_rounded),
+                    decoration: InputDecoration(
+                      labelText: 'Recipient Phone or User ID',
+                      labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 14),
+                      hintText: 'e.g. +232 76 123456 or User ID',
+                      hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+                      prefixIcon: const Icon(Icons.perm_identity_rounded, color: AppColors.obsidianSoft),
+                      suffixIcon: isResolving
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.emerald,
+                                ),
+                              ),
+                            )
+                          : null,
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: recipientError != null
+                              ? AppColors.error
+                              : (resolvedRecipient != null
+                                  ? AppColors.emerald
+                                  : const Color(0xFFCBD5E1)),
+                        ),
+                      ),
                     ),
                   ),
+
+                  // Recipient Validation Feedback
+                  if (recipientError != null) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const Icon(Icons.cancel_outlined, color: AppColors.error, size: 14),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            recipientError!,
+                            style: const TextStyle(
+                              color: AppColors.error,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ] else if (resolvedRecipient != null) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFECFDF5),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFA7F3D0)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.check_circle_rounded,
+                              color: AppColors.emeraldDark, size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Verified: ${resolvedRecipient!['name']} (${resolvedRecipient!['phone']})',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF065F46),
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
                   const SizedBox(height: 12),
 
+                  // Amount Input
                   TextField(
                     controller: amountCtrl,
-                    keyboardType: TextInputType.number,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     cursorColor: const Color(0xFF10B981),
+                    onChanged: (val) => setModalState(() => validateAmount(val)),
                     style: const TextStyle(
                       color: AppColors.obsidian,
                       fontWeight: FontWeight.w700,
                       fontSize: 16,
                     ),
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: 'Amount (SLE)',
+                      labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 14),
                       prefixText: 'SLE ',
-                      prefixStyle: TextStyle(
+                      prefixStyle: const TextStyle(
                         color: AppColors.obsidian,
                         fontWeight: FontWeight.w700,
                       ),
-                      prefixIcon: Icon(Icons.payments_outlined),
+                      prefixIcon: const Icon(Icons.payments_outlined, color: AppColors.obsidianSoft),
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: amountError != null ? AppColors.error : const Color(0xFFCBD5E1),
+                        ),
+                      ),
                     ),
                   ),
+
+                  // Amount Error Feedback
+                  if (amountError != null) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const Icon(Icons.error_outline_rounded, color: AppColors.error, size: 14),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            amountError!,
+                            style: const TextStyle(
+                              color: AppColors.error,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+
                   const SizedBox(height: 20),
 
+                  // Authorize & Send Button
                   SizedBox(
                     width: double.infinity,
                     height: 50,
@@ -3481,37 +3679,118 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.emerald,
                         foregroundColor: Colors.white,
+                        disabledBackgroundColor: const Color(0xFFE2E8F0),
+                        disabledForegroundColor: const Color(0xFF94A3B8),
+                        elevation: 0,
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14)),
                       ),
-                      onPressed: isProcessing
+                      onPressed: !canSubmit
                           ? null
                           : () async {
                               final amount =
                                   double.tryParse(amountCtrl.text.trim()) ?? 0;
-                              if (amount <= 0) {
+                              if (amount <= 0 || amount > currentBal) {
+                                return;
+                              }
+
+                              if (user == null || user.id.isEmpty) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(
-                                      content:
-                                          Text('Please enter a valid amount.')),
+                                    content: Text('Please log in to authorize payments.'),
+                                    backgroundColor: AppColors.error,
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
                                 );
                                 return;
                               }
 
                               setModalState(() => isProcessing = true);
-                              await Future.delayed(
-                                  const Duration(milliseconds: 800));
-
-                              if (modalCtx.mounted) {
-                                Navigator.of(modalCtx).pop();
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                        'Transferred SLE ${amount.toStringAsFixed(0)} successfully! Escrow locked.'),
-                                    backgroundColor: AppColors.emeraldDark,
-                                    behavior: SnackBarBehavior.floating,
-                                  ),
+                              try {
+                                final client = context.read<ConvexClientWrapper>();
+                                final res = await client.mutation(
+                                  'payments:executeP2PTransfer',
+                                  args: {
+                                    'senderUserId': user.id,
+                                    'recipientQuery':
+                                        resolvedRecipient!['recipientId'] ??
+                                            codeCtrl.text.trim(),
+                                    'amount': amount,
+                                    'note': 'Peer-to-peer transfer via Vektolux',
+                                  },
                                 );
+
+                                if (!modalCtx.mounted) return;
+
+                                if (res.success && res.value is Map) {
+                                  final receipt =
+                                      Map<String, dynamic>.from(res.value as Map);
+                                  Navigator.of(modalCtx).pop(); // Close sheet
+
+                                  // Route directly to real Transaction Receipt Screen
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => TransactionReceiptScreen(
+                                        transactionId: receipt['transactionId']
+                                                ?.toString() ??
+                                            'TX-REF',
+                                        amount: amount,
+                                        feeAmount: (receipt['feeAmount'] as num?)
+                                                ?.toDouble() ??
+                                            0.0,
+                                        netAmount: amount,
+                                        currency: receipt['currency']?.toString() ??
+                                            'SLE',
+                                        timestamp: DateTime.fromMillisecondsSinceEpoch(
+                                          receipt['timestamp'] as int? ??
+                                              DateTime.now()
+                                                  .millisecondsSinceEpoch,
+                                        ),
+                                        type: 'p2p_transfer',
+                                        status: receipt['status']?.toString() ??
+                                            'COMPLETED',
+                                        senderName: user.name,
+                                        senderPhone: user.phone,
+                                        recipientName: receipt['recipientName']
+                                                ?.toString() ??
+                                            resolvedRecipient!['name']
+                                                ?.toString() ??
+                                            'Recipient',
+                                        recipientPhone: receipt['recipientPhone']
+                                                ?.toString() ??
+                                            resolvedRecipient!['phone']
+                                                ?.toString() ??
+                                            '',
+                                        updatedBalance: (receipt[
+                                                'senderBalanceAfter'] as num?)
+                                            ?.toDouble(),
+                                        note: receipt['description']?.toString(),
+                                      ),
+                                    ),
+                                  );
+                                } else {
+                                  setModalState(() => isProcessing = false);
+                                  final errMsg = res.errorMessage ??
+                                      'Transfer failed. Please check your balance.';
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(errMsg),
+                                      backgroundColor: AppColors.error,
+                                      behavior: SnackBarBehavior.floating,
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (modalCtx.mounted) {
+                                  setModalState(() => isProcessing = false);
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Transaction error: $e'),
+                                      backgroundColor: AppColors.error,
+                                      behavior: SnackBarBehavior.floating,
+                                    ),
+                                  );
+                                }
                               }
                             },
                       child: isProcessing
@@ -3521,9 +3800,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               child: CircularProgressIndicator(
                                   color: Colors.white, strokeWidth: 2),
                             )
-                          : const Text(
-                              'Authorize & Send Payment',
-                              style: TextStyle(
+                          : Text(
+                              canSubmit
+                                  ? 'Authorize & Send Payment'
+                                  : (resolvedRecipient == null
+                                      ? 'Enter Verified Recipient'
+                                      : (parsedAmount <= 0
+                                          ? 'Enter Amount'
+                                          : (parsedAmount > currentBal
+                                              ? 'Insufficient Balance'
+                                              : 'Authorize & Send Payment'))),
+                              style: const TextStyle(
                                   fontWeight: FontWeight.w700, fontSize: 14),
                             ),
                     ),

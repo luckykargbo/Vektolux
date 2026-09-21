@@ -284,6 +284,8 @@ export const transactionType = v.union(
   v.literal("refund"),
   v.literal("top_up"),
   v.literal("transfer"),
+  v.literal("p2p_transfer"),
+  v.literal("withdrawal"),
   v.literal("escrow_lock"),
   v.literal("escrow_release")
 );
@@ -292,7 +294,8 @@ export const transactionStatus = v.union(
   v.literal("pending"),
   v.literal("completed"),
   v.literal("failed"),
-  v.literal("reversed")
+  v.literal("reversed"),
+  v.literal("disputed")
 );
 
 export const serviceTypeEnum = v.union(
@@ -601,6 +604,7 @@ export default defineSchema({
 
   // ─── TRANSACTIONS (LEDGER) ────────────────────────────────────────
   transactions: defineTable({
+    transactionId: v.optional(v.string()), // UUID v4 tracking ID
     walletId: v.id("walletBalances"),
     userId: v.id("users"),
     type: transactionType,
@@ -611,6 +615,12 @@ export default defineSchema({
     referenceType: v.optional(v.string()),
     referenceId: v.optional(v.string()),
     counterpartyId: v.optional(v.id("users")),
+    counterpartyPhone: v.optional(v.string()),
+    counterpartyName: v.optional(v.string()),
+
+    // Fees & Net
+    feeAmount: v.optional(v.number()),
+    netAmount: v.optional(v.number()),
 
     // Payment gateway
     gatewayProvider: v.optional(v.string()),
@@ -632,11 +642,14 @@ export default defineSchema({
 
     // Status
     status: transactionStatus,
+    failureReason: v.optional(v.string()),
     description: v.optional(v.string()),
 
     // Metadata
+    createdAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
+    .index("by_transaction_id", ["transactionId"])
     .index("by_wallet", ["walletId"])
     .index("by_user", ["userId"])
     .index("by_user_type", ["userId", "type"])

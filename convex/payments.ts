@@ -2340,3 +2340,484 @@ export const processOrangeMoneyDeposit = internalMutation({
   },
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+//          PRODUCTION ZERO-MOCK P2P TRANSFER & ESCROW LEDGER
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Resolve a recipient strictly against the database before any payment.
+ * Returns { found: false, error: ... } for invalid strings like "ddddd".
+ */
+export const resolveRecipient = query({
+  args: {
+    query: v.string(),
+    senderUserId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const rawQuery = (args.query || "").trim();
+    if (!rawQuery || rawQuery.length < 3) {
+      return { found: false, error: "Recipient identifier must be at least 3 characters." };
+    }
+
+    let matchedUser: Doc<"users"> | null = null;
+
+    // 1. Try direct user ID lookup
+    try {
+      const doc = await ctx.db.get(rawQuery as Id<"users">);
+      if (doc) matchedUser = doc;
+    } catch {
+      // not a direct Convex ID
+    }
+
+    // 2. Phone number candidate lookup
+    if (!matchedUser) {
+      const candidates = getSierraLeonePhoneCandidates(rawQuery);
+      for (const cand of candidates) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_phone", (q) => q.eq("phone", cand))
+          .first();
+        if (user) {
+          matchedUser = user;
+          break;
+        }
+      }
+    }
+
+    // 3. Email lookup
+    if (!matchedUser && rawQuery.includes("@")) {
+      matchedUser = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", rawQuery.toLowerCase()))
+        .first();
+    }
+
+    // 4. Trailing 8-digit scan fallback if digits exist
+    if (!matchedUser) {
+      const digits = rawQuery.replace(/\D/g, "");
+      if (digits.length >= 8) {
+        const local8 = digits.slice(-8);
+        const allUsers = await ctx.db.query("users").collect();
+        for (const u of allUsers) {
+          const uDigits = (u.phone || "").replace(/\D/g, "");
+          if (uDigits.endsWith(local8)) {
+            matchedUser = u;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!matchedUser) {
+      return { found: false, error: "Recipient not found." };
+    }
+
+    if (args.senderUserId && (matchedUser._id as string) === args.senderUserId) {
+      return { found: false, error: "You cannot transfer funds to yourself." };
+    }
+
+    return {
+      found: true,
+      recipientId: matchedUser._id as string,
+      name: matchedUser.name,
+      phone: matchedUser.phone,
+      email: matchedUser.email,
+      role: matchedUser.role,
+      verificationBadge: (matchedUser as any).verificationBadge || "NONE",
+      isVerified: matchedUser.isVerified || false,
+    };
+  },
+});
+
+/**
+ * Execute an atomic peer-to-peer transfer.
+ * Strictly verifies sender balance, debits sender, credits recipient,
+ * writes balanced ledger entries, and returns a verified transaction receipt.
+ */
+export const executeP2PTransfer = mutation({
+  args: {
+    senderUserId: v.string(),
+    recipientQuery: v.string(),
+    amount: v.number(),
+    note: v.optional(v.string()),
+    pin: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const amount = Number(args.amount);
+    if (!amount || isNaN(amount) || amount <= 0) {
+      throw new Error("INVALID_AMOUNT: Transfer amount must be greater than 0 SLE.");
+    }
+
+    // 1. Resolve sender
+    const sender = await ctx.db.get(args.senderUserId as Id<"users">);
+    if (!sender) {
+      throw new Error("SENDER_NOT_FOUND: Sender account does not exist.");
+    }
+
+    // 2. Resolve sender wallet
+    let senderWallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user_currency", (q) =>
+        q.eq("userId", sender._id).eq("currency", "SLE")
+      )
+      .first();
+
+    if (!senderWallet) {
+      senderWallet = await ctx.db
+        .query("walletBalances")
+        .withIndex("by_user", (q) => q.eq("userId", sender._id))
+        .first();
+    }
+
+    if (!senderWallet) {
+      throw new Error("SENDER_WALLET_NOT_FOUND: Sender does not have an active wallet.");
+    }
+
+    if (senderWallet.availableBalance < amount) {
+      throw new Error(
+        `INSUFFICIENT_FUNDS: Available balance (SLE ${senderWallet.availableBalance.toFixed(2)}) is less than transfer amount (SLE ${amount.toFixed(2)}).`
+      );
+    }
+
+    // 3. Resolve recipient
+    const rawQuery = args.recipientQuery.trim();
+    let recipient: Doc<"users"> | null = null;
+    try {
+      const doc = await ctx.db.get(rawQuery as Id<"users">);
+      if (doc) recipient = doc;
+    } catch {
+      // not ID
+    }
+
+    if (!recipient) {
+      const candidates = getSierraLeonePhoneCandidates(rawQuery);
+      for (const cand of candidates) {
+        const u = await ctx.db
+          .query("users")
+          .withIndex("by_phone", (q) => q.eq("phone", cand))
+          .first();
+        if (u) {
+          recipient = u;
+          break;
+        }
+      }
+    }
+
+    if (!recipient && rawQuery.includes("@")) {
+      recipient = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", rawQuery.toLowerCase()))
+        .first();
+    }
+
+    if (!recipient) {
+      const digits = rawQuery.replace(/\D/g, "");
+      if (digits.length >= 8) {
+        const local8 = digits.slice(-8);
+        const allUsers = await ctx.db.query("users").collect();
+        for (const u of allUsers) {
+          const uDigits = (u.phone || "").replace(/\D/g, "");
+          if (uDigits.endsWith(local8)) {
+            recipient = u;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!recipient) {
+      throw new Error(`RECIPIENT_NOT_FOUND: No recipient found for '${args.recipientQuery}'.`);
+    }
+
+    if (recipient._id === sender._id) {
+      throw new Error("INVALID_TRANSFER: You cannot transfer funds to yourself.");
+    }
+
+    // 4. Resolve or initialize recipient wallet
+    let recipientWallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user_currency", (q) =>
+        q.eq("userId", recipient._id).eq("currency", "SLE")
+      )
+      .first();
+
+    const now = Date.now();
+
+    if (!recipientWallet) {
+      const rwId = await ctx.db.insert("walletBalances", {
+        userId: recipient._id,
+        availableBalance: 0,
+        pendingBalance: 0,
+        escrowBalance: 0,
+        currency: "SLE",
+        updatedAt: now,
+      });
+      recipientWallet = (await ctx.db.get(rwId))!;
+    }
+
+    // 5. ATOMIC EXECUTION
+    const txId = "TX-" + (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `P2P-${now}-${Math.random().toString(36).substring(2, 9)}`);
+    const fee = 0; // P2P is 0 fee
+
+    const senderNewBalance = senderWallet.availableBalance - amount;
+    const recipientNewBalance = recipientWallet.availableBalance + amount;
+
+    // Deduct sender
+    await ctx.db.patch(senderWallet._id, {
+      availableBalance: senderNewBalance,
+      updatedAt: now,
+    });
+
+    // Credit recipient
+    await ctx.db.patch(recipientWallet._id, {
+      availableBalance: recipientNewBalance,
+      updatedAt: now,
+    });
+
+    // Insert Sender Debit Transaction Record
+    await ctx.db.insert("transactions", {
+      transactionId: txId,
+      walletId: senderWallet._id,
+      userId: sender._id,
+      counterpartyId: recipient._id,
+      counterpartyName: recipient.name,
+      counterpartyPhone: recipient.phone,
+      type: "p2p_transfer",
+      amount,
+      feeAmount: fee,
+      netAmount: -amount,
+      currency: "SLE",
+      status: "completed",
+      referenceType: "p2p_transfer",
+      referenceId: txId,
+      gatewayProvider: "INTERNAL_WALLET",
+      gatewayReference: txId,
+      description: args.note || `P2P Transfer to ${recipient.name} (${recipient.phone})`,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // Insert Recipient Credit Transaction Record
+    await ctx.db.insert("transactions", {
+      transactionId: txId,
+      walletId: recipientWallet._id,
+      userId: recipient._id,
+      counterpartyId: sender._id,
+      counterpartyName: sender.name,
+      counterpartyPhone: sender.phone,
+      type: "p2p_transfer",
+      amount,
+      feeAmount: 0,
+      netAmount: amount,
+      currency: "SLE",
+      status: "completed",
+      referenceType: "p2p_transfer",
+      referenceId: txId,
+      gatewayProvider: "INTERNAL_WALLET",
+      gatewayReference: txId,
+      description: args.note || `P2P Transfer from ${sender.name} (${sender.phone})`,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // Create double-entry ledger records
+    try {
+      const ledgerTxId = await ctx.db.insert("ledger_transactions", {
+        transactionCode: txId,
+        description: `P2P Transfer: ${sender.name} -> ${recipient.name} (${amount} SLE)`,
+        createdAt: now,
+      });
+
+      await ctx.db.insert("ledger_entries", {
+        transactionId: ledgerTxId,
+        accountType: "CLIENT_AVAILABLE",
+        direction: "DEBIT",
+        amount,
+        currency: "SLE",
+        userId: sender._id,
+        createdAt: now,
+      });
+
+      await ctx.db.insert("ledger_entries", {
+        transactionId: ledgerTxId,
+        accountType: "CLIENT_AVAILABLE",
+        direction: "CREDIT",
+        amount,
+        currency: "SLE",
+        userId: recipient._id,
+        createdAt: now,
+      });
+    } catch (e) {
+      console.warn("Ledger entry recording non-fatal:", e);
+    }
+
+    // In-app notification to recipient
+    try {
+      await ctx.db.insert("user_notifications", {
+        userId: recipient._id as string,
+        targetType: "single_user",
+        title: "Funds Received!",
+        body: `You received SLE ${amount.toFixed(2)} from ${sender.name}. Your new balance is SLE ${recipientNewBalance.toFixed(2)}.`,
+        read: false,
+        createdAt: now,
+      });
+    } catch {
+      // non-fatal
+    }
+
+    return {
+      success: true,
+      transactionId: txId,
+      amount,
+      feeAmount: fee,
+      netAmount: amount,
+      currency: "SLE",
+      timestamp: now,
+      senderId: sender._id as string,
+      senderName: sender.name,
+      senderPhone: sender.phone,
+      recipientId: recipient._id as string,
+      recipientName: recipient.name,
+      recipientPhone: recipient.phone,
+      senderBalanceAfter: senderNewBalance,
+      status: "COMPLETED",
+      description: args.note || `P2P Transfer to ${recipient.name}`,
+    };
+  },
+});
+
+/**
+ * Atomic Escrow Lock mutation.
+ * Deducts funds from buyer availableBalance and locks them into escrowBalance.
+ */
+export const lockEscrowFunds = mutation({
+  args: {
+    buyerUserId: v.string(),
+    sellerUserId: v.string(),
+    amount: v.number(),
+    referenceType: v.string(),
+    referenceId: v.string(),
+    description: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const amount = Number(args.amount);
+    if (!amount || amount <= 0) {
+      throw new Error("INVALID_AMOUNT: Escrow lock amount must be greater than 0.");
+    }
+
+    const buyer = await ctx.db.get(args.buyerUserId as Id<"users">);
+    if (!buyer) throw new Error("BUYER_NOT_FOUND: Buyer account does not exist.");
+
+    const seller = await ctx.db.get(args.sellerUserId as Id<"users">);
+    if (!seller) throw new Error("SELLER_NOT_FOUND: Seller account does not exist.");
+
+    let wallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user_currency", (q) =>
+        q.eq("userId", buyer._id).eq("currency", "SLE")
+      )
+      .first();
+
+    if (!wallet) {
+      wallet = await ctx.db
+        .query("walletBalances")
+        .withIndex("by_user", (q) => q.eq("userId", buyer._id))
+        .first();
+    }
+
+    if (!wallet || wallet.availableBalance < amount) {
+      const avail = wallet ? wallet.availableBalance : 0;
+      throw new Error(
+        `INSUFFICIENT_FUNDS: Available balance (SLE ${avail.toFixed(2)}) is less than escrow requirement (SLE ${amount.toFixed(2)}). Please top up.`
+      );
+    }
+
+    const now = Date.now();
+    const txId = "ESCROW-" + (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${now}-${Math.random().toString(36).substring(2, 9)}`);
+
+    const newAvail = wallet.availableBalance - amount;
+    const newEscrow = (wallet.escrowBalance || 0) + amount;
+
+    await ctx.db.patch(wallet._id, {
+      availableBalance: newAvail,
+      escrowBalance: newEscrow,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("transactions", {
+      transactionId: txId,
+      walletId: wallet._id,
+      userId: buyer._id,
+      counterpartyId: seller._id,
+      counterpartyName: seller.name,
+      counterpartyPhone: seller.phone,
+      type: "escrow_lock",
+      amount,
+      feeAmount: 0,
+      netAmount: -amount,
+      currency: "SLE",
+      status: "completed",
+      escrowStatus: "locked",
+      referenceType: args.referenceType,
+      referenceId: args.referenceId,
+      gatewayProvider: "ESCROW_VAULT",
+      gatewayReference: txId,
+      description: args.description || `Escrow lock of SLE ${amount} for ${args.referenceType}`,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return {
+      success: true,
+      transactionId: txId,
+      amount,
+      currency: "SLE",
+      buyerId: buyer._id as string,
+      sellerId: seller._id as string,
+      availableBalanceAfter: newAvail,
+      escrowBalanceAfter: newEscrow,
+      status: "LOCKED",
+      timestamp: now,
+    };
+  },
+});
+
+/**
+ * Retrieve verified transaction receipt for the confirmation screen.
+ */
+export const getTransactionReceipt = query({
+  args: {
+    transactionId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const tx = await ctx.db
+      .query("transactions")
+      .withIndex("by_transaction_id", (q) => q.eq("transactionId", args.transactionId))
+      .first();
+
+    if (!tx) return null;
+
+    const sender = await ctx.db.get(tx.userId);
+    const counterparty = tx.counterpartyId ? await ctx.db.get(tx.counterpartyId) : null;
+    const wallet = await ctx.db.get(tx.walletId);
+
+    return {
+      transactionId: tx.transactionId,
+      type: tx.type,
+      amount: tx.amount,
+      feeAmount: tx.feeAmount ?? 0,
+      netAmount: tx.netAmount ?? tx.amount,
+      currency: tx.currency,
+      status: tx.status,
+      timestamp: tx.createdAt ?? tx.updatedAt,
+      description: tx.description,
+      gatewayProvider: tx.gatewayProvider,
+      senderName: sender?.name ?? "Vektolux User",
+      senderPhone: sender?.phone ?? "",
+      counterpartyName: tx.counterpartyName ?? counterparty?.name ?? "Counterparty",
+      counterpartyPhone: tx.counterpartyPhone ?? counterparty?.phone ?? "",
+      currentWalletBalance: wallet?.availableBalance ?? 0,
+    };
+  },
+});
+
