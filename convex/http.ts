@@ -733,7 +733,7 @@ function corsHeaders(): Record<string, string> {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-orange-signature, X-Orange-Signature",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -1384,8 +1384,152 @@ http.route({
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-//          POST /payments/orange-money/webhook — Orange Money IPN
+//   POST /api/webhooks/orange-money — Orange Money Sierra Leone Webhook
 // ═══════════════════════════════════════════════════════════════════════
+
+const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
+  try {
+    // 1. Security & Signature Validation
+    const signature =
+      request.headers.get("x-orange-signature") ||
+      request.headers.get("X-Orange-Signature");
+    const authHeader =
+      request.headers.get("authorization") ||
+      request.headers.get("Authorization");
+
+    const configuredSecret =
+      process.env.ORANGE_MONEY_WEBHOOK_SECRET || "vektolux_om_secret_2026";
+
+    let isAuthorized = false;
+    if (signature && signature.trim() === configuredSecret.trim()) {
+      isAuthorized = true;
+    } else if (authHeader) {
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      if (token === configuredSecret.trim()) {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
+      return new Response(
+        JSON.stringify({
+          status: "UNAUTHORIZED",
+          error: "Invalid or missing webhook signature or authorization token",
+        }),
+        { status: 401, headers: corsHeaders() }
+      );
+    }
+
+    // 2. Parse & validate JSON body
+    let body: any = {};
+    let rawPayload = "";
+    try {
+      rawPayload = await request.text();
+      body = JSON.parse(rawPayload);
+    } catch (_) {
+      return new Response(
+        JSON.stringify({
+          status: "BAD_REQUEST",
+          error: "Malformed or invalid JSON payload",
+        }),
+        { status: 400, headers: corsHeaders() }
+      );
+    }
+
+    console.log("Orange Money SL webhook payload received:", body);
+
+    // 3. Extract transaction fields across provider conventions
+    const txnId =
+      body.txnId ||
+      body.mpesa_or_om_ref ||
+      body.txId ||
+      body.transaction_id ||
+      body.reference ||
+      body.pay_token ||
+      body.notif_token;
+
+    const phoneNumber =
+      body.phoneNumber ||
+      body.msisdn ||
+      body.phone ||
+      body.customer_phone ||
+      "";
+
+    const rawAmount = body.amount ?? body.txn_amount ?? body.value;
+    const amount =
+      typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount);
+
+    const status = (body.status || "SUCCESS").toString();
+    const currency = (body.currency || "SLE").toString();
+    const userId = body.userId || body.metadata?.userId;
+
+    if (!txnId || typeof txnId !== "string" || isNaN(amount) || amount <= 0) {
+      return new Response(
+        JSON.stringify({
+          status: "BAD_REQUEST",
+          error: "Missing required fields: valid txnId and positive amount are required",
+        }),
+        { status: 400, headers: corsHeaders() }
+      );
+    }
+
+    // 4. Run internal mutation for idempotency, ledger logging, and wallet credit
+    const result = await ctx.runMutation(
+      internal.payments.processOrangeMoneyWebhook,
+      {
+        txnId: String(txnId),
+        phoneNumber: String(phoneNumber),
+        amount,
+        status,
+        currency,
+        rawPayload: rawPayload || JSON.stringify(body),
+        userId: userId ? String(userId) : undefined,
+      }
+    );
+
+    console.log("Orange Money SL webhook processed successfully:", result);
+
+    return new Response(
+      JSON.stringify({
+        status: "RECEIVED",
+        result,
+      }),
+      {
+        status: 200,
+        headers: corsHeaders(),
+      }
+    );
+  } catch (err: any) {
+    console.error("Orange Money SL webhook server error:", err);
+    return new Response(
+      JSON.stringify({
+        status: "INTERNAL_ERROR",
+        error: err?.message || "Internal server error occurred",
+      }),
+      {
+        status: 500,
+        headers: corsHeaders(),
+      }
+    );
+  }
+});
+
+http.route({
+  path: "/api/webhooks/orange-money",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(),
+    });
+  }),
+});
+
+http.route({
+  path: "/api/webhooks/orange-money",
+  method: "POST",
+  handler: handleOrangeMoneyWebhook,
+});
 
 http.route({
   path: "/payments/orange-money/webhook",
@@ -1401,90 +1545,7 @@ http.route({
 http.route({
   path: "/payments/orange-money/webhook",
   method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      let body: any = {};
-      try {
-        body = await request.json();
-      } catch (_) {
-        return new Response(
-          JSON.stringify({ success: false, error: "Invalid JSON payload" }),
-          { status: 400, headers: corsHeaders() }
-        );
-      }
-
-      console.log("Received Orange Money webhook notification:", body);
-
-      // Extract transaction data across common provider formats
-      const txId =
-        body.txId ||
-        body.transaction_id ||
-        body.reference ||
-        body.pay_token ||
-        body.notif_token ||
-        `om_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-
-      const amountRaw = body.amount ?? body.txn_amount ?? body.value ?? 0;
-      const amount = typeof amountRaw === "number" ? amountRaw : parseFloat(amountRaw) || 0;
-
-      const currency = body.currency ?? "SLE";
-      const phoneNumber =
-        body.phoneNumber ||
-        body.phone ||
-        body.msisdn ||
-        body.customer_phone ||
-        "";
-
-      const userId = body.userId || body.metadata?.userId;
-      const status = body.status || "completed";
-
-      // If status is not successful, record ack and return
-      if (status !== "completed" && status !== "SUCCESS" && status !== "success") {
-        console.log(`Orange Money webhook non-successful status: ${status}`);
-        return new Response(JSON.stringify({ received: true, status }), {
-          status: 200,
-          headers: corsHeaders(),
-        });
-      }
-
-      // Execute internal atomic credit
-      const result = await ctx.runMutation(
-        internal.payments.processOrangeMoneyDeposit,
-        {
-          txId,
-          amount,
-          currency,
-          phoneNumber,
-          userId,
-          userPhone: phoneNumber,
-          status,
-          rawPayload: body,
-        }
-      );
-
-      console.log("Orange Money deposit processed:", result);
-
-      return new Response(
-        JSON.stringify({
-          received: true,
-          success: true,
-          txId,
-          amount,
-          newBalance: result.newBalance,
-        }),
-        {
-          status: 200,
-          headers: { ...corsHeaders(), "Content-Type": "application/json" },
-        }
-      );
-    } catch (err: any) {
-      console.error("Orange Money webhook processing error:", err);
-      return new Response(
-        JSON.stringify({ received: true, error: err?.message ?? "Processing failed" }),
-        { status: 200, headers: { ...corsHeaders(), "Content-Type": "application/json" } }
-      );
-    }
-  }),
+  handler: handleOrangeMoneyWebhook,
 });
 
 export default http;

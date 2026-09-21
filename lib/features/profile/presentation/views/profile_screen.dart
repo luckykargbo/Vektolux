@@ -29,6 +29,7 @@ import '../../../social/presentation/views/public_profile_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/services/payment_methods_service.dart';
 import '../../../../core/models/payment_account.dart';
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
@@ -70,6 +71,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // ── Vendor listing count (replaces hardcoded '6 Items') ───────────
   int _vendorListingCount = 0;
 
+  // ── Live Convex reactive subscription for real-time wallet crediting ──
+  StreamSubscription<dynamic>? _walletSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -77,6 +81,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
       context.read<AuthBloc>().add(const RefreshUserSessionEvent());
       _fetchWalletData();
       _fetchUserPaymentAccounts();
+      _subscribeToLiveWalletBalance();
+    });
+  }
+
+  @override
+  void dispose() {
+    _walletSubscription?.cancel();
+    super.dispose();
+  }
+
+  /// Subscribe in real time to convex/wallet:getUserBalance
+  /// Any incoming webhook credit reactively updates the UI without manual reload.
+  void _subscribeToLiveWalletBalance() {
+    final userId = context.read<AuthBloc>().state.user?.id;
+    if (userId == null) return;
+    final client = context.read<ConvexClientWrapper>();
+
+    _walletSubscription?.cancel();
+    _walletSubscription = client.subscribe(
+      'wallet:getUserBalance',
+      args: {'userId': userId},
+      interval: const Duration(seconds: 2),
+    ).listen((data) {
+      if (!mounted) return;
+      if (data is Map && data.containsKey('availableBalance')) {
+        final available = (data['availableBalance'] as num?)?.toDouble();
+        if (available != null) {
+          setState(() {
+            _walletBalance = available;
+            _isLoadingBalance = false;
+          });
+        }
+      }
     });
   }
 

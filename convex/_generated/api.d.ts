@@ -33,6 +33,7 @@ import type * as social from "../social.js";
 import type * as users from "../users.js";
 import type * as vehicleCatalog from "../vehicleCatalog.js";
 import type * as verification from "../verification.js";
+import type * as wallet from "../wallet.js";
 
 import type {
   ApiFromModules,
@@ -66,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   users: typeof users;
   vehicleCatalog: typeof vehicleCatalog;
   verification: typeof verification;
+  wallet: typeof wallet;
 }>;
 
 /**

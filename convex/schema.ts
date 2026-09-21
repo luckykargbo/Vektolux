@@ -967,12 +967,16 @@ export default defineSchema({
     idempotencyKey: v.string(),
     requestPayload: v.string(),
     isProcessed: v.boolean(),
+    amount: v.optional(v.number()),
+    status: v.optional(v.string()),
+    phoneNumber: v.optional(v.string()),
     errorMessage: v.optional(v.string()),
     receivedAt: v.number(),
     processedAt: v.optional(v.number()),
   })
     .index("by_idempotency", ["idempotencyKey"])
-    .index("by_prov_ext_id", ["provider", "externalTransactionId"]),
+    .index("by_prov_ext_id", ["provider", "externalTransactionId"])
+    .index("by_ext_id", ["externalTransactionId"]),
 
   // ─── REAL ESTATE ESCROW: INSPECTION PASSES (ANTI-BYPASS TOURS) ────
   re_inspection_passes: defineTable({
