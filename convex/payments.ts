@@ -645,8 +645,9 @@ export const getTransactionHistory = query({
 /**
  * Top up user wallet balance via Mobile Money (Orange Money, Africell Money) or Card.
  * Atomically creates or updates the user's wallet and inserts a ledger record.
+ * PROTECTED: internalMutation only callable by verified webhook or admin tasks.
  */
-export const topUpWallet = mutation({
+export const topUpWallet = internalMutation({
   args: {
     userId: v.string(),
     amount: v.number(),
@@ -2261,11 +2262,11 @@ async function executeOrangeMoneyWebhook(
 }
 
 /**
- * Public mutation allowing users / operators to top up a wallet via Orange Money Sierra Leone.
- * Accepts formatted phone numbers (e.g. "+232 73 623 761"), normalizes them, and credits
- * the wallet atomically with full double-entry ledger tracking.
+ * Process an incoming Orange Money deposit.
+ * PROTECTED: internalMutation only callable by verified carrier webhooks or admin clearance.
+ * End users cannot call this mutation directly.
  */
-export const depositOrangeMoney = mutation({
+export const depositOrangeMoney = internalMutation({
   args: {
     phoneNumber: v.string(),
     amount: v.number(),
@@ -2443,15 +2444,25 @@ export const executeP2PTransfer = mutation({
     pin: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const amount = Number(args.amount);
-    if (!amount || isNaN(amount) || amount <= 0) {
+    const rawAmount = Number(args.amount);
+    if (typeof rawAmount !== "number" || isNaN(rawAmount) || !isFinite(rawAmount) || rawAmount <= 0) {
       throw new Error("INVALID_AMOUNT: Transfer amount must be greater than 0 SLE.");
+    }
+    const amount = Math.round(rawAmount * 100) / 100;
+    if (amount <= 0) {
+      throw new Error("INVALID_AMOUNT: Transfer amount must be at least 0.01 SLE.");
+    }
+    if (amount > 500000) {
+      throw new Error("AMOUNT_EXCEEDS_LIMIT: Single transfer limit is SLE 500,000.00.");
     }
 
     // 1. Resolve sender
     const sender = await ctx.db.get(args.senderUserId as Id<"users">);
     if (!sender) {
       throw new Error("SENDER_NOT_FOUND: Sender account does not exist.");
+    }
+    if (sender.isActive === false) {
+      throw new Error("SENDER_INACTIVE: Your account has been suspended or deactivated.");
     }
 
     // 2. Resolve sender wallet
@@ -2531,6 +2542,10 @@ export const executeP2PTransfer = mutation({
 
     if (recipient._id === sender._id) {
       throw new Error("INVALID_TRANSFER: You cannot transfer funds to yourself.");
+    }
+
+    if (recipient.isActive === false) {
+      throw new Error("RECIPIENT_INACTIVE: Recipient account has been suspended or deactivated.");
     }
 
     // 4. Resolve or initialize recipient wallet
