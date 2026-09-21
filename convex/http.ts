@@ -1384,12 +1384,106 @@ http.route({
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-//   POST /api/webhooks/orange-money — Orange Money Sierra Leone Webhook
+//   POST /webhooks/orange-money — Orange Money Sierra Leone Webhook
+//   (Timing-Safe HMAC & Shared-Secret Protected)
 // ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Constant-time comparison between two strings to prevent timing side-channel attacks.
+ */
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const bufA = enc.encode(a);
+  const bufB = enc.encode(b);
+  let diff = bufA.byteLength ^ bufB.byteLength;
+  const maxLen = Math.max(bufA.byteLength, bufB.byteLength);
+  for (let i = 0; i < maxLen; i++) {
+    const byteA = i < bufA.byteLength ? bufA[i] : 0;
+    const byteB = i < bufB.byteLength ? bufB[i] : 0;
+    diff |= byteA ^ byteB;
+  }
+  return diff === 0;
+}
+
+/**
+ * Validates incoming carrier webhook signature against configured secret.
+ * Supports:
+ * 1. Direct shared token matching in x-orange-signature or Authorization header (timing-safe)
+ * 2. HMAC-SHA256 signature calculation over raw payload (timing-safe)
+ */
+async function verifyCarrierSignature(
+  rawBody: string,
+  signatureHeader: string | null,
+  authHeader: string | null,
+  configuredSecret: string
+): Promise<boolean> {
+  const secret = (configuredSecret || "").trim();
+  if (!secret) return false;
+
+  // Check 1: Signature header token / HMAC
+  if (signatureHeader) {
+    const sig = signatureHeader.replace(/^sha256=/i, "").trim();
+
+    // 1A: Direct shared secret token check (timing-safe)
+    if (timingSafeEqualStr(sig, secret)) {
+      return true;
+    }
+
+    // 1B: HMAC-SHA256 of raw request payload (timing-safe)
+    try {
+      const enc = new TextEncoder();
+      const key = await crypto.subtle.importKey(
+        "raw",
+        enc.encode(secret),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+      const signatureBuffer = await crypto.subtle.sign(
+        "HMAC",
+        key,
+        enc.encode(rawBody)
+      );
+      const computedHex = Array.from(new Uint8Array(signatureBuffer))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+
+      if (timingSafeEqualStr(sig.toLowerCase(), computedHex.toLowerCase())) {
+        return true;
+      }
+    } catch (e) {
+      console.error("HMAC verification error:", e);
+    }
+  }
+
+  // Check 2: Bearer token in Authorization header
+  if (authHeader) {
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (timingSafeEqualStr(token, secret)) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
   try {
-    // 1. Security & Signature Validation
+    // 1. Read raw body first for timing-safe HMAC verification
+    let rawPayload = "";
+    try {
+      rawPayload = await request.text();
+    } catch (_) {
+      return new Response(
+        JSON.stringify({
+          status: "BAD_REQUEST",
+          error: "Unable to read request payload",
+        }),
+        { status: 400, headers: corsHeaders() }
+      );
+    }
+
+    // 2. Timing-safe Signature & Authorization validation
     const signature =
       request.headers.get("x-orange-signature") ||
       request.headers.get("X-Orange-Signature");
@@ -1400,15 +1494,12 @@ const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
     const configuredSecret =
       process.env.ORANGE_MONEY_WEBHOOK_SECRET || "vektolux_om_secret_2026";
 
-    let isAuthorized = false;
-    if (signature && signature.trim() === configuredSecret.trim()) {
-      isAuthorized = true;
-    } else if (authHeader) {
-      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      if (token === configuredSecret.trim()) {
-        isAuthorized = true;
-      }
-    }
+    const isAuthorized = await verifyCarrierSignature(
+      rawPayload,
+      signature,
+      authHeader,
+      configuredSecret
+    );
 
     if (!isAuthorized) {
       return new Response(
@@ -1420,11 +1511,9 @@ const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
       );
     }
 
-    // 2. Parse & validate JSON body
+    // 3. Parse & validate JSON body
     let body: any = {};
-    let rawPayload = "";
     try {
-      rawPayload = await request.text();
       body = JSON.parse(rawPayload);
     } catch (_) {
       return new Response(
@@ -1438,8 +1527,9 @@ const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
 
     console.log("Orange Money SL webhook payload received:", body);
 
-    // 3. Extract transaction fields across provider conventions
+    // 4. Extract transaction fields across carrier conventions
     const txnId =
+      body.carrierTransactionId ||
       body.txnId ||
       body.mpesa_or_om_ref ||
       body.txId ||
@@ -1467,22 +1557,23 @@ const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
       return new Response(
         JSON.stringify({
           status: "BAD_REQUEST",
-          error: "Missing required fields: valid txnId and positive amount are required",
+          error: "Missing required fields: valid txnId/carrierTransactionId and positive amount are required",
         }),
         { status: 400, headers: corsHeaders() }
       );
     }
 
-    // 4. Run internal mutation for idempotency, ledger logging, and wallet credit
+    // 5. Dispatch to idempotent processIncomingCarrierDeposit mutation
     const result = await ctx.runMutation(
-      internal.payments.processOrangeMoneyWebhook,
+      internal.payments.processIncomingCarrierDeposit,
       {
-        txnId: String(txnId),
+        carrierTransactionId: String(txnId),
         phoneNumber: String(phoneNumber),
         amount,
         status,
         currency,
-        rawPayload: rawPayload || JSON.stringify(body),
+        provider: "ORANGE_MONEY_SL",
+        rawPayload,
         userId: userId ? String(userId) : undefined,
       }
     );
@@ -1491,7 +1582,7 @@ const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
 
     return new Response(
       JSON.stringify({
-        status: "RECEIVED",
+        status: "SUCCESS",
         result,
       }),
       {
@@ -1514,6 +1605,25 @@ const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
   }
 });
 
+// Primary route: /webhooks/orange-money
+http.route({
+  path: "/webhooks/orange-money",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(),
+    });
+  }),
+});
+
+http.route({
+  path: "/webhooks/orange-money",
+  method: "POST",
+  handler: handleOrangeMoneyWebhook,
+});
+
+// Legacy / alias routes for backward compatibility
 http.route({
   path: "/api/webhooks/orange-money",
   method: "OPTIONS",

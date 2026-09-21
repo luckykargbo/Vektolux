@@ -262,7 +262,9 @@ export const escrowClaimStatus = v.union(
   v.literal("PENDING_APPROVAL"),
   v.literal("ESCROW_LOCKED"),
   v.literal("RELEASED"),
-  v.literal("REJECTED")
+  v.literal("REJECTED"),
+  v.literal("APPROVED"),
+  v.literal("COMPLETED")
 );
 
 export const escrowClaimPaymentType = v.union(
@@ -1187,4 +1189,17 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_user_default", ["userId", "isDefault"]),
+
+  // ─── IMMUTABLE ADMIN AUDIT LOGS ───────────────────────────────────
+  // Permanent audit trail of admin financial approvals/rejections
+  audit_logs: defineTable({
+    adminUserId: v.id("users"),
+    action: v.union(v.literal("APPROVE_DEPOSIT"), v.literal("REJECT_DEPOSIT")),
+    targetTransactionId: v.string(), // Claim ID or external carrier reference
+    snapshot: v.string(), // JSON string snapshot of record state at resolution time
+    timestamp: v.number(),
+  })
+    .index("by_admin", ["adminUserId"])
+    .index("by_target", ["targetTransactionId"])
+    .index("by_action", ["action"]),
 });

@@ -1389,6 +1389,25 @@ export const approvePaymentClaim = mutation({
       }
     }
 
+    // Write immutable audit log
+    await ctx.db.insert("audit_logs", {
+      adminUserId: admin._id,
+      action: "APPROVE_DEPOSIT",
+      targetTransactionId: claim.transactionReference || (claim._id as string),
+      snapshot: JSON.stringify({
+        claimId: claim._id,
+        userId: claim.userId,
+        amount: claim.amount,
+        currency: claim.currency,
+        providerId: claim.providerId,
+        transactionReference: claim.transactionReference,
+        statusBefore: "PENDING_APPROVAL",
+        statusAfter: "ESCROW_LOCKED",
+        resolvedAt: now,
+      }),
+      timestamp: now,
+    });
+
     return { success: true, status: "ESCROW_LOCKED" as const };
   },
 });
@@ -1425,7 +1444,288 @@ export const rejectPaymentClaim = mutation({
       reviewedAt: now,
     });
 
+    // Write immutable audit log
+    await ctx.db.insert("audit_logs", {
+      adminUserId: admin._id,
+      action: "REJECT_DEPOSIT",
+      targetTransactionId: claim.transactionReference || (claim._id as string),
+      snapshot: JSON.stringify({
+        claimId: claim._id,
+        userId: claim.userId,
+        amount: claim.amount,
+        currency: claim.currency,
+        providerId: claim.providerId,
+        transactionReference: claim.transactionReference,
+        rejectionReason: args.rejectionReason,
+        resolvedAt: now,
+      }),
+      timestamp: now,
+    });
+
     return { success: true, status: "REJECTED" as const };
+  },
+});
+
+/**
+ * Admin: Atomically resolve manual payment claims (Approve or Reject) with immutable audit logging.
+ * Strictly verifies admin role, credits wallet upon approval, records completed transaction,
+ * and writes an append-only audit log entry.
+ */
+export const resolveManualPaymentClaim = mutation({
+  args: {
+    adminUserId: v.string(),
+    claimId: v.id("escrow_payment_claims"),
+    action: v.union(v.literal("APPROVE_DEPOSIT"), v.literal("REJECT_DEPOSIT")),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    // 1. Verify Admin user exists and has admin privileges
+    const adminId = ctx.db.normalizeId("users", args.adminUserId);
+    if (!adminId) {
+      throw new Error("UNAUTHORIZED_ADMIN: Invalid admin user ID");
+    }
+    const admin = await ctx.db.get(adminId);
+    if (!admin || admin.role?.toLowerCase() !== "admin") {
+      throw new Error("UNAUTHORIZED_ADMIN: Only users with 'admin' role can resolve payment claims");
+    }
+
+    // 2. Fetch and validate claim state
+    const claim = await ctx.db.get(args.claimId);
+    if (!claim) {
+      throw new Error("CLAIM_NOT_FOUND: Payment claim not found");
+    }
+    if (claim.status !== "PENDING_APPROVAL") {
+      throw new Error(`INVALID_STATUS: Cannot resolve claim with status: ${claim.status}`);
+    }
+
+    const now = Date.now();
+    const currency = claim.currency || "SLE";
+
+    if (args.action === "APPROVE_DEPOSIT") {
+      // 3. Atomically Credit user wallet
+      let wallet = await ctx.db
+        .query("walletBalances")
+        .withIndex("by_user_currency", (q) =>
+          q.eq("userId", claim.userId).eq("currency", currency)
+        )
+        .first();
+
+      let newBalance = claim.amount;
+      if (!wallet) {
+        const walletId = await ctx.db.insert("walletBalances", {
+          userId: claim.userId,
+          availableBalance: claim.amount,
+          pendingBalance: 0,
+          escrowBalance: 0,
+          currency,
+          updatedAt: now,
+        });
+        wallet = (await ctx.db.get(walletId))!;
+      } else {
+        newBalance = wallet.availableBalance + claim.amount;
+        await ctx.db.patch(wallet._id, {
+          availableBalance: newBalance,
+          updatedAt: now,
+        });
+      }
+
+      // 4. Record completed transaction
+      const txId =
+        claim.transactionReference ||
+        `CLAIM_${now}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+      await ctx.db.insert("transactions", {
+        transactionId: txId,
+        walletId: wallet._id,
+        userId: claim.userId,
+        type: "top_up",
+        amount: claim.amount,
+        currency,
+        gatewayProvider: claim.providerId,
+        gatewayReference: claim.transactionReference,
+        status: "completed",
+        description: `Manual deposit claim approved by Admin (${admin.name || admin._id}) - Ref: ${claim.transactionReference}`,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // 5. Double-entry ledger
+      const ledgerTxId = await ctx.db.insert("ledger_transactions", {
+        transactionCode: `LTX_CLAIM_${txId}`,
+        description: `Manual Claim Approval - Ref: ${claim.transactionReference}`,
+        createdAt: now,
+      });
+
+      await ctx.db.insert("ledger_entries", {
+        transactionId: ledgerTxId,
+        accountType: "CLIENT_AVAILABLE",
+        userId: claim.userId,
+        direction: "CREDIT",
+        amount: claim.amount,
+        currency,
+        createdAt: now,
+      });
+
+      // 6. Update claim status
+      await ctx.db.patch(claim._id, {
+        status: "APPROVED",
+        reviewedByAdminId: admin._id,
+        reviewedAt: now,
+      });
+
+      // Link updates for escrow contracts if applicable
+      if (claim.escrowOrderId) {
+        const order = await ctx.db.get(claim.escrowOrderId);
+        if (order && order.status === "PENDING_PAYMENT") {
+          await ctx.db.patch(claim.escrowOrderId, {
+            status: "HELD_IN_ESCROW",
+            updatedAt: now,
+          });
+        }
+      }
+      if (claim.reContractId) {
+        const contract = await ctx.db.get(claim.reContractId);
+        if (contract && contract.currentState === "CREATED") {
+          await ctx.db.patch(claim.reContractId, {
+            currentState: "FUNDS_LOCKED",
+            updatedAt: now,
+          });
+        }
+      }
+
+      // 7. Write immutable audit log
+      await ctx.db.insert("audit_logs", {
+        adminUserId: admin._id,
+        action: "APPROVE_DEPOSIT",
+        targetTransactionId: claim.transactionReference || (claim._id as string),
+        snapshot: JSON.stringify({
+          claimId: claim._id,
+          userId: claim.userId,
+          amount: claim.amount,
+          currency,
+          providerId: claim.providerId,
+          transactionReference: claim.transactionReference,
+          statusBefore: "PENDING_APPROVAL",
+          statusAfter: "APPROVED",
+          adminNotes: args.notes || null,
+          creditedWalletId: wallet._id,
+          newBalance,
+          resolvedAt: now,
+        }),
+        timestamp: now,
+      });
+
+      // 8. User notification
+      await ctx.db.insert("user_notifications", {
+        userId: claim.userId as string,
+        targetType: "single_user",
+        title: "Deposit Approved",
+        body: `Your deposit claim of ${claim.amount} ${currency} has been approved and credited to your wallet balance.`,
+        read: false,
+        createdAt: now,
+      });
+
+      return {
+        success: true,
+        action: "APPROVE_DEPOSIT" as const,
+        status: "APPROVED" as const,
+        claimId: claim._id,
+        creditedUserId: claim.userId,
+        amount: claim.amount,
+        currency,
+        newBalance,
+        timestamp: now,
+      };
+    } else {
+      // REJECT_DEPOSIT
+      const rejectionReason = args.notes || "Deposit claim rejected by administrator";
+
+      await ctx.db.patch(claim._id, {
+        status: "REJECTED",
+        rejectionReason,
+        reviewedByAdminId: admin._id,
+        reviewedAt: now,
+      });
+
+      // Write immutable audit log
+      await ctx.db.insert("audit_logs", {
+        adminUserId: admin._id,
+        action: "REJECT_DEPOSIT",
+        targetTransactionId: claim.transactionReference || (claim._id as string),
+        snapshot: JSON.stringify({
+          claimId: claim._id,
+          userId: claim.userId,
+          amount: claim.amount,
+          currency,
+          providerId: claim.providerId,
+          transactionReference: claim.transactionReference,
+          statusBefore: "PENDING_APPROVAL",
+          statusAfter: "REJECTED",
+          rejectionReason,
+          resolvedAt: now,
+        }),
+        timestamp: now,
+      });
+
+      // User notification
+      await ctx.db.insert("user_notifications", {
+        userId: claim.userId as string,
+        targetType: "single_user",
+        title: "Deposit Claim Rejected",
+        body: `Your deposit claim for ${claim.amount} ${currency} was rejected: ${rejectionReason}`,
+        read: false,
+        createdAt: now,
+      });
+
+      return {
+        success: true,
+        action: "REJECT_DEPOSIT" as const,
+        status: "REJECTED" as const,
+        claimId: claim._id,
+        rejectionReason,
+        timestamp: now,
+      };
+    }
+  },
+});
+
+/**
+ * Query immutable admin audit logs (chronological descending).
+ */
+export const getAuditLogs = query({
+  args: {
+    limit: v.optional(v.number()),
+    targetTransactionId: v.optional(v.string()),
+    adminUserId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.min(args.limit ?? 50, 100);
+
+    if (args.targetTransactionId) {
+      return await ctx.db
+        .query("audit_logs")
+        .withIndex("by_target", (q) =>
+          q.eq("targetTransactionId", args.targetTransactionId!)
+        )
+        .order("desc")
+        .take(limit);
+    }
+
+    if (args.adminUserId) {
+      const adminId = ctx.db.normalizeId("users", args.adminUserId);
+      if (adminId) {
+        return await ctx.db
+          .query("audit_logs")
+          .withIndex("by_admin", (q) => q.eq("adminUserId", adminId))
+          .order("desc")
+          .take(limit);
+      }
+    }
+
+    return await ctx.db
+      .query("audit_logs")
+      .order("desc")
+      .take(limit);
   },
 });
 
@@ -2007,11 +2307,11 @@ export function getSierraLeonePhoneCandidates(phone: string): string[] {
 }
 
 /**
- * Shared transactional handler for Orange Money Sierra Leone deposits.
- * Implements strict telco webhook idempotency logging, orphaned user handling,
- * double-entry ledger entry creation, and real-time wallet balance crediting.
+ * Shared transactional handler for all Carrier deposits (Orange Money, Africell, Moneroo, etc.).
+ * Implements strict idempotency checking against `transactions.by_transaction_id` and `telco_webhook_logs`,
+ * orphaned user handling, double-entry ledger creation, and real-time wallet balance crediting.
  */
-async function executeOrangeMoneyWebhook(
+async function executeCarrierDeposit(
   ctx: MutationCtx,
   args: {
     txnId: string;
@@ -2019,39 +2319,39 @@ async function executeOrangeMoneyWebhook(
     amount: number;
     status: string;
     currency?: string;
+    provider?: string;
     rawPayload?: string;
     userId?: string;
   }
 ) {
   const now = Date.now();
   const currency = args.currency || "SLE";
+  const provider = args.provider || "ORANGE_MONEY_SL";
   const rawPayloadStr = args.rawPayload ?? JSON.stringify({});
 
   try {
-    // 1. Idempotency & Raw Logging via 'telco_webhook_logs'
+    // 1. Idempotency & Double-Credit Protection
+    // Check A: Primary lookup on transactions table by transactionId index
+    const existingTxById = await ctx.db
+      .query("transactions")
+      .withIndex("by_transaction_id", (q) => q.eq("transactionId", args.txnId))
+      .first();
+
+    // Check B: Lookup on transactions table by gateway provider + reference index
+    const existingTxByRef = await ctx.db
+      .query("transactions")
+      .withIndex("by_gateway_ref", (q) =>
+        q.eq("gatewayProvider", provider).eq("gatewayReference", args.txnId)
+      )
+      .first();
+
+    // Check C: Lookup in telco_webhook_logs
     const existingLog = await ctx.db
       .query("telco_webhook_logs")
       .withIndex("by_ext_id", (q) => q.eq("externalTransactionId", args.txnId))
       .first();
 
-    if (existingLog && existingLog.isProcessed) {
-      return {
-        success: true,
-        status: "ALREADY_PROCESSED",
-        message: "Transaction has already been processed",
-        txnId: args.txnId,
-      };
-    }
-
-    // Also check existing transaction ledger records for double-spend defense
-    const existingTx = await ctx.db
-      .query("transactions")
-      .withIndex("by_gateway_ref", (q) =>
-        q.eq("gatewayProvider", "ORANGE_MONEY_SL").eq("gatewayReference", args.txnId)
-      )
-      .first();
-
-    if (existingTx) {
+    if (existingTxById || existingTxByRef || (existingLog && existingLog.isProcessed)) {
       if (existingLog && !existingLog.isProcessed) {
         await ctx.db.patch(existingLog._id, {
           isProcessed: true,
@@ -2063,6 +2363,7 @@ async function executeOrangeMoneyWebhook(
         success: true,
         status: "ALREADY_PROCESSED",
         message: "Transaction already exists in transaction ledger",
+        carrierTransactionId: args.txnId,
         txnId: args.txnId,
       };
     }
@@ -2071,9 +2372,9 @@ async function executeOrangeMoneyWebhook(
     let logId = existingLog ? existingLog._id : null;
     if (!logId) {
       logId = await ctx.db.insert("telco_webhook_logs", {
-        provider: "ORANGE_MONEY_SL",
+        provider,
         externalTransactionId: args.txnId,
-        idempotencyKey: `om_${args.txnId}`,
+        idempotencyKey: `${provider.toLowerCase()}_${args.txnId}`,
         requestPayload: rawPayloadStr,
         isProcessed: false,
         amount: args.amount,
@@ -2132,6 +2433,7 @@ async function executeOrangeMoneyWebhook(
         success: false,
         status: "ORPHANED_USER",
         message: `No user found matching phone number ${args.phoneNumber}. Transaction held for manual resolution.`,
+        carrierTransactionId: args.txnId,
         txnId: args.txnId,
       };
     }
@@ -2156,14 +2458,15 @@ async function executeOrangeMoneyWebhook(
         success: true,
         status: args.status,
         message: `Payment status ${args.status} recorded without crediting wallet.`,
+        carrierTransactionId: args.txnId,
         txnId: args.txnId,
       };
     }
 
     // 4. Double-Entry Ledger: Insert into 'ledger_transactions' and 'ledger_entries'
     const ledgerTxId = await ctx.db.insert("ledger_transactions", {
-      transactionCode: `LTX_OM_${args.txnId}`,
-      description: `Orange Money SL Webhook Deposit - Ref: ${args.txnId}`,
+      transactionCode: `LTX_${provider}_${args.txnId}`,
+      description: `${provider} Webhook Deposit - Ref: ${args.txnId}`,
       createdAt: now,
     });
 
@@ -2204,17 +2507,19 @@ async function executeOrangeMoneyWebhook(
       });
     }
 
-    // 6. Record transaction ledger entry
+    // 6. Record transaction ledger entry with transactionId index field
     await ctx.db.insert("transactions", {
+      transactionId: args.txnId,
       walletId: wallet._id,
       userId: user._id,
       type: "top_up",
       amount: args.amount,
       currency,
-      gatewayProvider: "ORANGE_MONEY_SL",
+      gatewayProvider: provider,
       gatewayReference: args.txnId,
       status: "completed",
-      description: `Orange Money SL deposit of ${args.amount} ${currency} (Ref: ${args.txnId})`,
+      description: `${provider} deposit of ${args.amount} ${currency} (Ref: ${args.txnId})`,
+      createdAt: now,
       updatedAt: now,
     });
 
@@ -2232,7 +2537,7 @@ async function executeOrangeMoneyWebhook(
       userId: user._id as string,
       targetType: "single_user",
       title: "Wallet Credited",
-      body: `Your wallet has been credited with ${args.amount} ${currency} via Orange Money SL.`,
+      body: `Your wallet has been credited with ${args.amount} ${currency} via ${provider}.`,
       read: false,
       createdAt: now,
     });
@@ -2244,10 +2549,11 @@ async function executeOrangeMoneyWebhook(
       amount: args.amount,
       currency,
       newBalance,
+      carrierTransactionId: args.txnId,
       txnId: args.txnId,
     };
   } catch (err: any) {
-    console.error("[executeOrangeMoneyWebhook] Unexpected processing error:", {
+    console.error("[executeCarrierDeposit] Unexpected processing error:", {
       error: err?.message || String(err),
       stack: err?.stack,
       args,
@@ -2255,11 +2561,59 @@ async function executeOrangeMoneyWebhook(
     return {
       success: false,
       status: "ERROR",
-      message: `Orange Money deposit error: ${err?.message || "Internal transaction failure"}`,
+      message: `Carrier deposit error: ${err?.message || "Internal transaction failure"}`,
+      carrierTransactionId: args.txnId,
       txnId: args.txnId,
     };
   }
 }
+
+async function executeOrangeMoneyWebhook(
+  ctx: MutationCtx,
+  args: {
+    txnId: string;
+    phoneNumber: string;
+    amount: number;
+    status: string;
+    currency?: string;
+    rawPayload?: string;
+    userId?: string;
+  }
+) {
+  return await executeCarrierDeposit(ctx, {
+    ...args,
+    provider: "ORANGE_MONEY_SL",
+  });
+}
+
+/**
+ * Idempotent internal mutation to process carrier deposits (Orange Money, Africell, Moneroo).
+ * Checks transactions.by_transaction_id to prevent double-crediting.
+ */
+export const processIncomingCarrierDeposit = internalMutation({
+  args: {
+    carrierTransactionId: v.string(),
+    amount: v.number(),
+    phoneNumber: v.string(),
+    currency: v.optional(v.string()),
+    provider: v.optional(v.string()),
+    rawPayload: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    status: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    return await executeCarrierDeposit(ctx, {
+      txnId: args.carrierTransactionId,
+      phoneNumber: args.phoneNumber,
+      amount: args.amount,
+      currency: args.currency || "SLE",
+      provider: args.provider || "ORANGE_MONEY_SL",
+      status: args.status || "COMPLETED",
+      rawPayload: args.rawPayload,
+      userId: args.userId,
+    });
+  },
+});
 
 /**
  * Process an incoming Orange Money deposit.
