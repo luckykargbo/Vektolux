@@ -4,31 +4,27 @@ import {
   Users,
   Clock,
   FolderOpen,
-  TrendingUp,
   RotateCw,
-  PieChart as PieChartIcon,
-  BarChart3,
   ShieldCheck,
   CheckCircle2,
   DollarSign,
 } from "lucide-react";
 import { useEffect, useState, useMemo } from "react";
-import {
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  PieChart,
-  Pie,
-  Cell,
-} from "recharts";
+import dynamic from "next/dynamic";
 import type { AdminSession } from "@/lib/types";
 import styles from "./overview.module.css";
+
+const AnalyticsCharts = dynamic(
+  () => import("@/components/dashboard/AnalyticsCharts"),
+  {
+    ssr: false,
+    loading: () => (
+      <div style={{ padding: "40px 0", textAlign: "center", color: "#64748b" }}>
+        Loading real-time financial charts & analytics…
+      </div>
+    ),
+  }
+);
 
 interface DailyVolumePoint {
   date: string;
@@ -81,7 +77,6 @@ export default function DashboardPage() {
   const [totalListings, setTotalListings] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [chartView, setChartView] = useState<"curve" | "bar">("curve");
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
@@ -154,41 +149,7 @@ export default function DashboardPage() {
       maximumFractionDigits: 0,
     })}`;
 
-  // Custom Recharts Tooltips
-  const CustomVolumeTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload as DailyVolumePoint;
-      return (
-        <div className={styles.customTooltip}>
-          <div className={styles.tooltipTitle}>
-            {data.day}, {data.label}
-          </div>
-          <div className={styles.tooltipValue}>
-            {formatSLE(data.volume)}
-          </div>
-          <div style={{ fontSize: "11.5px", color: "#64748b", marginTop: 2 }}>
-            {data.transactions} {data.transactions === 1 ? "transaction" : "transactions"}
-          </div>
-        </div>
-      );
-    }
-    return null;
-  };
 
-  const CustomPieTooltip = ({ active, payload }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0];
-      return (
-        <div className={styles.customTooltip}>
-          <div className={styles.tooltipTitle}>{data.name}</div>
-          <div className={styles.tooltipValue} style={{ color: data.payload.color }}>
-            {data.value} {data.value === 1 ? "User" : "Users"} ({data.payload.percentage}%)
-          </div>
-        </div>
-      );
-    }
-    return null;
-  };
 
   return (
     <div>
@@ -281,282 +242,12 @@ export default function DashboardPage() {
         </a>
       </div>
 
-      {/* CHARTS SECTION */}
-      <div className={styles.chartsSection}>
-        {/* 1. FINANCIAL VOLUME CHART */}
-        <div className={styles.chartCard}>
-          <div className={styles.chartHeader}>
-            <div className={styles.chartTitleWrap}>
-              <h2 className={styles.chartTitle}>
-                <TrendingUp size={18} color="#10b981" />
-                Financial Transaction Volume (SLE)
-              </h2>
-              <p className={styles.chartSubtitle}>
-                Daily settlement volume across Orange Money, Afrimoney, Cards, and P2P transfers
-              </p>
-            </div>
-            <div className={styles.chartControls}>
-              <button
-                className={`${styles.viewToggleBtn} ${
-                  chartView === "curve" ? styles.viewToggleBtnActive : ""
-                }`}
-                onClick={() => setChartView("curve")}
-              >
-                Volume Curve
-              </button>
-              <button
-                className={`${styles.viewToggleBtn} ${
-                  chartView === "bar" ? styles.viewToggleBtnActive : ""
-                }`}
-                onClick={() => setChartView("bar")}
-              >
-                Daily Bars
-              </button>
-            </div>
-          </div>
-
-          <div className={styles.chartSummaryRow}>
-            <div className={styles.chartMetric}>
-              <span className={styles.metricLabel}>Total Settled</span>
-              <span className={styles.metricValue}>{formatSLE(grossVolume)}</span>
-            </div>
-            <div className={styles.chartMetric}>
-              <span className={styles.metricLabel}>Completed Txns</span>
-              <span className={styles.metricValue}>{completedTxCount}</span>
-            </div>
-            <div className={styles.chartMetric}>
-              <span className={styles.metricLabel}>Average Txn Size</span>
-              <span className={styles.metricValue}>{formatSLE(avgTxSize)}</span>
-            </div>
-            <div className={styles.chartMetric}>
-              <span className={styles.metricLabel}>Pending Txns</span>
-              <span className={styles.metricValue} style={{ color: "#d97706" }}>
-                {analytics?.financialVolume?.pendingCount ?? 0}
-              </span>
-            </div>
-          </div>
-
-          <div style={{ width: "100%", height: 280 }}>
-            {isMounted && (
-              <ResponsiveContainer width="100%" height="100%">
-                {chartView === "curve" ? (
-                  <AreaChart
-                    data={analytics?.financialVolume?.volumeTimeline ?? []}
-                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-                  >
-                    <defs>
-                      <linearGradient id="colorVolume" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.25} />
-                        <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                    <XAxis
-                      dataKey="label"
-                      tick={{ fill: "#64748b", fontSize: 12 }}
-                      stroke="#e2e8f0"
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tick={{ fill: "#64748b", fontSize: 12 }}
-                      stroke="#e2e8f0"
-                      tickLine={false}
-                      tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`)}
-                    />
-                    <Tooltip content={<CustomVolumeTooltip />} />
-                    <Area
-                      type="monotone"
-                      dataKey="volume"
-                      stroke="#10b981"
-                      strokeWidth={2.5}
-                      fillOpacity={1}
-                      fill="url(#colorVolume)"
-                    />
-                  </AreaChart>
-                ) : (
-                  <BarChart
-                    data={analytics?.financialVolume?.volumeTimeline ?? []}
-                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                    <XAxis
-                      dataKey="label"
-                      tick={{ fill: "#64748b", fontSize: 12 }}
-                      stroke="#e2e8f0"
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tick={{ fill: "#64748b", fontSize: 12 }}
-                      stroke="#e2e8f0"
-                      tickLine={false}
-                      tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`)}
-                    />
-                    <Tooltip content={<CustomVolumeTooltip />} />
-                    <Bar
-                      dataKey="volume"
-                      fill="#10b981"
-                      radius={[4, 4, 0, 0]}
-                    />
-                  </BarChart>
-                )}
-              </ResponsiveContainer>
-            )}
-          </div>
-        </div>
-
-        {/* 2. DEMOGRAPHICS GRID (2 COLUMNS) */}
-        <div className={styles.demographicsGrid}>
-          {/* GENDER DEMOGRAPHICS */}
-          <div className={styles.chartCard}>
-            <div className={styles.chartHeader}>
-              <div className={styles.chartTitleWrap}>
-                <h2 className={styles.chartTitle}>
-                  <PieChartIcon size={18} color="#3b82f6" />
-                  Gender Demographics (KYC)
-                </h2>
-                <p className={styles.chartSubtitle}>
-                  User distribution based on identity verification records
-                </p>
-              </div>
-            </div>
-
-            <div style={{ width: "100%", height: 220, position: "relative" }}>
-              {isMounted && (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Tooltip content={<CustomPieTooltip />} />
-                    <Pie
-                      data={analytics?.userDemographics?.genderDemographics ?? []}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={55}
-                      outerRadius={85}
-                      paddingAngle={4}
-                      dataKey="value"
-                    >
-                      {(analytics?.userDemographics?.genderDemographics ?? []).map(
-                        (entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        )
-                      )}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-
-            <div className={styles.demographicsLegend}>
-              {(analytics?.userDemographics?.genderDemographics ?? []).map(
-                (item) => (
-                  <div key={item.name} className={styles.legendItem}>
-                    <div className={styles.legendLeft}>
-                      <span
-                        className={styles.legendColorDot}
-                        style={{ background: item.color }}
-                      />
-                      <span className={styles.legendLabel}>{item.name}</span>
-                    </div>
-                    <div className={styles.legendRight}>
-                      <span className={styles.legendCount}>
-                        {item.value} {item.value === 1 ? "user" : "users"}
-                      </span>
-                      <span className={styles.legendPercent}>
-                        {item.percentage}%
-                      </span>
-                    </div>
-                  </div>
-                )
-              )}
-            </div>
-          </div>
-
-          {/* ROLE DISTRIBUTION */}
-          <div className={styles.chartCard}>
-            <div className={styles.chartHeader}>
-              <div className={styles.chartTitleWrap}>
-                <h2 className={styles.chartTitle}>
-                  <BarChart3 size={18} color="#6366f1" />
-                  Platform Role Distribution
-                </h2>
-                <p className={styles.chartSubtitle}>
-                  Breakdown across buyers, dealers, transport operators, and administrators
-                </p>
-              </div>
-            </div>
-
-            <div style={{ width: "100%", height: 220 }}>
-              {isMounted && (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    layout="vertical"
-                    data={analytics?.userDemographics?.roleDistribution ?? []}
-                    margin={{ top: 10, right: 30, left: 20, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                    <XAxis
-                      type="number"
-                      tick={{ fill: "#64748b", fontSize: 11 }}
-                      stroke="#e2e8f0"
-                      tickLine={false}
-                      allowDecimals={false}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="name"
-                      tick={{ fill: "#334155", fontSize: 12, fontWeight: 600 }}
-                      stroke="#e2e8f0"
-                      tickLine={false}
-                      width={120}
-                    />
-                    <Tooltip
-                      formatter={(val: any, name: any, item: any) => [
-                        `${val} Users (${item?.payload?.percentage || 0}%)`,
-                        item?.payload?.name,
-                      ]}
-                      contentStyle={{
-                        background: "#ffffff",
-                        border: "1px solid #e2e8f0",
-                        borderRadius: "8px",
-                        fontSize: "12.5px",
-                        boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-                      }}
-                    />
-                    <Bar dataKey="value" radius={[0, 6, 6, 0]}>
-                      {(analytics?.userDemographics?.roleDistribution ?? []).map(
-                        (entry, index) => (
-                          <Cell key={`role-cell-${index}`} fill={entry.color} />
-                        )
-                      )}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-
-            <div className={styles.demographicsLegend}>
-              {(analytics?.userDemographics?.roleDistribution ?? []).map((item) => (
-                <div key={item.name} className={styles.legendItem}>
-                  <div className={styles.legendLeft}>
-                    <span
-                      className={styles.legendColorDot}
-                      style={{ background: item.color }}
-                    />
-                    <span className={styles.legendLabel}>{item.name}</span>
-                  </div>
-                  <div className={styles.legendRight}>
-                    <span className={styles.legendCount}>
-                      {item.value} {item.value === 1 ? "user" : "users"}
-                    </span>
-                    <span className={styles.legendPercent}>
-                      {item.percentage}%
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* CHARTS SECTION (Client Component via next/dynamic to protect SSR) */}
+      <AnalyticsCharts
+        analytics={analytics}
+        loading={loading}
+        formatSLE={formatSLE}
+      />
 
       {/* Database Verification & Info Box */}
       <div className={styles.infoBox}>
