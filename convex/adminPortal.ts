@@ -725,6 +725,226 @@ export const getTransactionHeatmap = query({
   },
 });
 
+/**
+ * MODULE 3.1: Real-time comprehensive analytics query aggregating live users and transactions.
+ * Powers the Admin Overview live charts with financial volume curves,
+ * role distribution, and gender demographics.
+ */
+export const getAdminAnalytics = query({
+  args: {
+    adminId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.adminId) {
+      await validateAdminSession(ctx, args.adminId, args.sessionToken);
+    }
+
+    // 1. Live Users Aggregation
+    const users = await ctx.db.query("users").take(500);
+    const totalUsers = users.length;
+    let activeUsers = 0;
+    let verifiedUsers = 0;
+
+    let maleCount = 0;
+    let femaleCount = 0;
+    let unspecifiedGenderCount = 0;
+
+    const rawRoleCounts: Record<string, number> = {};
+    let clientBuyerCount = 0;
+    let dealerSellerCount = 0;
+    let driverAgentCount = 0;
+    let adminCount = 0;
+
+    for (const u of users) {
+      if (u.isActive !== false) activeUsers++;
+      if (u.isVerified === true) verifiedUsers++;
+
+      // Gender Breakdown (KYC gender field)
+      const gender = u.gender;
+      if (gender === "male") {
+        maleCount++;
+      } else if (gender === "female") {
+        femaleCount++;
+      } else {
+        unspecifiedGenderCount++;
+      }
+
+      // Role Breakdown
+      const role = (u.activeRole || u.role || "client").toLowerCase();
+      rawRoleCounts[role] = (rawRoleCounts[role] ?? 0) + 1;
+
+      if (role === "client" || role === "buyer") {
+        clientBuyerCount++;
+      } else if (
+        role === "merchant" ||
+        role === "seller" ||
+        role === "property_owner"
+      ) {
+        dealerSellerCount++;
+      } else if (role === "driver" || role === "agent") {
+        driverAgentCount++;
+      } else if (role === "admin") {
+        adminCount++;
+      } else {
+        clientBuyerCount++;
+      }
+    }
+
+    // 2. Live Transactions Aggregation (Financial Volume)
+    const transactions = await ctx.db
+      .query("transactions")
+      .order("desc")
+      .take(500);
+
+    let grossVolume = 0;
+    let completedCount = 0;
+    let pendingCount = 0;
+    let failedCount = 0;
+
+    // Daily volume grouping for the last 7 days
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const dailyVolumeMap: Record<string, { volume: number; count: number }> = {};
+
+    // Initialize past 7 days chronologically
+    const daysList: string[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now - i * dayMs);
+      const key = d.toISOString().slice(0, 10); // "YYYY-MM-DD"
+      dailyVolumeMap[key] = { volume: 0, count: 0 };
+      daysList.push(key);
+    }
+
+    for (const tx of transactions) {
+      const amt = tx.amount ?? 0;
+      const status = String(tx.status || "").toLowerCase();
+
+      if (status === "completed" || status === "success") {
+        grossVolume += amt;
+        completedCount++;
+
+        const txDate = new Date(tx._creationTime).toISOString().slice(0, 10);
+        if (dailyVolumeMap[txDate]) {
+          dailyVolumeMap[txDate].volume += amt;
+          dailyVolumeMap[txDate].count += 1;
+        }
+      } else if (status === "pending") {
+        pendingCount++;
+      } else if (
+        status === "failed" ||
+        status === "reversed" ||
+        status === "rejected"
+      ) {
+        failedCount++;
+      }
+    }
+
+    const volumeTimeline = daysList.map((dateKey) => {
+      const parts = dateKey.split("-");
+      const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      const label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const dayName = d.toLocaleDateString("en-US", { weekday: "short" });
+      return {
+        date: dateKey,
+        day: dayName,
+        label,
+        volume: dailyVolumeMap[dateKey].volume,
+        transactions: dailyVolumeMap[dateKey].count,
+      };
+    });
+
+    const genderDemographics = [
+      {
+        name: "Male",
+        value: maleCount,
+        percentage:
+          totalUsers > 0 ? Math.round((maleCount / totalUsers) * 100) : 0,
+        color: "#3B82F6",
+      },
+      {
+        name: "Female",
+        value: femaleCount,
+        percentage:
+          totalUsers > 0 ? Math.round((femaleCount / totalUsers) * 100) : 0,
+        color: "#EC4899",
+      },
+      {
+        name: "Unspecified / Not Disclosed",
+        value: unspecifiedGenderCount,
+        percentage:
+          totalUsers > 0
+            ? Math.round((unspecifiedGenderCount / totalUsers) * 100)
+            : 0,
+        color: "#94A3B8",
+      },
+    ];
+
+    const roleDistribution = [
+      {
+        name: "Clients & Buyers",
+        group: "client_buyer",
+        value: clientBuyerCount,
+        percentage:
+          totalUsers > 0
+            ? Math.round((clientBuyerCount / totalUsers) * 100)
+            : 0,
+        color: "#10B981",
+      },
+      {
+        name: "Dealers & Merchants",
+        group: "dealer_seller",
+        value: dealerSellerCount,
+        percentage:
+          totalUsers > 0
+            ? Math.round((dealerSellerCount / totalUsers) * 100)
+            : 0,
+        color: "#6366F1",
+      },
+      {
+        name: "Drivers & Agents",
+        group: "driver_agent",
+        value: driverAgentCount,
+        percentage:
+          totalUsers > 0
+            ? Math.round((driverAgentCount / totalUsers) * 100)
+            : 0,
+        color: "#F59E0B",
+      },
+      {
+        name: "Administrators",
+        group: "admin",
+        value: adminCount,
+        percentage:
+          totalUsers > 0 ? Math.round((adminCount / totalUsers) * 100) : 0,
+        color: "#0F172A",
+      },
+    ];
+
+    return {
+      financialVolume: {
+        currency: "SLE",
+        grossVolume,
+        totalTransactions: transactions.length,
+        completedCount,
+        pendingCount,
+        failedCount,
+        volumeTimeline,
+      },
+      userDemographics: {
+        totalUsers,
+        activeUsers,
+        verifiedUsers,
+        genderDemographics,
+        roleDistribution,
+        rawRoleCounts,
+      },
+      timestamp: Date.now(),
+    };
+  },
+});
+
+
 // ═══════════════════════════════════════════════════════════════════════
 //  MODULE 4 — USER PROFILE AUDITING, SESSION TRACKING & DEVICE LOGS
 // ═══════════════════════════════════════════════════════════════════════
