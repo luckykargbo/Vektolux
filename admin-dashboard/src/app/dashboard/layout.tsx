@@ -1,6 +1,6 @@
 "use client";
 // src/app/dashboard/layout.tsx — Shared dashboard shell with sidebar nav
-import { LayoutDashboard, Users, FileCheck, FolderOpen, Zap, ShieldCheck, Building2, Bell, CreditCard } from "lucide-react";
+import { LayoutDashboard, Users, FileCheck, FolderOpen, Zap, ShieldCheck, Building2, Bell, CreditCard, Activity } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import type { AdminSession } from "@/lib/types";
@@ -40,6 +40,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const navLinks = [
     { href: "/dashboard", label: "Overview", icon: <LayoutDashboard size={18} /> },
+    { href: "/dashboard/api-health", label: "API Key Health", icon: <Activity size={18} /> },
     { href: "/dashboard/notifications", label: "Push Notifications", icon: <Bell size={18} /> },
     { href: "/dashboard/payments", label: "Payments", icon: <CreditCard size={18} /> },
     { href: "/dashboard/escrow", label: "Vehicle Escrow", icon: <ShieldCheck size={18} /> },
