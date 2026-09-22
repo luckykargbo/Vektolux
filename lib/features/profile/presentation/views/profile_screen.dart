@@ -21,6 +21,7 @@ import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../auth/presentation/views/login_screen.dart';
 import '../../../../core/widgets/vektolux_avatar.dart';
 import '../../../operator/presentation/views/operator_dashboard_screen.dart';
+import '../../../admin/presentation/views/admin_dashboard_screen.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/my_listings_screen.dart';
@@ -1584,6 +1585,108 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
                 const SizedBox(height: 18),
+
+                // ── 1.5 Master Admin Portal (If Platform Administrator) ──
+                if (role == UserRole.admin) ...[
+                  _buildSectionHeader('MASTER PLATFORM CONTROLS'),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [AppColors.obsidian, Color(0xFF064E3B)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.15),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: AppColors.emerald.withValues(alpha: 0.25),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.admin_panel_settings_rounded,
+                              color: AppColors.emeraldLight, size: 26),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text(
+                                'Master Admin Portal',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                                maxLines: 1,
+                                softWrap: true,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                'API Health, Terminals, Analytics & Privacy',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.8),
+                                  fontSize: 12,
+                                ),
+                                maxLines: 2,
+                                softWrap: true,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.emerald,
+                            foregroundColor: AppColors.obsidian,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 10),
+                          ),
+                          onPressed: () {
+                            final client = context.read<ConvexClientWrapper>();
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => AdminDashboardScreen(
+                                  convexClient: client,
+                                ),
+                              ),
+                            );
+                          },
+                          child: const Text(
+                            'Open Portal',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                ],
 
                 // ── 2. Operator Workspace Card (If vendor role) ──────
                 if (isVendor) ...[

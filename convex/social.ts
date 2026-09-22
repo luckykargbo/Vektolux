@@ -151,7 +151,10 @@ export const getSocialFeed = query({
         .take(10);
         
       for (const item of realEstate) {
-        allListings.push({ ...item, type: "property" });
+        // Privacy Guard: Strip phone fields from public feed
+        const { privateContactPhone: _p, contactPhone: _c, ...safeItem } =
+          item as typeof item & { privateContactPhone?: string; contactPhone?: string };
+        allListings.push({ ...safeItem, type: "property" });
       }
       
       const vehicles = await ctx.db
@@ -162,7 +165,10 @@ export const getSocialFeed = query({
         .take(10);
         
       for (const item of vehicles) {
-        allListings.push({ ...item, type: "vehicle" });
+        // Privacy Guard: Strip phone fields from public feed
+        const { privateContactPhone: _p, contactPhone: _c, ...safeItem } =
+          item as typeof item & { privateContactPhone?: string; contactPhone?: string };
+        allListings.push({ ...safeItem, type: "vehicle" });
       }
     }
     

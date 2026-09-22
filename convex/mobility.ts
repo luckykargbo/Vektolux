@@ -326,20 +326,28 @@ export const getVehicleById = query({
     // Fetch owner details
     const owner = await ctx.db.get(listing.ownerId);
 
+    // Privacy Guard: Strip privateContactPhone and contactPhone from response
+    const {
+      privateContactPhone: _stripPrivate,
+      contactPhone: _stripContact,
+      ...safeListing
+    } = listing as typeof listing & { privateContactPhone?: string; contactPhone?: string };
+
     return {
-      ...listing,
+      ...safeListing,
       _id: listing._id as string,
       id: listing._id as string,
       images: listing.images ?? listing.imageUrls ?? [],
       imageUrls: listing.images ?? listing.imageUrls ?? [],
+      contactAction: "in_app_request",
       owner: owner
         ? {
             id: owner._id as string,
             name: owner.name,
-            phone: owner.phone,
             avatarUrl: owner.avatarUrl,
             role: owner.role,
             isVerified: owner.isVerified,
+            hasVerifiedPhone: !!owner.phone,
           }
         : null,
     };

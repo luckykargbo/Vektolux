@@ -403,6 +403,7 @@ export default defineSchema({
 
     // Social & Profile
     bio: v.optional(v.string()),
+    gender: v.optional(v.union(v.literal("male"), v.literal("female"), v.literal("unspecified"))),
     address: v.optional(v.string()),
     region: v.optional(v.string()),
     followersCount: v.optional(v.number()),
@@ -1202,4 +1203,92 @@ export default defineSchema({
     .index("by_admin", ["adminUserId"])
     .index("by_target", ["targetTransactionId"])
     .index("by_action", ["action"]),
+
+  // ─── API KEYS CONFIG (Metadata-Only — secrets in env vars) ─────────
+  // Tracks platform API key metadata, operational status, and health.
+  // Real production secrets stay in Convex Dashboard environment variables.
+  api_keys_config: defineTable({
+    serviceId: v.string(),
+    displayName: v.string(),
+    keyName: v.string(),
+    maskedValue: v.string(),
+    envVarName: v.string(),
+    operationalFunction: v.string(),
+    usedIn: v.string(),
+    healthStatus: v.union(v.literal("operational"), v.literal("degraded"), v.literal("outage")),
+    lastCheckedAt: v.optional(v.number()),
+    lastErrorMessage: v.optional(v.string()),
+    lastErrorCode: v.optional(v.string()),
+    lastErrorAt: v.optional(v.number()),
+    isActive: v.boolean(),
+    updatedAt: v.number(),
+    updatedByAdminId: v.optional(v.id("users")),
+  })
+    .index("by_serviceId", ["serviceId"])
+    .index("by_healthStatus", ["healthStatus"])
+    .index("by_serviceId_keyName", ["serviceId", "keyName"]),
+
+  // ─── API HEALTH LOGS (Append-Only Incident Log) ────────────────────
+  api_health_logs: defineTable({
+    serviceId: v.string(),
+    endpoint: v.string(),
+    statusCode: v.optional(v.number()),
+    errorMessage: v.string(),
+    severity: v.union(v.literal("warning"), v.literal("critical"), v.literal("info")),
+    resolvedAt: v.optional(v.number()),
+    occurredAt: v.number(),
+  })
+    .index("by_serviceId", ["serviceId"])
+    .index("by_severity", ["severity"])
+    .index("by_occurredAt", ["occurredAt"]),
+
+  // ─── USER SESSIONS (Login/Logout, Device & Activity Tracking) ──────
+  user_sessions: defineTable({
+    userId: v.id("users"),
+    sessionToken: v.string(),
+    deviceModel: v.optional(v.string()),
+    osVersion: v.optional(v.string()),
+    appVersion: v.optional(v.string()),
+    isActive: v.boolean(),
+    loginAt: v.number(),
+    logoutAt: v.optional(v.number()),
+    lastActiveAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_isActive", ["userId", "isActive"])
+    .index("by_sessionToken", ["sessionToken"]),
+
+  // ─── MERCHANT TERMINALS (Agent & Carrier Terminal Config) ──────────
+  merchant_terminals: defineTable({
+    merchantUserId: v.optional(v.id("users")),
+    terminalCode: v.string(),
+    merchantId: v.string(),
+    displayName: v.string(),
+    carrierProvider: v.string(),
+    clearingAccount: v.optional(v.string()),
+    ledgerAccountType: v.string(),
+    status: v.union(v.literal("active"), v.literal("suspended"), v.literal("maintenance")),
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_terminalCode", ["terminalCode"])
+    .index("by_carrierProvider", ["carrierProvider"])
+    .index("by_status", ["status"])
+    .index("by_merchantUserId", ["merchantUserId"]),
+
+  // ─── CONTACT REQUESTS (Buyer-to-Seller Relay — no phone exposure) ──
+  contact_requests: defineTable({
+    buyerId: v.id("users"),
+    sellerId: v.id("users"),
+    listingId: v.string(),
+    listingType: v.union(v.literal("property"), v.literal("vehicle")),
+    message: v.string(),
+    status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("declined")),
+    createdAt: v.number(),
+    respondedAt: v.optional(v.number()),
+  })
+    .index("by_sellerId", ["sellerId"])
+    .index("by_buyerId", ["buyerId"])
+    .index("by_sellerId_status", ["sellerId", "status"]),
 });
