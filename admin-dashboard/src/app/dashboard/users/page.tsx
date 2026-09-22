@@ -23,6 +23,11 @@ import {
   Ban,
   ShieldCheck,
   UserX,
+  Smartphone,
+  Receipt,
+  CreditCard,
+  Lock,
+  Unlock,
 } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 import type { AdminSession, UserRecord } from "@/lib/types";
@@ -35,6 +40,7 @@ interface UserFullDetails {
     email: string;
     phone: string;
     role: string;
+    gender?: string;
     kycStatus: string;
     verificationStatus: string;
     verificationBadge: string;
@@ -48,6 +54,33 @@ interface UserFullDetails {
     createdAt?: number;
     updatedAt?: number;
   };
+  wallet?: {
+    availableBalance: number;
+    escrowBalance: number;
+    pendingBalance: number;
+    currency: string;
+  };
+  sessions?: Array<{
+    id: string;
+    deviceModel: string;
+    osVersion: string;
+    appVersion: string;
+    isActive: boolean;
+    loginAt: number;
+    logoutAt?: number;
+    lastActiveAt?: number;
+  }>;
+  transactions?: Array<{
+    id: string;
+    type: string;
+    amount: number;
+    currency: string;
+    status: string;
+    description: string;
+    counterpartyPhone?: string;
+    counterpartyName?: string;
+    createdAt: number;
+  }>;
   properties: Array<{
     id: string;
     title: string;
@@ -257,8 +290,23 @@ export default function UsersDirectoryPage() {
       });
       const data = await res.json();
       if (data.success) {
-        alert(`User account status updated to ${newStatus}.`);
-        await handleInspectUser(userId);
+        // Optimistically update the active inspection details
+        setInspectingDetails((prev) => {
+          if (!prev || prev.user.id !== userId) return prev;
+          return {
+            ...prev,
+            user: {
+              ...prev.user,
+              isActive: newStatus === "ACTIVE",
+              kycStatus: newStatus === "ACTIVE" ? "VERIFIED" : newStatus,
+            },
+            sessions: prev.sessions?.map((s) =>
+              newStatus === "ACTIVE"
+                ? s
+                : { ...s, isActive: false, logoutAt: Date.now() }
+            ),
+          };
+        });
         await loadUsers();
       } else {
         alert("Failed to update status: " + (data.error ?? "Unknown error"));
@@ -348,6 +396,18 @@ export default function UsersDirectoryPage() {
       day: "2-digit",
       month: "short",
       year: "numeric",
+    });
+  }
+
+  function formatDateTime(ts?: number) {
+    if (!ts) return "—";
+    return new Date(ts).toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
     });
   }
 
@@ -660,17 +720,18 @@ export default function UsersDirectoryPage() {
         </div>
       )}
 
-      {/* User Inspection & Moderation Modal */}
+      {/* User Inspection & Moderation Audit Drawer */}
       {inspectingUserId && (
         <div className={styles.modalOverlay} onClick={() => setInspectingUserId(null)}>
           <div className={styles.modalContent} onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
               <div className={styles.modalTitle}>
-                <Shield size={20} color="#10b981" /> User Profile & Moderation
+                <Shield size={20} color="#059669" /> User Security & Session Audit
               </div>
               <button
                 onClick={() => setInspectingUserId(null)}
                 className={styles.modalCloseBtn}
+                title="Close Audit Drawer"
               >
                 <X size={20} />
               </button>
@@ -680,11 +741,63 @@ export default function UsersDirectoryPage() {
               {loadingDetails ? (
                 <div className={styles.loadingBox}>
                   <div className={styles.spinner} />
-                  <span>Loading full user profile and assets…</span>
+                  <span>Loading full user profile, device sessions, and ledger…</span>
                 </div>
               ) : inspectingDetails ? (
                 <>
-                  {/* Account Overview */}
+                  {/* Account Standing & Interactive Toggle Banner */}
+                  <div className={styles.statusAuditCard}>
+                    <div className={styles.statusAuditBadgeWrapper}>
+                      <span
+                        className={
+                          inspectingDetails.user.isActive
+                            ? styles.statusBadgeActive
+                            : styles.statusBadgeSuspended
+                        }
+                      >
+                        <span className={styles.statusDotPulse} />
+                        {inspectingDetails.user.isActive ? "ACCOUNT ACTIVE" : "ACCOUNT SUSPENDED"}
+                      </span>
+                      <span className={styles.statusAuditSubtitle}>
+                        {inspectingDetails.user.isActive
+                          ? "Account is authorized with active platform privileges."
+                          : "Account is suspended. Live device sessions revoked."}
+                      </span>
+                    </div>
+                    <div>
+                      <button
+                        onClick={() =>
+                          handleSetStatus(
+                            inspectingDetails.user.id,
+                            inspectingDetails.user.isActive ? "SUSPENDED" : "ACTIVE"
+                          )
+                        }
+                        disabled={moderatingAction || inspectingDetails.user.role === "admin"}
+                        className={
+                          inspectingDetails.user.isActive
+                            ? styles.btnToggleSuspend
+                            : styles.btnToggleActivate
+                        }
+                        title={
+                          inspectingDetails.user.role === "admin"
+                            ? "Cannot suspend admin accounts"
+                            : "Toggle account active/suspended state"
+                        }
+                      >
+                        {inspectingDetails.user.isActive ? (
+                          <>
+                            <UserX size={15} /> Suspend Account
+                          </>
+                        ) : (
+                          <>
+                            <Activity size={15} /> Reactivate Account
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Account Identity & Admin Phone Access */}
                   <div className={styles.modalSection}>
                     <div className={styles.modalProfileHeader}>
                       {inspectingDetails.user.avatarUrl ? (
@@ -718,8 +831,8 @@ export default function UsersDirectoryPage() {
                               color:
                                 inspectingDetails.user.verificationStatus === "verified" ||
                                 inspectingDetails.user.kycStatus === "VERIFIED"
-                                  ? "#10b981"
-                                  : "#f59e0b",
+                                  ? "#059669"
+                                  : "#d97706",
                               fontWeight: 700,
                             }}
                           >
@@ -741,7 +854,7 @@ export default function UsersDirectoryPage() {
                     </div>
 
                     <div className={styles.modalSectionTitle} style={{ marginTop: 18 }}>
-                      <User size={16} /> Personal Information
+                      <User size={16} /> Personal & Security Credentials
                     </div>
                     <div className={styles.infoGrid}>
                       <div className={styles.infoItem}>
@@ -751,32 +864,48 @@ export default function UsersDirectoryPage() {
                         </span>
                       </div>
                       <div className={styles.infoItem}>
-                        <span className={styles.infoLabel}>Email</span>
+                        <span className={styles.infoLabel}>Email Address</span>
                         <span className={styles.infoValue}>
                           {inspectingDetails.user.email}
                         </span>
                       </div>
                       <div className={styles.infoItem}>
-                        <span className={styles.infoLabel}>Phone</span>
-                        <span className={styles.infoValue}>
-                          {inspectingDetails.user.phone || "None"}
+                        <span className={styles.infoLabel}>Phone Number</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span className={styles.infoValue} style={{ fontFamily: "monospace", fontSize: 13 }}>
+                            {inspectingDetails.user.phone || "None Recorded"}
+                          </span>
+                          {inspectingDetails.user.phone && (
+                            <span className={styles.adminUnmaskBadge} title="Admin privilege: Full unmasked telephone number">
+                              <ShieldCheck size={11} /> ADMIN UNMASKED
+                            </span>
+                          )}
+                        </div>
+                        <span className={styles.phonePrivacyNotice}>
+                          Full phone displayed under Admin privilege. Public marketplace views are masked to enforce in-app contact relay.
                         </span>
                       </div>
                       <div className={styles.infoItem}>
-                        <span className={styles.infoLabel}>Role</span>
+                        <span className={styles.infoLabel}>Gender (KYC Demographics)</span>
+                        <span className={styles.infoValue} style={{ textTransform: "capitalize" }}>
+                          {inspectingDetails.user.gender || "Unspecified / Not Disclosed"}
+                        </span>
+                      </div>
+                      <div className={styles.infoItem}>
+                        <span className={styles.infoLabel}>Platform Role</span>
                         <span className={styles.infoValue} style={{ textTransform: "capitalize" }}>
                           {inspectingDetails.user.role}
                         </span>
                       </div>
                       <div className={styles.infoItem}>
-                        <span className={styles.infoLabel}>KYC Status</span>
+                        <span className={styles.infoLabel}>KYC Standing</span>
                         <span
                           className={styles.infoValue}
                           style={{
                             color:
                               inspectingDetails.user.kycStatus === "VERIFIED"
-                                ? "#10b981"
-                                : "#f59e0b",
+                                ? "#059669"
+                                : "#d97706",
                             fontWeight: 700,
                           }}
                         >
@@ -788,7 +917,7 @@ export default function UsersDirectoryPage() {
                         <span
                           className={styles.infoValue}
                           style={{
-                            color: inspectingDetails.user.isActive ? "#10b981" : "#ef4444",
+                            color: inspectingDetails.user.isActive ? "#059669" : "#dc2626",
                             fontWeight: 700,
                           }}
                         >
@@ -796,13 +925,13 @@ export default function UsersDirectoryPage() {
                         </span>
                       </div>
                       <div className={styles.infoItem}>
-                        <span className={styles.infoLabel}>Joined</span>
+                        <span className={styles.infoLabel}>Registration Date</span>
                         <span className={styles.infoValue}>
-                          {formatDate(inspectingDetails.user.createdAt)}
+                          {formatDateTime(inspectingDetails.user.createdAt)}
                         </span>
                       </div>
                       <div className={styles.infoItem}>
-                        <span className={styles.infoLabel}>Convex User ID</span>
+                        <span className={styles.infoLabel}>Convex User Document ID</span>
                         <span
                           className={styles.infoValue}
                           style={{ fontFamily: "monospace", fontSize: 11 }}
@@ -812,6 +941,171 @@ export default function UsersDirectoryPage() {
                       </div>
                     </div>
                   </div>
+
+                  {/* Device & Session Info */}
+                  <div className={styles.modalSection}>
+                    <div className={styles.modalSectionTitle}>
+                      <Smartphone size={16} color="#059669" /> Device & Session Audit
+                    </div>
+                    {inspectingDetails.sessions && inspectingDetails.sessions.length > 0 ? (
+                      <div className={styles.sessionList}>
+                        {inspectingDetails.sessions.map((sess, idx) => (
+                          <div key={sess.id || idx} className={styles.sessionCard}>
+                            <div className={styles.sessionHeader}>
+                              <div className={styles.sessionDeviceTitle}>
+                                <Smartphone size={16} color="#059669" />
+                                <span>{sess.deviceModel || "Mobile Client Device"}</span>
+                                {sess.isActive ? (
+                                  <span className={styles.sessionLiveBadge}>
+                                    <span className={styles.liveDot} /> LIVE ACTIVE
+                                  </span>
+                                ) : (
+                                  <span className={styles.sessionEndedBadge}>TERMINATED / LOGGED OUT</span>
+                                )}
+                              </div>
+                              <div className={styles.sessionOsBadge}>
+                                {sess.osVersion || "OS Unknown"} • App {sess.appVersion || "v1.0"}
+                              </div>
+                            </div>
+                            <div className={styles.sessionMetaGrid}>
+                              <div className={styles.sessionMetaItem}>
+                                <span className={styles.sessionMetaLabel}>Last Login</span>
+                                <span className={styles.sessionMetaValue}>
+                                  {formatDateTime(sess.loginAt)}
+                                </span>
+                              </div>
+                              <div className={styles.sessionMetaItem}>
+                                <span className={styles.sessionMetaLabel}>Last Logout</span>
+                                <span className={styles.sessionMetaValue}>
+                                  {sess.logoutAt
+                                    ? formatDateTime(sess.logoutAt)
+                                    : sess.isActive
+                                    ? "Currently in session"
+                                    : "—"}
+                                </span>
+                              </div>
+                              <div className={styles.sessionMetaItem}>
+                                <span className={styles.sessionMetaLabel}>Last Active</span>
+                                <span className={styles.sessionMetaValue}>
+                                  {sess.lastActiveAt ? formatDateTime(sess.lastActiveAt) : "—"}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className={styles.emptySessionBox}>
+                        <Clock size={16} />
+                        <span>No active device sessions recorded for this user.</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Full Transaction Ledger History */}
+                  <div className={styles.modalSection}>
+                    <div className={styles.ledgerHeaderRow}>
+                      <div className={styles.modalSectionTitle} style={{ marginBottom: 0 }}>
+                        <Receipt size={16} color="#059669" /> User Transaction Ledger History
+                      </div>
+                      <span className={styles.ledgerCountBadge}>
+                        {inspectingDetails.transactions?.length ?? 0} Records
+                      </span>
+                    </div>
+
+                    {/* Wallet Balances Overview */}
+                    {inspectingDetails.wallet && (
+                      <div className={styles.walletStrip}>
+                        <div className={styles.walletItem}>
+                          <span className={styles.walletLabel}>Available Balance</span>
+                          <span className={styles.walletAmount}>
+                            SLE {inspectingDetails.wallet.availableBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        <div className={styles.walletDivider} />
+                        <div className={styles.walletItem}>
+                          <span className={styles.walletLabel}>Escrow Balance</span>
+                          <span className={styles.walletAmount} style={{ color: "#d97706" }}>
+                            SLE {inspectingDetails.wallet.escrowBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        <div className={styles.walletDivider} />
+                        <div className={styles.walletItem}>
+                          <span className={styles.walletLabel}>Pending Balance</span>
+                          <span className={styles.walletAmount} style={{ color: "#64748b" }}>
+                            SLE {inspectingDetails.wallet.pendingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {inspectingDetails.transactions && inspectingDetails.transactions.length > 0 ? (
+                      <div className={styles.ledgerTableWrapper}>
+                        <table className={styles.ledgerTable}>
+                          <thead>
+                            <tr>
+                              <th>Type</th>
+                              <th>Description & Counterparty</th>
+                              <th>Amount</th>
+                              <th>Status</th>
+                              <th>Date & Time</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {inspectingDetails.transactions.map((tx) => (
+                              <tr key={tx.id}>
+                                <td>
+                                  <span className={styles.txTypeBadge}>{tx.type.toUpperCase()}</span>
+                                </td>
+                                <td>
+                                  <div className={styles.txDescription}>{tx.description}</div>
+                                  {tx.counterpartyPhone && (
+                                    <div className={styles.txCounterparty}>
+                                      Phone: {tx.counterpartyPhone}
+                                    </div>
+                                  )}
+                                </td>
+                                <td>
+                                  <span
+                                    className={
+                                      tx.type === "deposit" || tx.type === "escrow_release"
+                                        ? styles.txAmountPositive
+                                        : styles.txAmountDefault
+                                    }
+                                  >
+                                    {tx.type === "deposit" || tx.type === "escrow_release" ? "+" : ""}
+                                    {tx.currency} {tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  </span>
+                                </td>
+                                <td>
+                                  <span
+                                    className={
+                                      tx.status === "COMPLETED" || tx.status === "completed"
+                                        ? styles.txStatusSuccess
+                                        : tx.status === "FAILED" || tx.status === "failed"
+                                        ? styles.txStatusFailed
+                                        : styles.txStatusPending
+                                    }
+                                  >
+                                    {tx.status.toUpperCase()}
+                                  </span>
+                                </td>
+                                <td style={{ fontSize: 11, color: "#64748b", whiteSpace: "nowrap" }}>
+                                  {formatDateTime(tx.createdAt)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className={styles.emptyLedgerBox}>
+                        <Receipt size={16} />
+                        <span>No transaction ledger records recorded for this account.</span>
+                      </div>
+                    )}
+                  </div>
+
 
                   {/* Bio */}
                   <div className={styles.modalSection}>

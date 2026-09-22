@@ -323,3 +323,63 @@ export const deletePropertyListing = mutation({
     };
   },
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+//                     GET PROPERTY BY ID (PRIVACY SAFE)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const getPropertyById = query({
+  args: {
+    listingId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("realEstateListings", args.listingId);
+    if (!id) return null;
+
+    const listing = await ctx.db.get(id);
+    if (!listing || listing.isDeleted) return null;
+
+    // Fetch owner details
+    const owner = await ctx.db.get(listing.ownerId);
+
+    // Privacy Guard: Strip privateContactPhone from response
+    const { privateContactPhone: _strip, ...cleanListing } = listing;
+
+    // Resolve media storage URLs
+    const rawImages = Array.isArray(cleanListing.imageUrls) ? cleanListing.imageUrls : [];
+    const resolvedUrls = (
+      await Promise.all(
+        rawImages.map(async (url) => {
+          if (typeof url !== "string") return null;
+          if (url.startsWith("http://") || url.startsWith("https://")) {
+            return url;
+          }
+          try {
+            const publicUrl = await ctx.storage.getUrl(url as Id<"_storage">);
+            return publicUrl ?? url;
+          } catch {
+            return url;
+          }
+        })
+      )
+    ).filter((u): u is string => Boolean(u));
+
+    return {
+      ...cleanListing,
+      _id: listing._id as string,
+      imageUrls: resolvedUrls,
+      contactAction: "in_app_request",
+      owner: owner
+        ? {
+            id: owner._id as string,
+            name: owner.name,
+            avatarUrl: owner.avatarUrl,
+            role: owner.role,
+            isVerified: owner.isVerified,
+            hasVerifiedPhone: !!owner.phone,
+          }
+        : null,
+    };
+  },
+});
+
