@@ -7,21 +7,36 @@
   gap: 16px;
 }
 
-.title { font-size: 26px; font-weight: 800; color: #f1f5f9; letter-spacing: -0.5px; }
-.subtitle { font-size: 14px; color: #64748b; margin-top: 4px; }
+.title {
+  font-size: 26px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.5px;
+}
+
+.subtitle {
+  font-size: 14px;
+  color: #64748b;
+  margin-top: 4px;
+}
 
 .refreshBtn {
-  background: #263048;
-  border: 1px solid #334155;
-  border-radius: 10px;
-  padding: 9px 18px;
-  font-size: 14px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
   font-weight: 600;
-  color: #94a3b8;
-  transition: background 0.15s;
+  color: #0f172a;
+  transition: all 0.15s ease;
   white-space: nowrap;
+  cursor: pointer;
 }
-.refreshBtn:hover { background: #334155; color: #f1f5f9; }
+
+.refreshBtn:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
 
 .filterTabs {
   display: flex;
@@ -31,24 +46,36 @@
 }
 
 .filterTab {
-  background: #1e293b;
-  border: 1px solid #334155;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   border-radius: 100px;
   padding: 7px 16px;
   font-size: 13px;
   font-weight: 600;
   color: #64748b;
-  transition: all 0.15s;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
-.filterTab:hover { background: #263048; color: #94a3b8; }
-.filterTabActive { background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.3); color: #10b981; }
+
+.filterTab:hover {
+  background: #f8fafc;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+.filterTabActive {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #059669;
+  font-weight: 700;
+}
 
 .errorBox {
-  background: rgba(239,68,68,0.1);
-  border: 1px solid rgba(239,68,68,0.25);
+  background: #fef2f2;
+  border: 1px solid #fecaca;
   border-radius: 12px;
   padding: 16px 20px;
-  color: #fca5a5;
+  color: #b91c1c;
   font-size: 14px;
   margin-bottom: 20px;
 }
@@ -64,38 +91,60 @@
 }
 
 .spinner {
-  width: 24px; height: 24px;
-  border: 2px solid #334155;
+  width: 24px;
+  height: 24px;
+  border: 2px solid #e2e8f0;
   border-top-color: #10b981;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   flex-shrink: 0;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 
 .emptyBox {
-  background: #1e293b;
-  border: 1px solid #334155;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   border-radius: 16px;
   padding: 60px;
   text-align: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
-.emptyIcon { font-size: 48px; margin-bottom: 12px; }
-.emptyText { color: #64748b; font-size: 16px; }
 
-.entries { display: flex; flex-direction: column; gap: 16px; }
+.emptyIcon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.emptyText {
+  color: #64748b;
+  font-size: 16px;
+}
+
+.entries {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
 
 .entryCard {
-  background: #1e293b;
-  border: 1px solid #334155;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   border-radius: 16px;
   padding: 22px 24px;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  transition: border-color 0.15s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.entryCard:hover { border-color: #475569; }
+
+.entryCard:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
 
 .entryTop {
   display: flex;
@@ -104,11 +153,13 @@
 }
 
 .avatar {
-  width: 44px; height: 44px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
-  color: white;
-  font-size: 18px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #2563eb;
+  font-size: 17px;
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -116,20 +167,29 @@
   flex-shrink: 0;
 }
 
-.entryInfo { flex: 1; }
+.entryInfo {
+  flex: 1;
+}
 
-.entryName { font-size: 17px; font-weight: 700; color: #f1f5f9; margin-bottom: 6px; }
+.entryName {
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 6px;
+}
 
 .entryMeta {
   display: flex;
   gap: 16px;
   font-size: 13px;
-  color: #94a3b8;
+  color: #64748b;
   flex-wrap: wrap;
   margin-bottom: 4px;
 }
 
-.entryStatus { flex-shrink: 0; }
+.entryStatus {
+  flex-shrink: 0;
+}
 
 .entryDates {
   display: flex;
@@ -137,11 +197,14 @@
   font-size: 13px;
   color: #64748b;
   flex-wrap: wrap;
-  border-top: 1px solid #263048;
+  border-top: 1px solid #f1f5f9;
   padding-top: 12px;
 }
 
-.rejectReason { color: #fca5a5; font-style: italic; }
+.rejectReason {
+  color: #dc2626;
+  font-style: italic;
+}
 
 .entryActions {
   display: flex;
@@ -151,18 +214,26 @@
 }
 
 .viewDocBtn {
-  background: rgba(59,130,246,0.1);
-  border: 1px solid rgba(59,130,246,0.25);
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
   border-radius: 8px;
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 600;
-  color: #60a5fa;
+  color: #2563eb;
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+
+.viewDocBtn:hover {
+  background: #dbeafe;
   text-decoration: none;
 }
-.viewDocBtn:hover { background: rgba(59,130,246,0.2); text-decoration: none; }
 
-.noDoc { font-size: 13px; color: #475569; }
+.noDoc {
+  font-size: 13px;
+  color: #94a3b8;
+}
 
 .actionBtns {
   display: flex;
@@ -171,72 +242,115 @@
 }
 
 .approveBtn {
-  background: linear-gradient(135deg, #10b981, #059669);
+  background: #10b981;
   color: white;
   border: none;
   border-radius: 8px;
   padding: 9px 20px;
   font-size: 13px;
   font-weight: 700;
-  transition: opacity 0.15s;
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
-.approveBtn:disabled { opacity: 0.5; cursor: not-allowed; }
-.approveBtn:hover:not(:disabled) { opacity: 0.88; }
+
+.approveBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.approveBtn:hover:not(:disabled) {
+  background: #059669;
+}
 
 .rejectBtn {
-  background: rgba(239,68,68,0.1);
-  border: 1px solid rgba(239,68,68,0.3);
-  color: #fca5a5;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
   border-radius: 8px;
   padding: 9px 20px;
   font-size: 13px;
   font-weight: 700;
-  transition: background 0.15s;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
-.rejectBtn:disabled { opacity: 0.5; cursor: not-allowed; }
-.rejectBtn:hover:not(:disabled) { background: rgba(239,68,68,0.2); }
+
+.rejectBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.rejectBtn:hover:not(:disabled) {
+  background: #fee2e2;
+}
 
 /* Modal */
 .modalOverlay {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,0.7);
-  display: flex; align-items: center; justify-content: center;
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   z-index: 1000;
   padding: 24px;
 }
 
 .modal {
-  background: #1e293b;
-  border: 1px solid #334155;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   border-radius: 20px;
-  padding: 36px;
+  padding: 32px;
   width: 100%;
   max-width: 480px;
   display: flex;
   flex-direction: column;
   gap: 18px;
-  box-shadow: 0 25px 60px rgba(0,0,0,0.5);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
 }
 
-.modalTitle { font-size: 20px; font-weight: 800; color: #f1f5f9; }
-.modalSubtitle { font-size: 14px; color: #94a3b8; }
+.modalTitle {
+  font-size: 20px;
+  font-weight: 800;
+  color: #0f172a;
+}
 
-.field { display: flex; flex-direction: column; gap: 8px; }
-.label { font-size: 13px; font-weight: 600; color: #94a3b8; }
+.modalSubtitle {
+  font-size: 14px;
+  color: #64748b;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
 
 .textarea {
-  background: #0f172a;
-  border: 1px solid #334155;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
   border-radius: 10px;
   padding: 12px 16px;
   font-size: 14px;
-  color: #f1f5f9;
+  color: #0f172a;
   resize: vertical;
   outline: none;
-  transition: border-color 0.2s;
+  transition: border-color 0.15s ease;
   font-family: inherit;
 }
-.textarea:focus { border-color: #ef4444; }
+
+.textarea:focus {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+}
 
 .modalActions {
   display: flex;
@@ -245,15 +359,20 @@
 }
 
 .cancelBtn {
-  background: #263048;
-  border: 1px solid #334155;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
   border-radius: 10px;
   padding: 10px 20px;
   font-size: 14px;
   font-weight: 600;
-  color: #94a3b8;
+  color: #475569;
+  cursor: pointer;
 }
-.cancelBtn:hover { background: #334155; }
+
+.cancelBtn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
 
 .confirmRejectBtn {
   background: #dc2626;
@@ -263,17 +382,25 @@
   font-size: 14px;
   font-weight: 700;
   color: white;
-  transition: opacity 0.15s;
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
-.confirmRejectBtn:disabled { opacity: 0.5; cursor: not-allowed; }
-.confirmRejectBtn:hover:not(:disabled) { opacity: 0.88; }
+
+.confirmRejectBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.confirmRejectBtn:hover:not(:disabled) {
+  background: #b91c1c;
+}
 
 .biometricGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 16px;
-  background: #0f172a;
-  border: 1px solid #334155;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
   border-radius: 14px;
   padding: 16px;
   margin: 12px 0;
@@ -294,7 +421,7 @@
 .biometricTitle {
   font-size: 13px;
   font-weight: 700;
-  color: #e2e8f0;
+  color: #0f172a;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -304,8 +431,8 @@
   width: 100%;
   height: 180px;
   border-radius: 10px;
-  border: 1px solid #334155;
-  background: #1e293b;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -335,13 +462,13 @@
 }
 
 .tierIndividual {
-  background: rgba(59, 130, 246, 0.12);
-  color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: #eff6ff;
+  color: #2563eb;
+  border: 1px solid #bfdbfe;
 }
 
 .tierBusiness {
-  background: rgba(245, 158, 11, 0.12);
-  color: #fbbf24;
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: #fffbeb;
+  color: #d97706;
+  border: 1px solid #fde68a;
 }

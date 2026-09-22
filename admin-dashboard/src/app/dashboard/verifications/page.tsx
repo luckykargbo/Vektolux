@@ -221,7 +221,7 @@ export default function VerificationsPage() {
 
                     {(entry.idType || entry.documentType || entry.idNumber) && (
                       <div className={styles.entryMeta} style={{ marginTop: 4 }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#1e293b', border: '1px solid #334155', padding: '2px 8px', borderRadius: '12px', fontSize: '12px', color: '#cbd5e1' }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#f8fafc', border: '1px solid #e2e8f0', padding: '2px 8px', borderRadius: '12px', fontSize: '12px', color: '#475569' }}>
                           <FileText size={12} /> {(entry.idType || entry.documentType || "ID").replace(/_/g, ' ').toUpperCase()} {entry.idNumber ? `• #${entry.idNumber}` : ''}
                         </span>
                       </div>

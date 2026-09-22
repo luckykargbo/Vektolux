@@ -1,32 +1,34 @@
 /* listings.module.css */
-.header { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:28px; gap:16px; }
-.title { font-size:26px; font-weight:800; color:#f1f5f9; letter-spacing:-0.5px; }
-.subtitle { font-size:14px; color:#64748b; margin-top:4px; }
-.headerActions { display:flex; gap:8px; }
-.refreshBtn { background:#263048; border:1px solid #334155; border-radius:10px; padding:9px 18px; font-size:14px; font-weight:600; color:#94a3b8; }
-.refreshBtn:hover { background:#334155; color:#f1f5f9; }
-.clearBtn { background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:10px; padding:9px 18px; font-size:14px; font-weight:600; color:#fca5a5; }
-.clearBtn:hover { background:rgba(239,68,68,0.2); }
-.filterTabs { display:flex; gap:8px; margin-bottom:24px; }
-.filterTab { background:#1e293b; border:1px solid #334155; border-radius:100px; padding:7px 16px; font-size:13px; font-weight:600; color:#64748b; }
-.filterTab:hover { background:#263048; color:#94a3b8; }
-.filterTabActive { background:rgba(16,185,129,0.12); border-color:rgba(16,185,129,0.3); color:#10b981; }
-.errorBox { background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.25); border-radius:12px; padding:16px 20px; color:#fca5a5; font-size:14px; margin-bottom:20px; }
-.loadingBox { display:flex; align-items:center; gap:12px; padding:40px; justify-content:center; color:#64748b; font-size:14px; }
-.spinner { width:24px; height:24px; border:2px solid #334155; border-top-color:#10b981; border-radius:50%; animation:spin 0.8s linear infinite; }
-@keyframes spin { to { transform:rotate(360deg); } }
-.emptyBox { background:#1e293b; border:1px solid #334155; border-radius:16px; padding:60px; text-align:center; color:#64748b; font-size:16px; display:flex; flex-direction:column; gap:16px; align-items:center; }
-.emptyIcon { font-size:48px; }
-.seedLink { color:#10b981; font-size:14px; font-weight:600; }
-.countBar { font-size:13px; color:#64748b; margin-bottom:16px; }
-.grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:16px; }
-.card { background:#1e293b; border:1px solid #334155; border-radius:16px; overflow:hidden; }
-.cardImagePlaceholder { position:relative; height:140px; background:#0f172a; display:flex; align-items:center; justify-content:center; }
-.cardImage { width:100%; height:100%; object-fit:cover; }
-.noImage { font-size:40px; }
-.typeBadge { position:absolute; top:8px; left:8px; font-size:10px; font-weight:800; color:white; border-radius:4px; padding:3px 8px; text-transform:uppercase; }
-.publishedBadge { position:absolute; top:8px; right:8px; font-size:10px; font-weight:800; color:white; border-radius:4px; padding:3px 8px; }
-.cardBody { padding:16px; }
-.cardTitle { font-size:14px; font-weight:700; color:#f1f5f9; margin-bottom:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.cardMeta { display:flex; gap:12px; font-size:12px; color:#94a3b8; flex-wrap:wrap; }
-.cardOwner { font-size:12px; color:#64748b; margin-top:6px; }
+.header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 28px; gap: 16px; }
+.title { font-size: 26px; font-weight: 800; color: #0f172a; letter-spacing: -0.5px; }
+.subtitle { font-size: 14px; color: #64748b; margin-top: 4px; }
+.headerActions { display: flex; gap: 8px; }
+.refreshBtn { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600; color: #0f172a; cursor: pointer; transition: all 0.15s ease; }
+.refreshBtn:hover { background: #f8fafc; border-color: #cbd5e1; }
+.clearBtn { background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600; color: #dc2626; cursor: pointer; transition: all 0.15s ease; }
+.clearBtn:hover { background: #fee2e2; }
+.filterTabs { display: flex; gap: 8px; margin-bottom: 24px; }
+.filterTab { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 100px; padding: 7px 16px; font-size: 13px; font-weight: 600; color: #64748b; cursor: pointer; transition: all 0.15s ease; }
+.filterTab:hover { background: #f8fafc; color: #0f172a; border-color: #cbd5e1; }
+.filterTabActive { background: #ecfdf5; border-color: #a7f3d0; color: #059669; font-weight: 700; }
+.errorBox { background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; padding: 16px 20px; color: #b91c1c; font-size: 14px; margin-bottom: 20px; }
+.loadingBox { display: flex; align-items: center; gap: 12px; padding: 40px; justify-content: center; color: #64748b; font-size: 14px; }
+.spinner { width: 24px; height: 24px; border: 2px solid #e2e8f0; border-top-color: #10b981; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.emptyBox { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 60px; text-align: center; color: #64748b; font-size: 15px; display: flex; flex-direction: column; gap: 16px; align-items: center; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04); }
+.emptyIcon { font-size: 48px; }
+.seedLink { color: #059669; font-size: 14px; font-weight: 600; text-decoration: none; }
+.seedLink:hover { text-decoration: underline; }
+.countBar { font-size: 13px; color: #64748b; margin-bottom: 16px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+.card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04); transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+.card:hover { border-color: #cbd5e1; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); }
+.cardImagePlaceholder { position: relative; height: 140px; background: #f1f5f9; display: flex; align-items: center; justify-content: center; }
+.cardImage { width: 100%; height: 100%; object-fit: cover; }
+.noImage { font-size: 40px; }
+.typeBadge { position: absolute; top: 8px; left: 8px; font-size: 10px; font-weight: 800; color: white; border-radius: 4px; padding: 3px 8px; text-transform: uppercase; }
+.publishedBadge { position: absolute; top: 8px; right: 8px; font-size: 10px; font-weight: 800; color: white; border-radius: 4px; padding: 3px 8px; }
+.cardBody { padding: 16px; }
+.cardTitle { font-size: 14px; font-weight: 700; color: #0f172a; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cardMeta { display: flex; gap: 12px; font-size: 12px; color: #64748b; flex-wrap: wrap; }
+.cardOwner { font-size: 12px; color: #94a3b8; margin-top: 6px; }

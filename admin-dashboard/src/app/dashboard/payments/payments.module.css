@@ -1,5 +1,6 @@
+/* src/app/dashboard/payments/payments.module.css — Clean White Fintech Payments */
 .container {
-  padding: 2rem;
+  padding: 0;
   max-width: 1400px;
   margin: 0 auto;
 }
@@ -9,17 +10,18 @@
 }
 
 .title {
-  font-size: 1.875rem;
-  font-weight: 700;
-  color: #f8fafc;
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: #0f172a;
   margin: 0 0 0.5rem 0;
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  letter-spacing: -0.5px;
 }
 
 .subtitle {
-  color: #94a3b8;
+  color: #64748b;
   font-size: 0.95rem;
   margin: 0;
 }
@@ -37,9 +39,9 @@
 }
 
 .sectionTitle {
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: #e2e8f0;
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: #0f172a;
   margin-bottom: 1.25rem;
   display: flex;
   align-items: center;
@@ -47,16 +49,22 @@
 }
 
 .card {
-  background: #0f172a;
-  border: 1px solid #1e293b;
-  border-radius: 0.75rem;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
   padding: 1.5rem;
   margin-bottom: 1rem;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
   transition: all 0.2s ease;
+}
+
+.card:hover {
+  border-color: #cbd5e1;
 }
 
 .cardEnabled {
   border-color: #10b981;
+  box-shadow: 0 1px 3px 0 rgba(16, 185, 129, 0.1);
 }
 
 .cardHeader {
@@ -67,9 +75,9 @@
 }
 
 .cardTitle {
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: #f8fafc;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -77,29 +85,29 @@
 
 .badge {
   font-size: 0.75rem;
-  padding: 0.25rem 0.5rem;
+  padding: 0.25rem 0.6rem;
   border-radius: 999px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .badgeAuto {
-  background: rgba(59, 130, 246, 0.1);
-  color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.2);
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
 }
 
 .badgeManual {
-  background: rgba(245, 158, 11, 0.1);
-  color: #fbbf24;
-  border: 1px solid rgba(245, 158, 11, 0.2);
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
 }
 
 .badgeBank {
-  background: rgba(16, 185, 129, 0.1);
-  color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.2);
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
 }
 
 .formGroup {
@@ -108,26 +116,28 @@
 
 .formGroup label {
   display: block;
-  font-size: 0.875rem;
-  color: #94a3b8;
+  font-size: 0.825rem;
+  color: #334155;
   margin-bottom: 0.375rem;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .input {
   width: 100%;
-  background: #1e293b;
-  border: 1px solid #334155;
-  color: #f8fafc;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  color: #0f172a;
   padding: 0.625rem 0.75rem;
-  border-radius: 0.5rem;
+  border-radius: 8px;
   font-size: 0.875rem;
-  transition: border-color 0.2s;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.03);
+  transition: all 0.15s;
 }
 
 .input:focus {
   outline: none;
-  border-color: #3b82f6;
+  border-color: #10b981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.15);
 }
 
 .textarea {
@@ -136,12 +146,12 @@
 }
 
 .saveBtn {
-  background: #2563eb;
+  background: #10b981;
   color: white;
   border: none;
   padding: 0.625rem 1rem;
-  border-radius: 0.5rem;
-  font-weight: 500;
+  border-radius: 8px;
+  font-weight: 600;
   font-size: 0.875rem;
   cursor: pointer;
   width: 100%;
@@ -153,20 +163,21 @@
 }
 
 .saveBtn:hover {
-  background: #1d4ed8;
+  background: #059669;
 }
 
 .saveBtn:disabled {
-  background: #334155;
+  background: #e2e8f0;
   color: #94a3b8;
   cursor: not-allowed;
 }
 
 .tableContainer {
-  background: #0f172a;
-  border: 1px solid #1e293b;
-  border-radius: 0.75rem;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
   overflow: hidden;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
 }
 
 .table {
@@ -175,22 +186,22 @@
 }
 
 .table th {
-  background: #1e293b;
-  color: #94a3b8;
+  background: #f8fafc;
+  color: #64748b;
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: 0.75rem 1rem;
+  padding: 0.875rem 1rem;
   text-align: left;
-  border-bottom: 1px solid #334155;
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .table td {
   padding: 1rem;
-  color: #e2e8f0;
+  color: #0f172a;
   font-size: 0.875rem;
-  border-bottom: 1px solid #1e293b;
+  border-bottom: 1px solid #f1f5f9;
 }
 
 .table tr:last-child td {
@@ -203,25 +214,25 @@
   padding: 0.25rem 0.625rem;
   border-radius: 999px;
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .statusPending {
-  background: rgba(245, 158, 11, 0.1);
-  color: #fbbf24;
-  border: 1px solid rgba(245, 158, 11, 0.2);
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
 }
 
 .statusLocked {
-  background: rgba(16, 185, 129, 0.1);
-  color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.2);
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
 }
 
 .statusRejected {
-  background: rgba(239, 68, 68, 0.1);
-  color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.2);
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fee2e2;
 }
 
 .actionGroup {
@@ -235,7 +246,7 @@
   justify-content: center;
   gap: 0.25rem;
   padding: 0.375rem 0.625rem;
-  border-radius: 0.375rem;
+  border-radius: 6px;
   font-size: 0.75rem;
   font-weight: 600;
   border: none;
@@ -244,21 +255,23 @@
 }
 
 .approveBtn {
-  background: rgba(16, 185, 129, 0.1);
-  color: #34d399;
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
 }
 
 .approveBtn:hover {
-  background: rgba(16, 185, 129, 0.2);
+  background: #d1fae5;
 }
 
 .rejectBtn {
-  background: rgba(239, 68, 68, 0.1);
-  color: #f87171;
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fee2e2;
 }
 
 .rejectBtn:hover {
-  background: rgba(239, 68, 68, 0.2);
+  background: #fee2e2;
 }
 
 /* Custom Toggle Switch */
@@ -282,8 +295,8 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: #334155;
-  transition: .4s;
+  background-color: #cbd5e1;
+  transition: .3s;
   border-radius: 24px;
 }
 
@@ -295,8 +308,9 @@
   left: 3px;
   bottom: 3px;
   background-color: white;
-  transition: .4s;
+  transition: .3s;
   border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
 }
 
 input:checked + .slider {
@@ -309,7 +323,7 @@ input:checked + .slider:before {
 
 .alert {
   padding: 1rem;
-  border-radius: 0.5rem;
+  border-radius: 8px;
   margin-bottom: 1.5rem;
   display: flex;
   align-items: center;
@@ -319,25 +333,25 @@ input:checked + .slider:before {
 }
 
 .alertSuccess {
-  background: rgba(16, 185, 129, 0.1);
-  color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.2);
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
 }
 
 .alertError {
-  background: rgba(239, 68, 68, 0.1);
-  color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.2);
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fee2e2;
 }
 
 .emptyState {
   text-align: center;
   padding: 3rem 1rem;
-  color: #94a3b8;
+  color: #64748b;
 }
 
 .emptyStateIcon {
-  color: #334155;
+  color: #cbd5e1;
   margin-bottom: 1rem;
 }
 
@@ -346,8 +360,8 @@ input:checked + .slider:before {
   color: white;
   border: none;
   padding: 0.625rem 1.25rem;
-  border-radius: 0.5rem;
-  font-weight: 500;
+  border-radius: 8px;
+  font-weight: 600;
   cursor: pointer;
   margin-top: 1rem;
   transition: background-color 0.2s;
@@ -364,7 +378,8 @@ input:checked + .slider:before {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -373,18 +388,19 @@ input:checked + .slider:before {
 }
 
 .modalContent {
-  background: #0f172a;
-  border: 1px solid #1e293b;
-  border-radius: 0.75rem;
-  padding: 1.5rem;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 1.75rem;
   width: 100%;
-  max-width: 400px;
+  max-width: 440px;
+  box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1);
 }
 
 .modalTitle {
   font-size: 1.25rem;
-  font-weight: 600;
-  color: #f8fafc;
+  font-weight: 700;
+  color: #0f172a;
   margin: 0 0 1rem 0;
 }
 
@@ -397,16 +413,18 @@ input:checked + .slider:before {
 
 .cancelBtn {
   background: transparent;
-  color: #94a3b8;
-  border: 1px solid #334155;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
   padding: 0.5rem 1rem;
-  border-radius: 0.375rem;
+  border-radius: 8px;
+  font-weight: 500;
   cursor: pointer;
+  transition: all 0.15s;
 }
 
 .cancelBtn:hover {
-  background: #1e293b;
-  color: #e2e8f0;
+  background: #f8fafc;
+  color: #0f172a;
 }
 
 .confirmRejectBtn {
@@ -414,8 +432,10 @@ input:checked + .slider:before {
   color: white;
   border: none;
   padding: 0.5rem 1rem;
-  border-radius: 0.375rem;
+  border-radius: 8px;
+  font-weight: 600;
   cursor: pointer;
+  transition: background-color 0.15s;
 }
 
 .confirmRejectBtn:hover {
