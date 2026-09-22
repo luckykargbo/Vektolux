@@ -1,32 +1,76 @@
-/* src/app/login.module.css */
+/* src/app/login.module.css — Vektolux Admin Login with Founder Showcase Background */
+
 .main {
   min-height: 100vh;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f8fafc;
+  position: relative;
+  background-image: url("/images/vektolux-founder-bg.jpg");
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   padding: 24px;
+  overflow-y: auto;
 }
 
+/* Dark translucent overlay with subtle backdrop blur */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 1;
+}
+
+/* Centered Glassmorphic Login Card */
 .card {
+  position: relative;
+  z-index: 2;
   width: 100%;
-  max-width: 420px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 20px;
+  max-width: 440px;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 24px;
   padding: 40px 36px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.3);
+  animation: fadeInCard 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fadeInCard {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .header {
   text-align: center;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
-.logo {
-  font-size: 44px;
-  display: block;
-  margin-bottom: 12px;
+.logoWrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+
+.logoImg {
+  width: 68px;
+  height: 68px;
+  border-radius: 18px;
+  object-fit: cover;
+  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.25);
+  border: 1.5px solid rgba(16, 185, 129, 0.3);
 }
 
 .title {
@@ -37,9 +81,10 @@
 }
 
 .subtitle {
-  font-size: 14px;
+  font-size: 13.5px;
   color: #64748b;
   margin-top: 4px;
+  font-weight: 500;
 }
 
 .badge {
@@ -49,12 +94,13 @@
   background: #ecfdf5;
   border: 1px solid #a7f3d0;
   border-radius: 100px;
-  padding: 6px 14px;
+  padding: 5px 14px;
   font-size: 12px;
   color: #059669;
   font-weight: 600;
   width: fit-content;
-  margin: 0 auto 28px;
+  margin: 0 auto 24px;
+  box-shadow: 0 1px 2px rgba(16, 185, 129, 0.08);
 }
 
 .badgeDot {
@@ -83,7 +129,7 @@
 }
 
 .label {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 700;
   color: #475569;
   text-transform: uppercase;
@@ -93,8 +139,8 @@
 .input {
   background: #ffffff;
   border: 1px solid #cbd5e1;
-  border-radius: 10px;
-  padding: 12px 16px;
+  border-radius: 12px;
+  padding: 13px 16px;
   font-size: 14px;
   color: #0f172a;
   outline: none;
@@ -103,7 +149,7 @@
 
 .input:focus {
   border-color: #10b981;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
 }
 
 .input::placeholder {
@@ -124,7 +170,7 @@
 
 .btn {
   background: #10b981;
-  color: white;
+  color: #ffffff;
   border: none;
   border-radius: 12px;
   padding: 14px;
@@ -133,16 +179,21 @@
   letter-spacing: 0.3px;
   margin-top: 4px;
   cursor: pointer;
-  transition: background 0.15s ease, box-shadow 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.05s ease;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
 }
 
 .btn:hover:not(:disabled) {
   background: #059669;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.35);
 }
 
 .btn:active:not(:disabled) {
-  transform: translateY(0);
+  transform: translateY(1px);
 }
 
 .btn:disabled {
@@ -151,9 +202,26 @@
 }
 
 .hint {
-  margin-top: 24px;
-  font-size: 12px;
+  margin-top: 22px;
+  font-size: 11.5px;
   color: #64748b;
   text-align: center;
-  line-height: 1.6;
+  line-height: 1.5;
+}
+
+@media (max-width: 480px) {
+  .main {
+    padding: 16px;
+  }
+  .card {
+    padding: 28px 20px;
+    border-radius: 20px;
+  }
+  .title {
+    font-size: 22px;
+  }
+  .logoImg {
+    width: 56px;
+    height: 56px;
+  }
 }

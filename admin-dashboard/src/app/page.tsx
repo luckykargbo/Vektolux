@@ -1,5 +1,5 @@
 "use client";
-// src/app/page.tsx — Admin Login Page
+// src/app/page.tsx — Vektolux Admin Login with Founder Showcase Background
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import styles from "./login.module.css";
@@ -35,22 +35,32 @@ export default function LoginPage() {
       sessionStorage.setItem("adminSession", JSON.stringify(data.session));
       router.push("/dashboard");
     } catch (err) {
-      setError("Network error — is the app running?");
+      setError("Network error — is the server running?");
       setLoading(false);
     }
   }
 
   return (
     <main className={styles.main}>
+      {/* Dark Translucent Backdrop Overlay with Blur */}
+      <div className={styles.overlay} />
+
+      {/* Centered Glassmorphic Login Card */}
       <div className={styles.card}>
-        {/* Header */}
+        {/* Header with Official Vektolux Logo */}
         <div className={styles.header}>
-          <div className={styles.logo}>⚡</div>
+          <div className={styles.logoWrap}>
+            <img
+              src="/images/vektolux-logo.png"
+              alt="Vektolux Logo"
+              className={styles.logoImg}
+            />
+          </div>
           <h1 className={styles.title}>Vektolux Admin</h1>
-          <p className={styles.subtitle}>Local Management Dashboard</p>
+          <p className={styles.subtitle}>Super App Management Console</p>
         </div>
 
-        {/* Badge */}
+        {/* Connection Status Badge */}
         <div className={styles.badge}>
           <span className={styles.badgeDot} />
           Connected to Production Convex
@@ -98,8 +108,8 @@ export default function LoginPage() {
         </form>
 
         <p className={styles.hint}>
-          This dashboard runs locally and connects directly to the live Convex database.
-          Only authorised Vektolux administrators should have access.
+          This console runs locally and securely connects to the live Convex database.
+          Access is strictly restricted to authorized Vektolux administrators.
         </p>
       </div>
     </main>
