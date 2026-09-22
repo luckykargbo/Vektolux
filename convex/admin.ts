@@ -1379,6 +1379,34 @@ export const cleanMockData = mutation({
       deletedWebhookLogsCount++;
     }
 
+    // 6.5. Inspect 'user_notifications' -> clear dummy/mock notification history
+    const allNotifications = await ctx.db.query("user_notifications").collect();
+    let deletedNotificationsCount = 0;
+    for (const notif of allNotifications) {
+      if (!isDryRun) {
+        await ctx.db.delete(notif._id);
+      }
+      deletedNotificationsCount++;
+    }
+
+    // 6.6. Inspect 'escrow_payment_claims' -> clear mock/dummy test claims
+    const allClaims = await ctx.db.query("escrow_payment_claims").collect();
+    let deletedClaimsCount = 0;
+    for (const cl of allClaims) {
+      const isMockClaim =
+        cl.amount === 250 ||
+        cl.amount === 50 ||
+        cl.amount === 25 ||
+        (cl.transactionReference && cl.transactionReference.includes("mock")) ||
+        (cl.rejectionReason && cl.rejectionReason.includes("merchant portal"));
+      if (isMockClaim) {
+        if (!isDryRun) {
+          await ctx.db.delete(cl._id);
+        }
+        deletedClaimsCount++;
+      }
+    }
+
     // 7. Reallocate orphaned real estate and vehicle listings to Alfred
     const allProps = await ctx.db.query("realEstateListings").collect();
     let reallocatedProps = 0;
@@ -1414,6 +1442,7 @@ export const cleanMockData = mutation({
     const remainingWallets = await ctx.db.query("walletBalances").collect();
     const remainingBookings = await ctx.db.query("bookings").collect();
     const remainingWebhookLogs = await ctx.db.query("telco_webhook_logs").collect();
+    const remainingNotifications = await ctx.db.query("user_notifications").collect();
 
     return {
       success: true,
@@ -1436,6 +1465,8 @@ export const cleanMockData = mutation({
         deletedRideRequests,
         deletedTripsDeliveries,
         deletedWebhookLogsCount,
+        deletedNotificationsCount,
+        deletedClaimsCount,
         reallocatedProps,
         reallocatedVehs,
       },
@@ -1445,10 +1476,40 @@ export const cleanMockData = mutation({
         remainingWalletsCount: remainingWallets.length,
         remainingBookingsCount: remainingBookings.length,
         remainingWebhookLogsCount: remainingWebhookLogs.length,
+        remainingNotificationsCount: remainingNotifications.length,
       },
       message: isDryRun
-        ? `[DRY RUN] Would purge ${deletedUsersCount} users, ${deletedTransactionsCount} transactions, reset Alfred's wallet to 0.`
-        : `Successfully purged ${deletedUsersCount} mock users and ${deletedTransactionsCount} mock transactions. Reset Alfred's wallet to 0 SLE. Retained 1 production user: ${primaryUser.name} (${primaryUser.email}).`,
+        ? `[DRY RUN] Would purge ${deletedUsersCount} users, ${deletedTransactionsCount} transactions, ${deletedNotificationsCount} notifications, reset Alfred's wallet to 0.`
+        : `Successfully purged ${deletedUsersCount} mock users, ${deletedTransactionsCount} mock transactions, and ${deletedNotificationsCount} mock notifications. Reset Alfred's wallet to 0 SLE. Retained 1 production user: ${primaryUser.name} (${primaryUser.email}).`,
+    };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//               PURGE MOCK NOTIFICATIONS (STANDALONE)
+// ═══════════════════════════════════════════════════════════════════════
+
+export const purgeMockNotifications = mutation({
+  args: {
+    adminId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.adminId) {
+      await validateAdminSession(ctx, args.adminId, args.sessionToken);
+    }
+
+    const allNotifications = await ctx.db.query("user_notifications").collect();
+    let deletedCount = 0;
+    for (const notif of allNotifications) {
+      await ctx.db.delete(notif._id);
+      deletedCount++;
+    }
+
+    return {
+      success: true,
+      deletedCount,
+      message: `Purged ${deletedCount} notification history records from the database.`,
     };
   },
 });
