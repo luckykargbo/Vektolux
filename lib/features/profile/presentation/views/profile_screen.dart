@@ -36,7 +36,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../../wallet_payments/presentation/views/transaction_receipt_screen.dart';
-
+import 'dart:convert';
 
 class ProfileScreen extends StatefulWidget {
   final String? currentUserId;
@@ -3447,7 +3447,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
             void onCodeChanged(String val) {
               debounceTimer?.cancel();
-              final trimmed = val.trim();
+              String trimmed = val.trim();
               if (trimmed.isEmpty) {
                 setModalState(() {
                   resolvedRecipient = null;
@@ -3456,7 +3456,78 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 });
                 return;
               }
-              if (trimmed.length < 3) {
+
+              // ── Parse MoniMe QR codes, Vektolux deep links, or JSON QR payloads ──
+              String queryParam = trimmed;
+              if (trimmed.startsWith('vektolux://') ||
+                  trimmed.startsWith('monime://') ||
+                  trimmed.startsWith('http://') ||
+                  trimmed.startsWith('https://')) {
+                final uri = Uri.tryParse(trimmed);
+                if (uri != null) {
+                  final phone = uri.queryParameters['phone'] ??
+                      uri.queryParameters['customerPhone'] ??
+                      uri.queryParameters['msisdn'];
+                  final userId = uri.queryParameters['userId'] ??
+                      uri.queryParameters['user_id'] ??
+                      uri.queryParameters['id'];
+                  final qrAmt = uri.queryParameters['amount'];
+                  final code = uri.queryParameters['code'] ??
+                      uri.queryParameters['ref'] ??
+                      uri.queryParameters['reference'];
+
+                  if (qrAmt != null &&
+                      qrAmt.isNotEmpty &&
+                      amountCtrl.text.isEmpty) {
+                    amountCtrl.text = qrAmt;
+                    validateAmount(qrAmt);
+                  }
+
+                  if (phone != null && phone.isNotEmpty) {
+                    queryParam = phone;
+                    codeCtrl.text = phone;
+                  } else if (userId != null && userId.isNotEmpty) {
+                    queryParam = userId;
+                    codeCtrl.text = userId;
+                  } else if (code != null && code.isNotEmpty) {
+                    queryParam = code;
+                    codeCtrl.text = code;
+                  }
+                }
+              } else if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+                try {
+                  final parsed = jsonDecode(trimmed);
+                  if (parsed is Map) {
+                    final phone = parsed['phone'] ??
+                        parsed['customerPhone'] ??
+                        parsed['phoneNumber'];
+                    final userId = parsed['userId'] ?? parsed['id'];
+                    final qrAmt = parsed['amount']?.toString();
+                    final code =
+                        parsed['code'] ?? parsed['reference'] ?? parsed['ref'];
+
+                    if (qrAmt != null &&
+                        qrAmt.isNotEmpty &&
+                        amountCtrl.text.isEmpty) {
+                      amountCtrl.text = qrAmt;
+                      validateAmount(qrAmt);
+                    }
+
+                    if (phone != null) {
+                      queryParam = phone.toString();
+                      codeCtrl.text = queryParam;
+                    } else if (userId != null) {
+                      queryParam = userId.toString();
+                      codeCtrl.text = queryParam;
+                    } else if (code != null) {
+                      queryParam = code.toString();
+                      codeCtrl.text = queryParam;
+                    }
+                  }
+                } catch (_) {}
+              }
+
+              if (queryParam.length < 3) {
                 setModalState(() {
                   resolvedRecipient = null;
                   recipientError = 'Please enter at least 3 characters.';
@@ -3470,17 +3541,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 recipientError = null;
               });
 
-              debounceTimer = Timer(const Duration(milliseconds: 500), () async {
+              debounceTimer =
+                  Timer(const Duration(milliseconds: 400), () async {
                 try {
                   final client = context.read<ConvexClientWrapper>();
-                  final res = await client.query('payments:resolveRecipient', args: {
-                    'query': trimmed,
-                    if (user?.id != null) 'senderUserId': user!.id,
-                  });
+                  final res = await client.query('payments:resolveRecipient',
+                      args: {
+                        'query': queryParam,
+                        if (user?.id != null) 'senderUserId': user!.id,
+                      });
 
                   if (modalCtx.mounted) {
                     if (res.success && res.value is Map) {
-                      final data = Map<String, dynamic>.from(res.value as Map);
+                      final data =
+                          Map<String, dynamic>.from(res.value as Map);
                       if (data['found'] == true) {
                         setModalState(() {
                           resolvedRecipient = data;
@@ -5118,7 +5192,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           builder: (modalCtx, setModalState) {
             final isManual = selectedTopUpProvider != 'orange';
 
-            Future<void> executeOrangeTopUp() async {
+            Future<void> executeMoniMeTopUp() async {
               setModalState(() {
                 errorMessage = null;
                 errorCode = null;
@@ -5149,17 +5223,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
               setModalState(() => isProcessing = true);
               try {
-                final result = await PaymentMethodsService.instance.initializeMonerooPayment(
+                final pName = providerLabels[selectedTopUpProvider] ?? 'Mobile Money';
+                final result = await PaymentMethodsService.instance.initiateMoniMePayment(
                   amount: amt,
                   currency: 'SLE',
-                  customerEmail: user?.email ?? 'user@vektolux.com',
-                  customerFirstName: (user?.name ?? 'Vektolux User').split(' ').first,
-                  customerLastName: (user?.name ?? 'User').split(' ').length > 1
-                      ? (user?.name ?? 'User').split(' ').last
-                      : 'User',
                   customerPhone: activePhoneNumber,
+                  provider: selectedTopUpProvider, // "orange", "africell", "qmoney"
                   userId: user?.id ?? '',
-                  description: 'Escrow Wallet Top-Up — SLE $amt',
+                  customerEmail: user?.email ?? 'user@vektolux.com',
+                  customerName: user?.name ?? 'Vektolux Customer',
+                  description: 'Escrow Wallet Top-Up — SLE $amt via $pName',
                 );
 
                 if (result['success'] == true) {
@@ -5176,10 +5249,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
-                          'Push prompt sent to ${_formatPhoneDisplay(activePhoneNumber)}! Approve on your phone to complete top-up.',
+                          result['message'] as String? ??
+                              'Push prompt sent to ${_formatPhoneDisplay(activePhoneNumber)} via $pName! Approve with your PIN to complete top-up.',
                         ),
                         backgroundColor: AppColors.emeraldDark,
                         behavior: SnackBarBehavior.floating,
+                        duration: const Duration(seconds: 6),
                       ),
                     );
                   }
@@ -5666,7 +5741,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 minimumSize: Size.zero,
                                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               ),
-                              onPressed: isProcessing ? null : executeOrangeTopUp,
+                              onPressed: isProcessing ? null : executeMoniMeTopUp,
                               icon: const Icon(Icons.refresh_rounded, size: 14),
                               label: const Text(
                                 'Retry Now',
@@ -5718,24 +5793,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       onPressed: isProcessing
                           ? null
                           : () async {
-                              // ── ORANGE MONEY (Moneroo Automated) ────
-                              if (selectedTopUpProvider == 'orange') {
-                                await executeOrangeTopUp();
-                                return;
-                              }
-
-                              // ── MANUAL PROVIDERS (Step navigation) ──
+                              // ── AUTOMATED MONIME PROVIDERS (Orange, Africell, QMoney) ──
                               if (!showReferenceStep) {
-                                final amt = double.tryParse(amountCtrl.text.trim()) ?? 0;
-                                if (amt <= 0) {
-                                  setModalState(() => errorMessage = 'Please enter a valid amount.');
-                                  return;
-                                }
-                                setModalState(() {
-                                  showReferenceStep = true;
-                                  errorMessage = null;
-                                  errorCode = null;
-                                });
+                                await executeMoniMeTopUp();
                                 return;
                               }
 
@@ -5799,11 +5859,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           : Text(
                               showReferenceStep
                                   ? 'Submit Claim'
-                                  : (selectedTopUpProvider == 'orange' ? 'Pay with Orange Money' : 'Continue → Enter Reference'),
+                                  : 'Pay with ${providerLabels[selectedTopUpProvider] ?? "Mobile Money"}',
                               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
                             ),
                     ),
                   ),
+
+                  // ── Option to enter reference manually if user already paid via USSD ──
+                  if (!showReferenceStep) ...[
+                    const SizedBox(height: 8),
+                    Center(
+                      child: TextButton(
+                        onPressed: isProcessing
+                            ? null
+                            : () => setModalState(() {
+                                  showReferenceStep = true;
+                                  errorMessage = null;
+                                  errorCode = null;
+                                }),
+                        child: const Text(
+                          'Paid via USSD or Agent? Enter reference manually',
+                          style: TextStyle(
+                            color: Color(0xFF64748B),
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
 
                   // ── Back button for step 2 ────────────────────────────
                   if (showReferenceStep) ...[

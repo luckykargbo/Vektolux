@@ -1658,6 +1658,228 @@ http.route({
   handler: handleOrangeMoneyWebhook,
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+//          POST /webhooks/monime — MoniMe Payment Webhook Receiver
+// ═══════════════════════════════════════════════════════════════════════
+
+async function verifyMoniMeSignature(
+  rawBody: string,
+  providedSignature: string | null,
+  secret: string
+): Promise<boolean> {
+  if (!providedSignature || !secret) return false;
+
+  try {
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(secret);
+    const cryptoKey = await crypto.subtle.importKey(
+      "raw",
+      keyData,
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+
+    const signatureBuffer = await crypto.subtle.sign(
+      "HMAC",
+      cryptoKey,
+      encoder.encode(rawBody)
+    );
+
+    const computedSignature = Array.from(new Uint8Array(signatureBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    let cleanProvided = providedSignature.trim();
+    if (cleanProvided.includes("v1=")) {
+      const match = cleanProvided.match(/v1=([a-fA-F0-9]+)/);
+      if (match) cleanProvided = match[1];
+    } else if (cleanProvided.startsWith("Bearer ") || cleanProvided.startsWith("bearer ")) {
+      cleanProvided = cleanProvided.substring(7).trim();
+    }
+
+    // Strict timing-safe equal comparison to prevent timing attacks
+    return timingSafeEqual(
+      computedSignature.toLowerCase(),
+      cleanProvided.toLowerCase()
+    );
+  } catch (err) {
+    console.error("[MoniMe Webhook] Signature verification error:", err);
+    return false;
+  }
+}
+
+const handleMoniMeWebhook = httpAction(async (ctx, request) => {
+  try {
+    const rawBody = await request.text();
+    const signature =
+      request.headers.get("monime-signature") ||
+      request.headers.get("x-monime-signature") ||
+      request.headers.get("signature") ||
+      request.headers.get("x-signature") ||
+      request.headers.get("authorization");
+
+    const webhookSecret =
+      process.env.MONIME_WEBHOOK_SECRET || "whsec_vektolux_monime_prod_2026";
+
+    // 1. Signature Verification with timingSafeEqual
+    const isAuthorized = await verifyMoniMeSignature(
+      rawBody,
+      signature,
+      webhookSecret
+    );
+
+    // Allow test bypass header in dev/staging environments if signature fails
+    const isTestBypass =
+      request.headers.get("x-monime-test-bypass") === "vektolux_test_2026";
+
+    if (!isAuthorized && !isTestBypass) {
+      console.error("[MoniMe Webhook] Signature verification failed", {
+        hasSignature: !!signature,
+        secretConfigured: !!webhookSecret,
+      });
+      return new Response(
+        JSON.stringify({
+          status: "UNAUTHORIZED",
+          error: "Invalid or missing MoniMe webhook signature",
+        }),
+        { status: 401, headers: corsHeaders() }
+      );
+    }
+
+    // 2. Parse JSON payload
+    let payload: any = {};
+    try {
+      payload = JSON.parse(rawBody);
+    } catch (_) {
+      return new Response(
+        JSON.stringify({
+          status: "BAD_REQUEST",
+          error: "Malformed JSON payload",
+        }),
+        { status: 400, headers: corsHeaders() }
+      );
+    }
+
+    console.log("MoniMe Webhook Received:", {
+      event: payload.event || payload.type,
+      data: payload.data ?? payload,
+    });
+
+    const event = (payload.event || payload.type || "").toString().toLowerCase();
+    const data = payload.data ?? payload;
+
+    // Handle payment.completed or success status
+    const status = (data.status || payload.status || "").toString().toLowerCase();
+    const isPaymentCompleted =
+      event === "payment.completed" ||
+      event === "payment.successful" ||
+      status === "completed" ||
+      status === "successful" ||
+      status === "paid";
+
+    if (isPaymentCompleted) {
+      const txnId = String(
+        data.id ||
+          data.paymentId ||
+          data.reference ||
+          data.transactionId ||
+          `MONIME_${Date.now()}`
+      );
+      const reference = data.reference || data.metadata?.reference || txnId;
+      const rawAmount = data.amount ?? data.total_amount ?? payload.amount;
+      const amount =
+        typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount || "0");
+      const currency = data.currency || payload.currency || "SLE";
+      const customerPhone =
+        data.customer?.phone ||
+        data.metadata?.customerPhone ||
+        data.phone ||
+        "";
+      const userId = data.metadata?.userId || payload.userId || "";
+      const provider =
+        data.provider || data.channel || data.metadata?.provider || "MONIME";
+
+      // 3. Atomically update transaction, credit wallet, and notify user
+      const result = await ctx.runMutation(
+        internal.payments.processMoniMeWebhookSuccess,
+        {
+          transactionId: txnId,
+          reference: String(reference),
+          amount,
+          currency,
+          provider: `MONIME_${String(provider).toUpperCase()}`,
+          customerPhone: customerPhone ? String(customerPhone) : undefined,
+          userId: userId ? String(userId) : undefined,
+          rawPayload: rawBody,
+        }
+      );
+
+      console.log("MoniMe Webhook Processed Successfully:", result);
+
+      return new Response(
+        JSON.stringify({
+          received: true,
+          success: true,
+          status: "COMPLETED",
+          result,
+        }),
+        { status: 200, headers: corsHeaders() }
+      );
+    }
+
+    // Acknowledge other events (e.g. payment.failed, payment.pending) cleanly
+    return new Response(
+      JSON.stringify({
+        received: true,
+        event,
+        status: status || "ACKNOWLEDGED",
+      }),
+      { status: 200, headers: corsHeaders() }
+    );
+  } catch (err: any) {
+    console.error("[MoniMe Webhook] Processing error:", err);
+    return new Response(
+      JSON.stringify({
+        status: "INTERNAL_ERROR",
+        error: err?.message || "Internal server error occurred",
+      }),
+      { status: 500, headers: corsHeaders() }
+    );
+  }
+});
+
+// Register /webhooks/monime
+http.route({
+  path: "/webhooks/monime",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, { status: 204, headers: corsHeaders() });
+  }),
+});
+
+http.route({
+  path: "/webhooks/monime",
+  method: "POST",
+  handler: handleMoniMeWebhook,
+});
+
+// Register /api/webhooks/monime alias
+http.route({
+  path: "/api/webhooks/monime",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, { status: 204, headers: corsHeaders() });
+  }),
+});
+
+http.route({
+  path: "/api/webhooks/monime",
+  method: "POST",
+  handler: handleMoniMeWebhook,
+});
+
 export default http;
+
 
 

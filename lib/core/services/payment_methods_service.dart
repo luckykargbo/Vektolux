@@ -282,6 +282,101 @@ class PaymentMethodsService {
     }
   }
 
+  /// Initialize an automated MoniMe payment session for Sierra Leone
+  /// (Orange Money, Africell Afrimoney, QCell QMoney).
+  /// Calls `payments:initiateMoniMePayment` action and returns checkoutUrl, ussdPrompt, transactionId.
+  Future<Map<String, dynamic>> initiateMoniMePayment({
+    required double amount,
+    String currency = 'SLE',
+    required String customerPhone,
+    required String provider, // "orange", "africell", "qmoney"
+    required String userId,
+    String? customerEmail,
+    String? customerName,
+    String? description,
+    String? bookingId,
+    String? escrowOrderId,
+    String? reContractId,
+    String? returnUrl,
+  }) async {
+    try {
+      final res = await _client.action(
+        'payments:initiateMoniMePayment',
+        args: {
+          'amount': amount,
+          'currency': currency,
+          'customerPhone': customerPhone,
+          'provider': provider,
+          'userId': userId,
+          if (customerEmail != null && customerEmail.isNotEmpty)
+            'customerEmail': customerEmail,
+          if (customerName != null && customerName.isNotEmpty)
+            'customerName': customerName,
+          if (description != null && description.isNotEmpty)
+            'description': description,
+          if (bookingId != null && bookingId.isNotEmpty)
+            'bookingId': bookingId,
+          if (escrowOrderId != null && escrowOrderId.isNotEmpty)
+            'escrowOrderId': escrowOrderId,
+          if (reContractId != null && reContractId.isNotEmpty)
+            'reContractId': reContractId,
+          if (returnUrl != null && returnUrl.isNotEmpty)
+            'returnUrl': returnUrl,
+        },
+      );
+
+      if (res.success && res.value is Map) {
+        final val = Map<String, dynamic>.from(res.value as Map);
+        final bool isSuccess = val['success'] == true;
+        if (isSuccess) {
+          return {
+            'success': true,
+            'code': val['code']?.toString() ?? 'PAYMENT_INITIATED',
+            'message': val['message']?.toString() ??
+                'Push prompt sent to $customerPhone. Please approve on your phone.',
+            'transactionId': val['transactionId']?.toString() ??
+                val['reference']?.toString() ??
+                '',
+            'checkoutUrl': val['checkoutUrl']?.toString() ?? '',
+            'ussdPrompt': val['ussdPrompt']?.toString() ?? '',
+            'reference': val['reference']?.toString() ?? '',
+            'provider': val['provider']?.toString() ?? provider,
+          };
+        } else {
+          return {
+            'success': false,
+            'code': val['code']?.toString() ?? 'PAYMENT_FAILED',
+            'message': val['message']?.toString() ??
+                val['error']?.toString() ??
+                'MoniMe payment initiation failed',
+            'error': val['message']?.toString() ??
+                val['error']?.toString() ??
+                'MoniMe payment initiation failed',
+            'rawError': val['rawError'],
+          };
+        }
+      } else {
+        final errMsg =
+            res.errorMessage ?? 'Failed to initiate MoniMe payment pipeline';
+        return {
+          'success': false,
+          'code': 'GATEWAY_ERROR',
+          'message': errMsg,
+          'error': errMsg,
+        };
+      }
+    } catch (e) {
+      debugPrint('[PaymentMethodsService] MoniMe initiation error: $e');
+      return {
+        'success': false,
+        'code': 'NETWORK_ERROR',
+        'message': e.toString(),
+        'error': e.toString(),
+      };
+    }
+  }
+
+
   /// Get status of a payment claim by transaction reference or paymentId.
   Future<Map<String, dynamic>?> getPaymentClaimStatus(String transactionReference) async {
     try {

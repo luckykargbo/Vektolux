@@ -3190,3 +3190,426 @@ export const getTransactionReceipt = query({
   },
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+//                 MONIME SIERRA LEONE PAYMENT PIPELINE
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Record a pending MoniMe payment transaction before carrier dispatch.
+ */
+export const recordPendingMoniMeTransaction = internalMutation({
+  args: {
+    userId: v.string(),
+    amount: v.number(),
+    currency: v.string(),
+    provider: v.string(),
+    reference: v.string(),
+    customerPhone: v.string(),
+    description: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userNorm = ctx.db.normalizeId("users", args.userId);
+    if (!userNorm) throw new Error(`User not found: ${args.userId}`);
+
+    const now = Date.now();
+    let wallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user_currency", (q) =>
+        q.eq("userId", userNorm).eq("currency", args.currency)
+      )
+      .first();
+
+    let walletId: Id<"walletBalances">;
+    if (!wallet) {
+      walletId = await ctx.db.insert("walletBalances", {
+        userId: userNorm,
+        availableBalance: 0,
+        pendingBalance: 0,
+        escrowBalance: 0,
+        currency: args.currency,
+        updatedAt: now,
+      });
+    } else {
+      walletId = wallet._id;
+    }
+
+    const txId = await ctx.db.insert("transactions", {
+      transactionId: args.reference,
+      walletId,
+      userId: userNorm,
+      type: "top_up",
+      amount: args.amount,
+      currency: args.currency,
+      gatewayProvider: `MONIME_${args.provider.toUpperCase()}`,
+      gatewayReference: args.reference,
+      status: "pending",
+      description: args.description,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return {
+      success: true,
+      transactionDocId: txId,
+      reference: args.reference,
+    };
+  },
+});
+
+/**
+ * Action: Initiate payment via MoniMe Sierra Leone Dual-Header HTTP Engine.
+ * Headers:
+ *   Authorization: Bearer <MONIME_ACCESS_TOKEN>
+ *   Monime-Space-Id: <MONIME_SPACE_ID>
+ *   Content-Type: application/json
+ */
+export const initiateMoniMePayment = action({
+  args: {
+    amount: v.number(),
+    currency: v.optional(v.string()),
+    customerPhone: v.string(),
+    provider: v.string(), // "orange", "africell", "qcell", "qmoney"
+    userId: v.string(),
+    customerEmail: v.optional(v.string()),
+    customerName: v.optional(v.string()),
+    description: v.optional(v.string()),
+    bookingId: v.optional(v.string()),
+    escrowOrderId: v.optional(v.string()),
+    reContractId: v.optional(v.string()),
+    returnUrl: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const accessToken =
+      process.env.MONIME_ACCESS_TOKEN ||
+      "mon_Gf6mclyHpd3mVApevC32Zv3S4WpfUg8WCgCvJ2vKwHtxbWfzuhaUcCtOU0lp4MgZ";
+    const spaceId =
+      process.env.MONIME_SPACE_ID || "spc-k6VASs2nSa4AALw1JuBJrXtUAnF";
+    const apiBaseUrl =
+      process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
+
+    if (!accessToken || !spaceId) {
+      logGatewayError(500, { error: "MoniMe credentials missing" }, args);
+      return {
+        success: false,
+        code: "GATEWAY_CONFIG_ERROR",
+        message: "MoniMe gateway credentials are not configured",
+        error: "Missing MONIME_ACCESS_TOKEN or MONIME_SPACE_ID",
+      };
+    }
+
+    const currency = args.currency ?? "SLE";
+    const sanitizedPhone = sanitizeSierraLeonePhone(args.customerPhone);
+    const reference = `vktlx_monime_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const returnUrl =
+      args.returnUrl ?? "https://app.vektolux.com/payment/callback";
+    const description =
+      args.description ?? `Vektolux Escrow Wallet Top-Up — ${args.amount} ${currency}`;
+
+    // 1. Record pending transaction in Convex ledger
+    try {
+      await ctx.runMutation(internal.payments.recordPendingMoniMeTransaction, {
+        userId: args.userId,
+        amount: args.amount,
+        currency,
+        provider: args.provider,
+        reference,
+        customerPhone: sanitizedPhone,
+        description,
+      });
+    } catch (e: any) {
+      console.warn("Could not record pending MoniMe transaction:", e);
+    }
+
+    // 2. Format provider name for MoniMe Sierra Leone
+    let providerSlug = args.provider.toLowerCase();
+    if (providerSlug.includes("orange")) providerSlug = "orange";
+    else if (providerSlug.includes("africell") || providerSlug.includes("afrimoney"))
+      providerSlug = "africell";
+    else if (providerSlug.includes("qcell") || providerSlug.includes("qmoney"))
+      providerSlug = "qmoney";
+
+    const payload = {
+      amount: args.amount,
+      currency,
+      reference,
+      customer: {
+        phone: sanitizedPhone,
+        name: args.customerName || "Vektolux Customer",
+        email: args.customerEmail || "customer@vektolux.com",
+      },
+      provider: providerSlug,
+      description,
+      return_url: returnUrl,
+      metadata: {
+        userId: args.userId,
+        reference,
+        provider: providerSlug,
+        customerPhone: sanitizedPhone,
+        bookingId: args.bookingId ?? "",
+        escrowOrderId: args.escrowOrderId ?? "",
+        reContractId: args.reContractId ?? "",
+        source: "vektolux_app",
+      },
+    };
+
+    console.log("Initiating MoniMe Payment with Dual Headers:", {
+      url: `${apiBaseUrl}/payments`,
+      spaceId,
+      amount: args.amount,
+      currency,
+      provider: providerSlug,
+      customerPhone: sanitizedPhone,
+      reference,
+    });
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/payments`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Monime-Space-Id": spaceId,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      let resJson: any = {};
+      try {
+        resJson = await response.json();
+      } catch (_) {
+        resJson = {
+          message: await response.text().catch(() => "Unknown gateway error"),
+        };
+      }
+
+      if (!response.ok) {
+        logGatewayError(response.status, resJson, payload);
+        const parsed = parseCarrierResponse(response.status, resJson);
+        return {
+          success: false,
+          code: parsed.code || "MONIME_INITIATION_FAILED",
+          message: parsed.message || resJson.message || "MoniMe payment initiation failed",
+          statusCode: response.status,
+          error: parsed.message || resJson.message,
+          rawError: resJson,
+        };
+      }
+
+      const resData = resJson.data ?? resJson;
+      const checkoutUrl =
+        resData.checkout_url ?? resData.link ?? resData.paymentUrl ?? "";
+      const paymentId = resData.id ?? resData.paymentId ?? reference;
+      const ussdPrompt =
+        resData.ussd_prompt ??
+        resData.prompt ??
+        `Push prompt sent to ${sanitizedPhone} via ${providerSlug.toUpperCase()}. Approve on your phone to complete.`;
+
+      return {
+        success: true,
+        code: "PAYMENT_INITIATED",
+        message: ussdPrompt,
+        transactionId: paymentId,
+        reference,
+        checkoutUrl,
+        ussdPrompt,
+        status: "pending",
+        provider: providerSlug,
+      };
+    } catch (err: any) {
+      logGatewayError(500, err, payload);
+      return {
+        success: false,
+        code: "NETWORK_ERROR",
+        message: `MoniMe connection failed: ${err.message ?? err}`,
+        error: err.message ?? String(err),
+      };
+    }
+  },
+});
+
+/**
+ * Process a verified MoniMe webhook success payload.
+ * Atomically:
+ * 1. Checks idempotency (prevents double credit).
+ * 2. Updates pending transaction to 'completed' or creates a completed transaction.
+ * 3. Atomically credits the user's available wallet balance.
+ * 4. Writes double-entry ledger records.
+ * 5. Dispatches real-time user notification.
+ */
+export const processMoniMeWebhookSuccess = internalMutation({
+  args: {
+    transactionId: v.string(),
+    reference: v.optional(v.string()),
+    amount: v.number(),
+    currency: v.optional(v.string()),
+    provider: v.optional(v.string()),
+    customerPhone: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    rawPayload: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const currency = args.currency || "SLE";
+    const provider = args.provider || "MONIME";
+    const lookupRef = args.reference || args.transactionId;
+
+    // 1. Idempotency Check A: by transactionId
+    const existingTxById = await ctx.db
+      .query("transactions")
+      .withIndex("by_transaction_id", (q) => q.eq("transactionId", args.transactionId))
+      .first();
+
+    // Idempotency Check B: by gatewayReference
+    const existingTxByRef = lookupRef
+      ? await ctx.db
+          .query("transactions")
+          .withIndex("by_gateway_ref", (q) =>
+            q.eq("gatewayProvider", provider).eq("gatewayReference", lookupRef)
+          )
+          .first()
+      : null;
+
+    const existingTx = existingTxById || existingTxByRef;
+
+    if (existingTx && existingTx.status === "completed") {
+      return {
+        success: true,
+        alreadyProcessed: true,
+        transactionId: existingTx.transactionId,
+        message: "Transaction already completed in ledger",
+      };
+    }
+
+    // 2. Identify target user
+    let user: Doc<"users"> | null = null;
+    if (args.userId) {
+      const userNorm = ctx.db.normalizeId("users", args.userId);
+      if (userNorm) user = await ctx.db.get(userNorm);
+    }
+
+    if (!user && existingTx) {
+      user = await ctx.db.get(existingTx.userId);
+    }
+
+    if (!user && args.customerPhone) {
+      const candidates = getSierraLeonePhoneCandidates(args.customerPhone);
+      for (const cand of candidates) {
+        user = await ctx.db
+          .query("users")
+          .withIndex("by_phone", (q) => q.eq("phone", cand))
+          .first();
+        if (user) break;
+      }
+    }
+
+    if (!user) {
+      console.warn("MoniMe deposit: could not resolve user for phone:", args.customerPhone);
+      return {
+        success: false,
+        status: "ORPHANED_USER",
+        message: `No user matches phone ${args.customerPhone} or userId ${args.userId}`,
+        transactionId: args.transactionId,
+      };
+    }
+
+    // 3. Atomically credit user's wallet
+    let wallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user_currency", (q) =>
+        q.eq("userId", user!._id).eq("currency", currency)
+      )
+      .first();
+
+    let newBalance = args.amount;
+    let walletId: Id<"walletBalances">;
+
+    if (!wallet) {
+      walletId = await ctx.db.insert("walletBalances", {
+        userId: user._id,
+        availableBalance: args.amount,
+        pendingBalance: 0,
+        escrowBalance: 0,
+        currency,
+        updatedAt: now,
+      });
+    } else {
+      walletId = wallet._id;
+      newBalance = wallet.availableBalance + args.amount;
+      await ctx.db.patch(wallet._id, {
+        availableBalance: newBalance,
+        updatedAt: now,
+      });
+    }
+
+    // 4. Update existing pending transaction or insert new completed transaction
+    if (existingTx) {
+      await ctx.db.patch(existingTx._id, {
+        status: "completed",
+        amount: args.amount,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.insert("transactions", {
+        transactionId: args.transactionId,
+        walletId,
+        userId: user._id,
+        type: "top_up",
+        amount: args.amount,
+        currency,
+        gatewayProvider: provider,
+        gatewayReference: lookupRef,
+        status: "completed",
+        description: `MoniMe Top-Up of SLE ${args.amount} via ${provider}`,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    // 5. Record double-entry ledger entries
+    try {
+      const ledgerTxId = await ctx.db.insert("ledger_transactions", {
+        transactionCode: `LTX_MONIME_${args.transactionId}`,
+        description: `MoniMe Deposit - Ref: ${args.transactionId}`,
+        createdAt: now,
+      });
+
+      await ctx.db.insert("ledger_entries", {
+        transactionId: ledgerTxId,
+        accountType: "CLIENT_AVAILABLE",
+        userId: user._id,
+        direction: "CREDIT",
+        amount: args.amount,
+        currency,
+        createdAt: now,
+      });
+    } catch (e) {
+      console.warn("Ledger transaction recording non-fatal:", e);
+    }
+
+    // 6. Real-time push / in-app notification
+    try {
+      await ctx.db.insert("user_notifications", {
+        userId: user._id as string,
+        targetType: "single_user",
+        title: "Deposit Successful! 💳",
+        body: `Your wallet has been credited with SLE ${args.amount.toFixed(2)} via MoniMe (${provider}). Your new balance is SLE ${newBalance.toFixed(2)}.`,
+        read: false,
+        createdAt: now,
+      });
+    } catch {
+      // non-fatal
+    }
+
+    return {
+      success: true,
+      alreadyProcessed: false,
+      transactionId: args.transactionId,
+      amount: args.amount,
+      currency,
+      userId: user._id,
+      newBalance,
+    };
+  },
+});
+
+
