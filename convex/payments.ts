@@ -4456,6 +4456,10 @@ export const verifyUssdOtp = action({
       if (accessToken && spaceId && payoutAmount > 0) {
         try {
           console.log(`[MoniMe Payout] Dispatching payout of ${payoutAmount} ${payoutCurrency} to ${destination}...`);
+          const carrier = detectSierraLeoneCarrier(destination);
+          const momoProviderId = carrier === "africell" ? "m18" : "m17";
+          const minorAmount = Math.round(payoutAmount * 100);
+
           const payoutRes = await fetch(`${apiBaseUrl}/payouts`, {
             method: "POST",
             headers: {
@@ -4466,13 +4470,16 @@ export const verifyUssdOtp = action({
               "Idempotency-Key": `payout_${session.reference}`,
             },
             body: JSON.stringify({
-              spaceId: spaceId.trim(),
-              space_id: spaceId.trim(),
-              amount: payoutAmount,
-              currency: payoutCurrency,
-              destination,
+              amount: {
+                currency: payoutCurrency,
+                value: minorAmount,
+              },
+              destination: {
+                type: "momo",
+                providerId: momoProviderId,
+                phoneNumber: destination,
+              },
               metadata: {
-                spaceId: spaceId.trim(),
                 reference: session.reference,
                 purpose: "escrow_payout",
                 ...(session.escrowOrderId ? { escrowOrderId: session.escrowOrderId } : {}),
