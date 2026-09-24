@@ -3348,24 +3348,23 @@ export const initiateMoniMePayment = action({
       console.warn("[MoniMe Pending] Non-fatal pending recording failure:", e?.message ?? e);
     }
 
-    // 2. Construct dynamic checkout session payload
-    const checkoutPayload = {
-      spaceId: spaceId.trim(),
+    const minorAmount = Math.round(args.amount * 100);
+
+    // 2. Construct dynamic checkout session payload (amounts in minor units / cents)
+    const checkoutPayload: Record<string, any> = {
       name: description,
       lineItems: [
         {
+          name: args.description || "Escrow Wallet Top-Up",
           type: "custom",
-          name: description,
           quantity: 1,
           price: {
             currency: "SLE",
-            value: args.amount,
+            value: minorAmount,
           },
         },
       ],
-      returnUrl,
       metadata: {
-        spaceId: spaceId.trim(),
         reference,
         provider: providerSlug,
         phoneNumber: sanitizedPhone,
@@ -3377,16 +3376,7 @@ export const initiateMoniMePayment = action({
       },
     };
 
-    console.log("[MoniMe Outbound] Dispatching checkout session:", {
-      url: `${apiBaseUrl}/checkout-sessions`,
-      spaceId: spaceId ? `${spaceId.substring(0, 8)}...` : undefined,
-      amount: args.amount,
-      currency: "SLE",
-      provider: providerSlug,
-      phoneNumber: sanitizedPhone ? `${sanitizedPhone.substring(0, 4)}***${sanitizedPhone.slice(-3)}` : "",
-      hasEmail: !!dynamicEmail,
-      reference,
-    });
+    console.log("[MoniMe Request Body]:", JSON.stringify(checkoutPayload, null, 2));
 
     try {
       const response = await fetch(`${apiBaseUrl}/checkout-sessions`, {
@@ -3402,25 +3392,83 @@ export const initiateMoniMePayment = action({
       });
 
       const responseStatus = response.status;
-      let responseBodyText = "";
+      const resText = await response.text();
+      console.log("[MoniMe Response]:", responseStatus, resText);
+
       let resJson: any = null;
       try {
-        responseBodyText = await response.text();
-        resJson = JSON.parse(responseBodyText);
+        resJson = JSON.parse(resText);
       } catch (_) {
-        resJson = { raw: responseBodyText };
+        resJson = { raw: resText };
       }
 
-      console.log(`[MoniMe Response] Status ${responseStatus}:`, JSON.stringify(resJson));
-
       if (!response.ok) {
+        // Fallback to direct mobile payment-codes on MoniMe
+        console.log(`[MoniMe Fallback] Checkout session returned ${responseStatus}. Trying direct mobile payment-codes endpoint...`);
+          const formattedPhone = sanitizedPhone.startsWith("+") ? sanitizedPhone : `+${sanitizedPhone}`;
+          const paymentCodePayload = {
+            name: description,
+            amount: {
+              currency: "SLE",
+              value: minorAmount,
+            },
+            authorizedPhoneNumber: formattedPhone,
+            reference,
+            metadata: {
+              reference,
+              provider: providerSlug,
+              phoneNumber: sanitizedPhone,
+              source: "vektolux_mobile_app",
+            },
+          };
+
+          console.log("[MoniMe Payment Code Request Body]:", JSON.stringify(paymentCodePayload, null, 2));
+          try {
+            const pcRes = await fetch(`${apiBaseUrl}/payment-codes`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token.trim()}`,
+                "Monime-Space-Id": spaceId.trim(),
+                "monime-space-id": spaceId.trim(),
+                "Idempotency-Key": reference,
+              },
+              body: JSON.stringify(paymentCodePayload),
+            });
+
+            const pcText = await pcRes.text();
+            console.log("[MoniMe Payment Code Response]:", pcRes.status, pcText);
+
+            let pcJson: any = null;
+            try { pcJson = JSON.parse(pcText); } catch (_) { pcJson = { raw: pcText }; }
+
+            if (pcRes.ok && pcJson?.result) {
+              const pcData = pcJson.result;
+              const ussdCode = pcData.ussdCode || "";
+              return {
+                success: true,
+                code: "PAYMENT_INITIATED",
+                message: `Dial ${ussdCode} on your phone to complete your payment of SLE ${args.amount}.`,
+                ussdCode,
+                ussdPrompt: `Dial ${ussdCode} on your phone to complete your payment of SLE ${args.amount}.`,
+                checkoutUrl: ussdCode,
+                transactionId: pcData.id ?? reference,
+                reference,
+                status: "pending",
+                provider: providerSlug,
+              };
+            }
+          } catch (pcErr: any) {
+            console.warn("[MoniMe Payment Code Fallback Error]:", pcErr);
+          }
+
         console.error(`[MoniMe Error] Gateway rejected payment (HTTP ${responseStatus}):`, resJson);
         logGatewayError(responseStatus, resJson, checkoutPayload);
 
         const rawMsg =
           resJson?.error?.message ||
           resJson?.message ||
-          responseBodyText ||
+          resText ||
           `Payment gateway rejected request (HTTP ${responseStatus})`;
 
         return {
