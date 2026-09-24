@@ -3287,10 +3287,10 @@ export const recordPendingMoniMeTransaction = internalMutation({
 export const initiateMoniMePayment = action({
   args: {
     amount: v.number(),
-    phoneNumber: v.string(),
+    phoneNumber: v.optional(v.string()),
+    customerPhone: v.optional(v.string()),
     provider: v.string(), // "orange", "africell", "qmoney"
     email: v.optional(v.string()),
-    customerPhone: v.optional(v.string()),
     customerEmail: v.optional(v.string()),
     customerName: v.optional(v.string()),
     userId: v.optional(v.string()),
@@ -3317,7 +3317,16 @@ export const initiateMoniMePayment = action({
     }
 
     const rawPhone = args.phoneNumber || args.customerPhone || "";
-    const sanitizedPhone = sanitizeSierraLeonePhone(rawPhone);
+    let cleanPhone = rawPhone.replace(/\D/g, "");
+    if (cleanPhone.startsWith("0")) {
+      cleanPhone = "232" + cleanPhone.substring(1);
+    } else if (!cleanPhone.startsWith("232") && cleanPhone.length === 8) {
+      cleanPhone = "232" + cleanPhone;
+    }
+    if (!cleanPhone) {
+      throw new Error("Phone number is required for mobile money payment.");
+    }
+    const sanitizedPhone = cleanPhone;
     const dynamicEmail = (args.email || args.customerEmail)?.trim();
     const currency = args.currency ?? "SLE";
     const reference = `vktlx_monime_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;

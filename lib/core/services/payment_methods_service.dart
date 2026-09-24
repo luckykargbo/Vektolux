@@ -314,6 +314,7 @@ class PaymentMethodsService {
         args: {
           'amount': amount,
           'phoneNumber': activePhone,
+          'customerPhone': activePhone,
           'provider': provider,
           if (activeEmail != null && activeEmail.isNotEmpty)
             'email': activeEmail,
