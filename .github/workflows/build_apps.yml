@@ -108,9 +108,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Vektolux Mobile Release (v1.0.18) — Orange Money Webhook & Live Wallet Stream"
+          name: "Vektolux Mobile Release (v1.0.19) — MoniMe USSD OTP & Verified Seller Gatekeeping"
           body: |
-            ## Vektolux Mobile App Builds (v1.0.18) — Orange Money SL Webhook & Real-Time Wallet Stream
+            ## Vektolux Mobile App Builds (v1.0.19) — MoniMe USSD OTP & Role-Based UI Architecture
 
             ### Direct Downloads:
             - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
@@ -118,17 +118,18 @@ jobs:
             - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
               * Direct sideload / install on any Android device.
 
-            ### What's New in this Build (v1.0.18):
-            - **Orange Money Sierra Leone Webhook Integration**:
-              * Fully integrated with Convex Cloud backend (`ideal-poodle-813`).
-              * Cryptographic webhook signature verification and Sierra Leone telco phone resolution.
-              * Real-time double-entry ledger crediting for mobile money deposits.
-            - **Live Reactive Wallet Stream**:
-              * Real-time wallet balance streaming on ProfileScreen without requiring pull-to-refresh.
-              * Instant UI sync on deposit confirmation.
-            - **100% Cloud-Only Architecture**:
-              * Completely decoupled from local SQLite/Drift databases.
-              * Direct, type-safe queries and mutations to Convex Cloud.
+            ### What's New in this Build (v1.0.19):
+            - **MoniMe USSD OTP Authentication & Carrier Dial Code**:
+              * Real-time outbound session dispatch via MoniMe gateway (`*715#`).
+              * Direct `dialCode` delivery (`*715*XXXXXX#`) for instant login and escrow payout verification.
+              * Verified Space ID integration (`spc-k6VAsS2nSa4AALw1JuBJrXtUAnF`) with dual-header validation.
+            - **Role-Based Profile UI Restrictions (Buyers vs. Verified Sellers)**:
+              * Standard buyers no longer see storefront tabs (Properties / Vehicles) or public creation controls.
+              * Dedicated Buyer Dashboard showing escrow orders, saved listings, and seller application onboarding.
+              * Strict route guards on listing creation entry points across Discovery, Real Estate, and Mobility.
+            - **Resilient Mobile Money Dispatch**:
+              * Dynamic phone normalization with automatic 232 prefix handling.
+              * Zero hardcoded parameters across payment actions.
           files: release-assets/*
           prerelease: false
           make_latest: true
