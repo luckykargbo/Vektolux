@@ -1,0 +1,26 @@
+{
+  "name": "vektolux-whatsapp-bot",
+  "version": "1.0.0",
+  "description": "Vektolux WhatsApp AI Assistant powered by Baileys and Google Gemini 1.5 Flash",
+  "main": "bot.js",
+  "type": "module",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.19",
+    "dotenv": "^16.4.7",
+    "pino": "^9.6.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "keywords": [
+    "whatsapp",
+    "baileys",
+    "gemini",
+    "ai",
+    "vektolux",
+    "escrow"
+  ],
+  "author": "Vektolux",
+  "license": "MIT"
+}
