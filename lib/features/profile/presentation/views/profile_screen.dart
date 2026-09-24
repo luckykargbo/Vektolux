@@ -189,6 +189,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  /// Verify on-demand MoniMe payment status and refresh wallet balance.
+  Future<void> _verifyAndRefreshWallet() async {
+    if (!mounted) return;
+    setState(() => _isLoadingBalance = true);
+    final userId = context.read<AuthBloc>().state.user?.id;
+    final client = context.read<ConvexClientWrapper>();
+
+    try {
+      if (userId != null) {
+        // Trigger status reconciliation action on Convex backend
+        await client.action(
+          'payments:verifyMoniMeStatus',
+          args: {'userId': userId},
+        );
+      }
+    } catch (_) {
+      // Non-fatal, proceed with balance fetch
+    }
+
+    await _fetchWalletData();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Wallet Synced • Available: SLE ${_walletBalance?.toStringAsFixed(2) ?? "0.00"}',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: AppColors.emeraldDark,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   /// Fetch user's Convex-persisted linked payment accounts.
   Future<void> _fetchUserPaymentAccounts() async {
     if (!mounted) return;
@@ -4437,18 +4482,43 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ],
               ),
-              IconButton(
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                icon: Icon(
-                  _isBalanceVisible
-                      ? Icons.visibility_outlined
-                      : Icons.visibility_off_outlined,
-                  color: Colors.white70,
-                  size: 20,
-                ),
-                tooltip: _isBalanceVisible ? 'Hide Balance' : 'Show Balance',
-                onPressed: () => setState(() => _isBalanceVisible = !_isBalanceVisible),
+              Row(
+                children: [
+                  IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    icon: _isLoadingBalance
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white70,
+                            ),
+                          )
+                        : const Icon(
+                            Icons.refresh_rounded,
+                            color: Colors.white70,
+                            size: 20,
+                          ),
+                    tooltip: 'Verify & Refresh Balance',
+                    onPressed: _isLoadingBalance ? null : () => _verifyAndRefreshWallet(),
+                  ),
+                  const SizedBox(width: 10),
+                  IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    icon: Icon(
+                      _isBalanceVisible
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                      color: Colors.white70,
+                      size: 20,
+                    ),
+                    tooltip: _isBalanceVisible ? 'Hide Balance' : 'Show Balance',
+                    onPressed: () => setState(() => _isBalanceVisible = !_isBalanceVisible),
+                  ),
+                ],
               ),
             ],
           ),

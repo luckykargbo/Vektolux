@@ -1774,39 +1774,75 @@ const handleMoniMeWebhook = httpAction(async (ctx, request) => {
     const isPaymentCompleted =
       event === "payment.completed" ||
       event === "payment.successful" ||
+      event === "checkout_session.completed" ||
+      event === "payment_code.completed" ||
       status === "completed" ||
       status === "successful" ||
-      status === "paid";
+      status === "paid" ||
+      status === "success";
 
     if (isPaymentCompleted) {
+      const orderId = data.orderId || data.order_id || data.id || payload.orderId || payload.order_id;
       const txnId = String(
-        data.id ||
+        orderId ||
           data.paymentId ||
           data.reference ||
           data.transactionId ||
           `MONIME_${Date.now()}`
       );
-      const reference = data.reference || data.metadata?.reference || txnId;
-      const rawAmount = data.amount ?? data.total_amount ?? payload.amount;
-      const amount =
+      const rawReference = data.reference || data.metadata?.reference || payload.reference || txnId;
+      const cleanRef = String(rawReference).replace(/§/g, "_");
+
+      let rawAmount = data.amount ?? data.total_amount ?? payload.amount;
+      if (typeof rawAmount === "object" && typeof rawAmount?.value === "number") {
+        rawAmount = rawAmount.value / 100;
+      }
+      let amount =
         typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount || "0");
+      if (amount > 100 && (data.lineItems || payload.lineItems || data.amount?.value !== undefined)) {
+        amount = amount / 100;
+      }
+
+      let rawNet = data.net_amount ?? data.netAmount ?? payload.net_amount ?? payload.netAmount;
+      if (typeof rawNet === "object" && typeof rawNet?.value === "number") {
+        rawNet = rawNet.value / 100;
+      }
+      let netAmount = typeof rawNet === "number" ? rawNet : (rawNet ? parseFloat(rawNet) : undefined);
+
+      let rawFee = data.fee ?? data.fees ?? payload.fee ?? payload.fees;
+      if (typeof rawFee === "object" && typeof rawFee?.value === "number") {
+        rawFee = rawFee.value / 100;
+      }
+      let feeAmount = typeof rawFee === "number" ? rawFee : (rawFee ? parseFloat(rawFee) : undefined);
+
+      if (netAmount === undefined) {
+        netAmount = feeAmount !== undefined ? (amount - feeAmount) : (amount > 0 ? (amount - 0.10) : amount);
+      }
+      if (feeAmount === undefined && netAmount !== undefined) {
+        feeAmount = Math.max(0, amount - netAmount);
+      }
+
       const currency = data.currency || payload.currency || "SLE";
       const customerPhone =
         data.customer?.phone ||
         data.metadata?.customerPhone ||
+        data.metadata?.phoneNumber ||
         data.phone ||
+        payload.phone ||
         "";
       const userId = data.metadata?.userId || payload.userId || "";
       const provider =
-        data.provider || data.channel || data.metadata?.provider || "MONIME";
+        data.provider || data.channel || data.metadata?.provider || "ORANGE";
 
       // 3. Atomically update transaction, credit wallet, and notify user
       const result = await ctx.runMutation(
         internal.payments.processMoniMeWebhookSuccess,
         {
           transactionId: txnId,
-          reference: String(reference),
+          reference: cleanRef,
           amount,
+          netAmount,
+          feeAmount,
           currency,
           provider: `MONIME_${String(provider).toUpperCase()}`,
           customerPhone: customerPhone ? String(customerPhone) : undefined,
