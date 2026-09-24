@@ -1303,4 +1303,28 @@ export default defineSchema({
     .index("by_sellerId", ["sellerId"])
     .index("by_buyerId", ["buyerId"])
     .index("by_sellerId_status", ["sellerId", "status"]),
+
+  // ─── USSD OTP SESSIONS (Authentication & Escrow Payouts) ─────────
+  ussd_otps: defineTable({
+    phoneNumber: v.string(),
+    code: v.string(),
+    reference: v.string(),
+    purpose: v.union(v.literal("login"), v.literal("escrow_payout")),
+    status: v.union(v.literal("pending"), v.literal("verified"), v.literal("expired"), v.literal("failed")),
+    sessionId: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    escrowOrderId: v.optional(v.string()),
+    payoutAmount: v.optional(v.number()),
+    payoutCurrency: v.optional(v.string()),
+    destinationAccount: v.optional(v.string()),
+    verificationMessage: v.optional(v.string()),
+    expiresAt: v.number(),
+    verifiedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_phone", ["phoneNumber"])
+    .index("by_reference", ["reference"])
+    .index("by_status", ["status"])
+    .index("by_phone_purpose", ["phoneNumber", "purpose"]),
 });
