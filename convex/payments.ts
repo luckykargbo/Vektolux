@@ -3199,7 +3199,7 @@ export const getTransactionReceipt = query({
  */
 export const recordPendingMoniMeTransaction = internalMutation({
   args: {
-    userId: v.string(),
+    userId: v.optional(v.string()),
     amount: v.number(),
     currency: v.string(),
     provider: v.string(),
@@ -3208,21 +3208,42 @@ export const recordPendingMoniMeTransaction = internalMutation({
     description: v.string(),
   },
   handler: async (ctx, args) => {
-    const userNorm = ctx.db.normalizeId("users", args.userId);
-    if (!userNorm) throw new Error(`User not found: ${args.userId}`);
+    let userDoc: Doc<"users"> | null = null;
+    if (args.userId && args.userId.trim().length > 0) {
+      const userNorm = ctx.db.normalizeId("users", args.userId);
+      if (userNorm) {
+        userDoc = await ctx.db.get(userNorm);
+      }
+    }
+
+    if (!userDoc && args.customerPhone) {
+      const candidates = getSierraLeonePhoneCandidates(args.customerPhone);
+      for (const cand of candidates) {
+        userDoc = await ctx.db
+          .query("users")
+          .withIndex("by_phone", (q) => q.eq("phone", cand))
+          .first();
+        if (userDoc) break;
+      }
+    }
+
+    if (!userDoc) {
+      console.log(`[MoniMe Pending] No user doc resolved for pending tx ${args.reference}`);
+      return { success: false, reason: "USER_NOT_RESOLVED" };
+    }
 
     const now = Date.now();
     let wallet = await ctx.db
       .query("walletBalances")
       .withIndex("by_user_currency", (q) =>
-        q.eq("userId", userNorm).eq("currency", args.currency)
+        q.eq("userId", userDoc!._id).eq("currency", args.currency)
       )
       .first();
 
     let walletId: Id<"walletBalances">;
     if (!wallet) {
       walletId = await ctx.db.insert("walletBalances", {
-        userId: userNorm,
+        userId: userDoc._id,
         availableBalance: 0,
         pendingBalance: 0,
         escrowBalance: 0,
@@ -3236,7 +3257,7 @@ export const recordPendingMoniMeTransaction = internalMutation({
     const txId = await ctx.db.insert("transactions", {
       transactionId: args.reference,
       walletId,
-      userId: userNorm,
+      userId: userDoc._id,
       type: "top_up",
       amount: args.amount,
       currency: args.currency,
@@ -3266,12 +3287,14 @@ export const recordPendingMoniMeTransaction = internalMutation({
 export const initiateMoniMePayment = action({
   args: {
     amount: v.number(),
-    currency: v.optional(v.string()),
-    customerPhone: v.string(),
-    provider: v.string(), // "orange", "africell", "qcell", "qmoney"
-    userId: v.string(),
+    phoneNumber: v.string(),
+    provider: v.string(), // "orange", "africell", "qmoney"
+    email: v.optional(v.string()),
+    customerPhone: v.optional(v.string()),
     customerEmail: v.optional(v.string()),
     customerName: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    currency: v.optional(v.string()),
     description: v.optional(v.string()),
     bookingId: v.optional(v.string()),
     escrowOrderId: v.optional(v.string()),
@@ -3279,48 +3302,27 @@ export const initiateMoniMePayment = action({
     returnUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const accessToken =
-      process.env.MONIME_ACCESS_TOKEN ||
-      "mon_Gf6mclyHpd3mVApevC32Zv3S4WpfUg8WCgCvJ2vKwHtxbWfzuhaUcCtOU0lp4MgZ";
-    const spaceId =
-      process.env.MONIME_SPACE_ID || "spc-k6VASs2nSa4AALw1JuBJrXtUAnF";
-    const apiBaseUrl =
-      process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
+    const accessToken = process.env.MONIME_ACCESS_TOKEN;
+    const spaceId = process.env.MONIME_SPACE_ID;
+    const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
 
     if (!accessToken || !spaceId) {
-      logGatewayError(500, { error: "MoniMe credentials missing" }, args);
+      console.error("[MoniMe Config Error] Missing MONIME_ACCESS_TOKEN or MONIME_SPACE_ID in environment.");
       return {
         success: false,
         code: "GATEWAY_CONFIG_ERROR",
-        message: "MoniMe gateway credentials are not configured",
+        message: "MoniMe gateway credentials are not configured in Convex environment",
         error: "Missing MONIME_ACCESS_TOKEN or MONIME_SPACE_ID",
       };
     }
 
+    const rawPhone = args.phoneNumber || args.customerPhone || "";
+    const sanitizedPhone = sanitizeSierraLeonePhone(rawPhone);
+    const dynamicEmail = (args.email || args.customerEmail)?.trim();
     const currency = args.currency ?? "SLE";
-    const sanitizedPhone = sanitizeSierraLeonePhone(args.customerPhone);
     const reference = `vktlx_monime_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    const returnUrl =
-      args.returnUrl ?? "https://app.vektolux.com/payment/callback";
-    const description =
-      args.description ?? `Vektolux Escrow Wallet Top-Up — ${args.amount} ${currency}`;
+    const returnUrl = args.returnUrl ?? "https://app.vektolux.com/payment/callback";
 
-    // 1. Record pending transaction in Convex ledger
-    try {
-      await ctx.runMutation(internal.payments.recordPendingMoniMeTransaction, {
-        userId: args.userId,
-        amount: args.amount,
-        currency,
-        provider: args.provider,
-        reference,
-        customerPhone: sanitizedPhone,
-        description,
-      });
-    } catch (e: any) {
-      console.warn("Could not record pending MoniMe transaction:", e);
-    }
-
-    // 2. Format provider name for MoniMe Sierra Leone
     let providerSlug = args.provider.toLowerCase();
     if (providerSlug.includes("orange")) providerSlug = "orange";
     else if (providerSlug.includes("africell") || providerSlug.includes("afrimoney"))
@@ -3328,37 +3330,63 @@ export const initiateMoniMePayment = action({
     else if (providerSlug.includes("qcell") || providerSlug.includes("qmoney"))
       providerSlug = "qmoney";
 
+    const description =
+      args.description ?? `Vektolux Escrow Wallet Top-Up — ${args.amount} ${currency} via ${providerSlug.toUpperCase()}`;
+
+    // 1. Record pending transaction in Convex ledger (non-blocking)
+    try {
+      await ctx.runMutation(internal.payments.recordPendingMoniMeTransaction, {
+        userId: args.userId,
+        amount: args.amount,
+        currency,
+        provider: providerSlug,
+        reference,
+        customerPhone: sanitizedPhone,
+        description,
+      });
+    } catch (e: any) {
+      console.warn("[MoniMe Pending] Non-fatal pending recording failure:", e?.message ?? e);
+    }
+
+    // 2. Construct dynamic customer payload (zero hardcoded values)
+    const customerPayload: Record<string, any> = {
+      phone: sanitizedPhone,
+    };
+    if (dynamicEmail && dynamicEmail.length > 0) {
+      customerPayload.email = dynamicEmail;
+    }
+    if (args.customerName && args.customerName.trim().length > 0) {
+      customerPayload.name = args.customerName.trim();
+    }
+
     const payload = {
       amount: args.amount,
-      currency,
+      currency: "SLE",
       reference,
-      customer: {
-        phone: sanitizedPhone,
-        name: args.customerName || "Vektolux Customer",
-        email: args.customerEmail || "customer@vektolux.com",
-      },
+      customer: customerPayload,
       provider: providerSlug,
       description,
       return_url: returnUrl,
       metadata: {
-        userId: args.userId,
         reference,
         provider: providerSlug,
-        customerPhone: sanitizedPhone,
-        bookingId: args.bookingId ?? "",
-        escrowOrderId: args.escrowOrderId ?? "",
-        reContractId: args.reContractId ?? "",
-        source: "vektolux_app",
+        phoneNumber: sanitizedPhone,
+        source: "vektolux_mobile_app",
+        ...(args.userId ? { userId: args.userId } : {}),
+        ...(args.bookingId ? { bookingId: args.bookingId } : {}),
+        ...(args.escrowOrderId ? { escrowOrderId: args.escrowOrderId } : {}),
+        ...(args.reContractId ? { reContractId: args.reContractId } : {}),
       },
     };
 
-    console.log("Initiating MoniMe Payment with Dual Headers:", {
+    console.log("[MoniMe Outbound] Dispatching payment:", {
       url: `${apiBaseUrl}/payments`,
-      spaceId,
+      spaceId: spaceId ? `${spaceId.substring(0, 8)}...` : undefined,
       amount: args.amount,
-      currency,
+      currency: "SLE",
       provider: providerSlug,
-      customerPhone: sanitizedPhone,
+      phoneNumber: sanitizedPhone ? `${sanitizedPhone.substring(0, 4)}***${sanitizedPhone.slice(-3)}` : "",
+      hasEmail: !!dynamicEmail,
       reference,
     });
 
@@ -3373,29 +3401,42 @@ export const initiateMoniMePayment = action({
         body: JSON.stringify(payload),
       });
 
-      let resJson: any = {};
+      const responseStatus = response.status;
+      let responseBodyText = "";
+      let resJson: any = null;
       try {
-        resJson = await response.json();
+        responseBodyText = await response.text();
+        resJson = JSON.parse(responseBodyText);
       } catch (_) {
-        resJson = {
-          message: await response.text().catch(() => "Unknown gateway error"),
-        };
+        resJson = { raw: responseBodyText };
       }
 
+      console.log(`[MoniMe Response] Status ${responseStatus}:`, JSON.stringify(resJson));
+
       if (!response.ok) {
-        logGatewayError(response.status, resJson, payload);
-        const parsed = parseCarrierResponse(response.status, resJson);
+        console.error(`[MoniMe Error] Gateway rejected payment (HTTP ${responseStatus}):`, resJson);
+        logGatewayError(responseStatus, resJson, {
+          ...payload,
+          customer: { ...customerPayload, phone: "[REDACTED]" },
+        });
+
+        const rawMsg =
+          resJson?.error?.message ||
+          resJson?.message ||
+          responseBodyText ||
+          `Payment gateway rejected request (HTTP ${responseStatus})`;
+
         return {
           success: false,
-          code: parsed.code || "MONIME_INITIATION_FAILED",
-          message: parsed.message || resJson.message || "MoniMe payment initiation failed",
-          statusCode: response.status,
-          error: parsed.message || resJson.message,
+          code: "GATEWAY_ERROR",
+          message: rawMsg,
+          statusCode: responseStatus,
+          error: rawMsg,
           rawError: resJson,
         };
       }
 
-      const resData = resJson.data ?? resJson;
+      const resData = resJson?.data ?? resJson ?? {};
       const checkoutUrl =
         resData.checkout_url ?? resData.link ?? resData.paymentUrl ?? "";
       const paymentId = resData.id ?? resData.paymentId ?? reference;
@@ -3416,11 +3457,15 @@ export const initiateMoniMePayment = action({
         provider: providerSlug,
       };
     } catch (err: any) {
-      logGatewayError(500, err, payload);
+      console.error("[MoniMe Network Error] Outbound fetch to MoniMe failed:", err);
+      logGatewayError(500, err, {
+        ...payload,
+        customer: { ...customerPayload, phone: "[REDACTED]" },
+      });
       return {
         success: false,
-        code: "NETWORK_ERROR",
-        message: `MoniMe connection failed: ${err.message ?? err}`,
+        code: "GATEWAY_UNREACHABLE",
+        message: `MoniMe gateway connection failed: ${err.message ?? err}`,
         error: err.message ?? String(err),
       };
     }

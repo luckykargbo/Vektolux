@@ -287,11 +287,13 @@ class PaymentMethodsService {
   /// Calls `payments:initiateMoniMePayment` action and returns checkoutUrl, ussdPrompt, transactionId.
   Future<Map<String, dynamic>> initiateMoniMePayment({
     required double amount,
-    String currency = 'SLE',
-    required String customerPhone,
+    String? phoneNumber,
+    String? customerPhone,
     required String provider, // "orange", "africell", "qmoney"
-    required String userId,
+    String? email,
     String? customerEmail,
+    String? userId,
+    String currency = 'SLE',
     String? customerName,
     String? description,
     String? bookingId,
@@ -299,17 +301,24 @@ class PaymentMethodsService {
     String? reContractId,
     String? returnUrl,
   }) async {
+    final activePhone = (phoneNumber != null && phoneNumber.trim().isNotEmpty)
+        ? phoneNumber.trim()
+        : (customerPhone?.trim() ?? '');
+    final activeEmail = (email != null && email.trim().isNotEmpty)
+        ? email.trim()
+        : (customerEmail?.trim());
+
     try {
       final res = await _client.action(
         'payments:initiateMoniMePayment',
         args: {
           'amount': amount,
-          'currency': currency,
-          'customerPhone': customerPhone,
+          'phoneNumber': activePhone,
           'provider': provider,
-          'userId': userId,
-          if (customerEmail != null && customerEmail.isNotEmpty)
-            'customerEmail': customerEmail,
+          if (activeEmail != null && activeEmail.isNotEmpty)
+            'email': activeEmail,
+          'currency': currency,
+          if (userId != null && userId.isNotEmpty) 'userId': userId,
           if (customerName != null && customerName.isNotEmpty)
             'customerName': customerName,
           if (description != null && description.isNotEmpty)
@@ -333,7 +342,7 @@ class PaymentMethodsService {
             'success': true,
             'code': val['code']?.toString() ?? 'PAYMENT_INITIATED',
             'message': val['message']?.toString() ??
-                'Push prompt sent to $customerPhone. Please approve on your phone.',
+                'Push prompt sent to $activePhone. Please approve on your phone.',
             'transactionId': val['transactionId']?.toString() ??
                 val['reference']?.toString() ??
                 '',

@@ -5224,14 +5224,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
               setModalState(() => isProcessing = true);
               try {
                 final pName = providerLabels[selectedTopUpProvider] ?? 'Mobile Money';
+                final uEmail = user?.email.trim();
+                final uName = user?.name.trim();
                 final result = await PaymentMethodsService.instance.initiateMoniMePayment(
                   amount: amt,
                   currency: 'SLE',
-                  customerPhone: activePhoneNumber,
+                  phoneNumber: activePhoneNumber,
                   provider: selectedTopUpProvider, // "orange", "africell", "qmoney"
                   userId: user?.id ?? '',
-                  customerEmail: user?.email ?? 'user@vektolux.com',
-                  customerName: user?.name ?? 'Vektolux Customer',
+                  email: (uEmail != null && uEmail.isNotEmpty) ? uEmail : null,
+                  customerName: (uName != null && uName.isNotEmpty) ? uName : null,
                   description: 'Escrow Wallet Top-Up — SLE $amt via $pName',
                 );
 
