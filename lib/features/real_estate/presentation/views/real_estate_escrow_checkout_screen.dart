@@ -20,6 +20,7 @@ import '../../../../core/theme/components/vx_button.dart';
 import '../../../../core/services/carrier_detection_service.dart';
 import '../../../../core/widgets/universal_phone_input.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
+import 'package:vektolux/features/profile/presentation/views/widgets/ussd_payment_sheet.dart';
 import '../../domain/entities/property_listing_entity.dart';
 import 'real_estate_escrow_tracking_screen.dart';
 
@@ -204,17 +205,34 @@ class _RealEstateEscrowCheckoutScreenState
         if (mounted) {
           if (monimeRes.success) {
             final resData = monimeRes.value is Map ? monimeRes.value as Map<String, dynamic> : {};
-            final prompt = resData['ussdPrompt']?.toString() ??
-                resData['message']?.toString() ??
-                'Payment prompt dispatched to your phone.';
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('✓ $prompt'), backgroundColor: AppColors.emerald),
-            );
+            final ref = resData['reference']?.toString() ?? resData['transactionId']?.toString() ?? '';
+            final rawUssd = resData['ussdCode']?.toString() ?? resData['dialCode']?.toString() ?? '';
+            final carrierDial = rawUssd.isNotEmpty
+                ? rawUssd
+                : (carrier.providerSlug == 'orange'
+                    ? '*144#'
+                    : (carrier.providerSlug == 'africell' ? '*161#' : '*715#'));
 
             final checkoutUrl = resData['checkoutUrl']?.toString() ?? '';
             if (checkoutUrl.startsWith('http')) {
-              await launchUrl(Uri.parse(checkoutUrl), mode: LaunchMode.inAppBrowserView);
+              final uri = Uri.tryParse(checkoutUrl);
+              if (uri != null && await canLaunchUrl(uri)) {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              }
+            }
+
+            // Trigger native USSD sheet with one-tap dialer and real-time status polling
+            if (mounted) {
+              await UssdPaymentSheet.show(
+                context,
+                dialCode: carrierDial,
+                reference: ref,
+                amount: _totalEscrowInflow,
+                serviceFee: 0.0,
+                serviceProvider: carrier.displayName,
+                recipient: normalizedPhone,
+                transactionType: 'Real Estate Escrow Deposit',
+              );
             }
           }
 

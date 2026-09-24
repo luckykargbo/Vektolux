@@ -34,6 +34,7 @@ import '../../../../core/services/payment_methods_service.dart';
 import '../../../../core/services/carrier_detection_service.dart';
 import '../../../../core/widgets/universal_phone_input.dart';
 import '../../../../core/models/payment_account.dart';
+import 'widgets/ussd_payment_sheet.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -5333,26 +5334,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                 if (result['success'] == true) {
                   final checkoutUrl = result['checkoutUrl'] as String? ?? '';
-                  if (checkoutUrl.isNotEmpty) {
+                  final ref = result['reference'] as String? ?? result['transactionId'] as String? ?? '';
+                  final rawUssd = result['ussdCode'] as String? ?? result['dialCode'] as String? ?? '';
+                  final carrierDial = rawUssd.isNotEmpty
+                      ? rawUssd
+                      : (carrierSlug == 'orange'
+                          ? '*144#'
+                          : (carrierSlug == 'africell' ? '*161#' : '*715#'));
+
+                  if (modalCtx.mounted) Navigator.of(modalCtx).pop();
+
+                  if (checkoutUrl.isNotEmpty && checkoutUrl.startsWith('http')) {
                     final uri = Uri.tryParse(checkoutUrl);
                     if (uri != null && await canLaunchUrl(uri)) {
                       await launchUrl(uri, mode: LaunchMode.externalApplication);
                     }
                   }
-                  if (modalCtx.mounted) Navigator.of(modalCtx).pop();
-                  _fetchWalletData();
+
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          result['message'] as String? ??
-                              'Push prompt sent to ${_formatPhoneDisplay(activePhoneNumber)} via $pName! Approve with your PIN to complete top-up.',
-                        ),
-                        backgroundColor: AppColors.emeraldDark,
-                        behavior: SnackBarBehavior.floating,
-                        duration: const Duration(seconds: 6),
-                      ),
+                    await UssdPaymentSheet.show(
+                      context,
+                      dialCode: carrierDial,
+                      reference: ref,
+                      amount: amt,
+                      serviceFee: 0.0,
+                      serviceProvider: pName,
+                      recipient: _formatPhoneDisplay(normalizedPhone),
+                      transactionType: 'Wallet Deposit',
+                      onPaymentCompleted: () {
+                        _fetchWalletData();
+                      },
                     );
+                    _fetchWalletData();
                   }
                 } else {
                   final code = result['code'] as String? ?? 'PAYMENT_FAILED';

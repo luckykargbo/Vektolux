@@ -3706,6 +3706,7 @@ export const initiateMoniMePayment = action({
         reference,
         checkoutUrl,
         ussdPrompt,
+        ussdCode: resData.ussdCode ?? resData.dialCode ?? "",
         status: "pending",
         provider: providerSlug,
       };
@@ -3719,6 +3720,56 @@ export const initiateMoniMePayment = action({
         error: err.message ?? String(err),
       };
     }
+  },
+});
+
+/**
+ * Query payment transaction status by reference.
+ * Real-time polling endpoint for USSD payment bottom sheet.
+ */
+export const getPaymentStatus = query({
+  args: {
+    reference: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // 1. Check by transactionId
+    const tx = await ctx.db
+      .query("transactions")
+      .withIndex("by_transaction_id", (q) => q.eq("transactionId", args.reference))
+      .first();
+
+    if (tx) {
+      return {
+        found: true,
+        status: tx.status, // "pending", "completed", "failed"
+        amount: tx.amount,
+        currency: tx.currency,
+        updatedAt: tx.updatedAt,
+      };
+    }
+
+    // 2. Fallback check across recent transactions
+    const fallback = await ctx.db
+      .query("transactions")
+      .filter((q) =>
+        q.or(
+          q.eq(q.field("gatewayReference"), args.reference),
+          q.eq(q.field("transactionId"), args.reference)
+        )
+      )
+      .first();
+
+    if (fallback) {
+      return {
+        found: true,
+        status: fallback.status,
+        amount: fallback.amount,
+        currency: fallback.currency,
+        updatedAt: fallback.updatedAt,
+      };
+    }
+
+    return { found: false, status: "pending" };
   },
 });
 

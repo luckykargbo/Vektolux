@@ -349,6 +349,7 @@ class PaymentMethodsService {
                 '',
             'checkoutUrl': val['checkoutUrl']?.toString() ?? '',
             'ussdPrompt': val['ussdPrompt']?.toString() ?? '',
+            'ussdCode': val['ussdCode']?.toString() ?? val['dialCode']?.toString() ?? '',
             'reference': val['reference']?.toString() ?? '',
             'provider': val['provider']?.toString() ?? provider,
           };
