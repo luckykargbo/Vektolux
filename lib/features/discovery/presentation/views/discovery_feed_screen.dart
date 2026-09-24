@@ -12,7 +12,6 @@ import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/safe_parser.dart';
 import '../../../../core/widgets/branded_media_fallback.dart';
-import '../../../auth/domain/entities/user_entity.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
@@ -122,11 +121,8 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
   Widget build(BuildContext context) {
     return BlocBuilder<AuthBloc, AuthState>(
       builder: (context, authState) {
-        final role = authState.user?.role;
-        final canCreateListing = role == UserRole.agent ||
-            role == UserRole.merchant ||
-            role == UserRole.driver ||
-            role == UserRole.admin;
+        final user = authState.user;
+        final canCreateListing = user?.hasVerifiedSellerStorefront == true;
 
         return Scaffold(
           backgroundColor: AppColors.gray50,

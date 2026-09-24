@@ -51,12 +51,29 @@ export async function requireVerifiedSeller(
     throw new Error("Session expired or invalid. Please authenticate again.");
   }
 
-  // 4. Verification Check: Agents/Sellers must be approved or verified
-  const isVerified = user.isVerified === true;
-  const status = user.verificationStatus ?? (isVerified ? "verified" : "unverified");
+  // 4. Role & Seller Verification Check:
+  // Standard clients/buyers must NOT publish listings unless approved as a verified seller/dealer.
+  const isSellerRole =
+    user.role === "agent" ||
+    user.role === "merchant" ||
+    user.role === "seller" ||
+    user.role === "dealer" ||
+    user.role === "admin";
 
-  if (!isVerified || (status !== "verified" && status !== "approved")) {
-    throw new SellerNotVerifiedException(status);
+  const isVerifiedSeller = Boolean(
+    user.isVerifiedSeller === true ||
+    user.isVerifiedAgent === true ||
+    user.isVerifiedMerchant === true ||
+    (isSellerRole &&
+      (user.isVerified === true ||
+        user.verificationStatus === "verified" ||
+        user.verificationStatus === "approved"))
+  );
+
+  if (!isVerifiedSeller && user.role !== "admin") {
+    throw new SellerNotVerifiedException(
+      user.verificationStatus ?? "unverified_seller"
+    );
   }
 
   return {

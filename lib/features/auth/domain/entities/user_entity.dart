@@ -80,6 +80,7 @@ class UserEntity extends Equatable {
   final String? kycStatus;
   final String? address;
   final String? region;
+  final bool isVerifiedSeller;
 
   const UserEntity({
     required this.id,
@@ -88,6 +89,7 @@ class UserEntity extends Equatable {
     required this.phone,
     required this.role,
     this.isVerified = false,
+    this.isVerifiedSeller = false,
     this.avatarUrl,
     this.walletAddress,
     this.sessionToken,
@@ -117,9 +119,24 @@ class UserEntity extends Equatable {
 
   /// Role permission helpers for client isolation & sandbox enforcement
   bool get isNormalClient => role == UserRole.client;
-  bool get canPostRealEstate => (role == UserRole.agent && isApprovedVerification) || role == UserRole.admin;
-  bool get canPostVehicle => (role == UserRole.merchant && isApprovedVerification) || role == UserRole.admin;
-  bool get canPostAnyListing => canPostRealEstate || canPostVehicle;
+  bool get isSellerOrDealer =>
+      role == UserRole.agent || role == UserRole.merchant || role == UserRole.admin;
+
+  /// Only users with verified seller/dealer status should display storefronts or publish public listings
+  bool get hasVerifiedSellerStorefront =>
+      isVerifiedSeller || (isSellerOrDealer && isApprovedVerification);
+
+  bool get canPostRealEstate =>
+      (isVerifiedSeller && (role == UserRole.agent || role == UserRole.client)) ||
+      (role == UserRole.agent && isApprovedVerification) ||
+      role == UserRole.admin;
+
+  bool get canPostVehicle =>
+      (isVerifiedSeller && (role == UserRole.merchant || role == UserRole.client)) ||
+      (role == UserRole.merchant && isApprovedVerification) ||
+      role == UserRole.admin;
+
+  bool get canPostAnyListing => hasVerifiedSellerStorefront;
 
   UserEntity copyWith({
     String? id,
@@ -128,6 +145,7 @@ class UserEntity extends Equatable {
     String? phone,
     UserRole? role,
     bool? isVerified,
+    bool? isVerifiedSeller,
     String? avatarUrl,
     String? walletAddress,
     String? sessionToken,
@@ -153,6 +171,7 @@ class UserEntity extends Equatable {
       phone: phone ?? this.phone,
       role: role ?? this.role,
       isVerified: isVerified ?? this.isVerified,
+      isVerifiedSeller: isVerifiedSeller ?? this.isVerifiedSeller,
       avatarUrl: avatarUrl ?? this.avatarUrl,
       walletAddress: walletAddress ?? this.walletAddress,
       sessionToken: sessionToken ?? this.sessionToken,
@@ -181,6 +200,7 @@ class UserEntity extends Equatable {
         phone,
         role,
         isVerified,
+        isVerifiedSeller,
         avatarUrl,
         walletAddress,
         sessionToken,

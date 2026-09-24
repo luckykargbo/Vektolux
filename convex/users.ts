@@ -11,6 +11,44 @@ import { userRole } from "./schema";
 //                        GET USER BY ID
 // ═══════════════════════════════════════════════════════════════════════
 
+/**
+ * Helper to determine if a user has verified seller / dealership status.
+ * Standard clients/buyers must NOT receive seller status unless approved.
+ */
+export function isUserVerifiedSeller(user: {
+  role?: string;
+  isVerifiedSeller?: boolean;
+  isVerifiedAgent?: boolean;
+  isVerifiedMerchant?: boolean;
+  isVerified?: boolean;
+  verificationStatus?: string;
+  verificationBadge?: string;
+}): boolean {
+  if (user.isVerifiedSeller === true) return true;
+  if (user.isVerifiedAgent === true) return true;
+  if (user.isVerifiedMerchant === true) return true;
+
+  const isApproved =
+    user.isVerified === true ||
+    user.verificationStatus === "VERIFIED" ||
+    user.verificationStatus === "verified" ||
+    user.verificationStatus === "approved";
+
+  const sellerRoles = [
+    "seller",
+    "merchant",
+    "agent",
+    "dealer",
+    "Vehicle Merchant",
+    "Real Estate Agent",
+    "admin",
+  ];
+  if (isApproved && user.role && sellerRoles.includes(user.role)) {
+    return true;
+  }
+  return false;
+}
+
 export const getUserById = query({
   args: {
     userId: v.string(),
@@ -24,6 +62,7 @@ export const getUserById = query({
       role: v.string(),
       isVerified: v.boolean(),
       isActive: v.boolean(),
+      isVerifiedSeller: v.optional(v.boolean()),
       avatarUrl: v.optional(v.string()),
       bio: v.optional(v.string()),
       address: v.optional(v.string()),
@@ -50,6 +89,7 @@ export const getUserById = query({
         role: user.role,
         isVerified: user.isVerified,
         isActive: user.isActive,
+        isVerifiedSeller: isUserVerifiedSeller(user),
         avatarUrl: user.avatarUrl,
         bio: user.bio,
         address: user.address,
@@ -573,6 +613,8 @@ export const getUserProfile = query({
     const user = await ctx.db.get(args.userId);
     if (!user) return null;
 
+    const isVerifiedSeller = isUserVerifiedSeller(user);
+
     return {
       _id: user._id,
       name: user.name,
@@ -585,6 +627,8 @@ export const getUserProfile = query({
       followersCount: user.followersCount || 0,
       followingCount: user.followingCount || 0,
       isVerified: user.isVerified,
+      isVerifiedSeller,
+      canPublishListings: isVerifiedSeller || user.role === "admin",
       kycStatus: user.kycStatus,
     };
   },
@@ -702,6 +746,8 @@ export const getWalletProfile = query({
       user.verificationStatus === "verified" ||
       user.verificationStatus === "approved";
 
+    const isVerifiedSeller = isUserVerifiedSeller(user);
+
     return {
       userId: user._id as string,
       fullName: user.name,
@@ -713,12 +759,116 @@ export const getWalletProfile = query({
       region: user.region ?? null,
       verificationStatus: user.verificationStatus ?? (isVerifiedCitizen ? "VERIFIED" : "UNVERIFIED"),
       verificationBadge: user.verificationBadge ?? (isVerifiedCitizen ? "VERIFIED CITIZEN ID • ESCROW ENABLED" : "UNVERIFIED"),
+      isVerifiedSeller,
+      canPublishListings: isVerifiedSeller || user.role === "admin",
       walletBalance: wallet?.availableBalance ?? 0.0,
       lockedEscrowBalance: wallet?.escrowBalance ?? 0.0,
       currency: "SLE",
       activeEscrowDeals: activeDeals,
       qrPayload,
     };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                 SELLER & DEALERSHIP VERIFICATION MUTATIONS
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Allows a client/buyer to apply for Verified Seller / Dealership status.
+ */
+export const applyForSellerVerification = mutation({
+  args: {
+    userId: v.string(),
+    sellerType: v.union(
+      v.literal("real_estate"),
+      v.literal("dealership"),
+      v.literal("vendor"),
+      v.literal("individual")
+    ),
+    businessName: v.optional(v.string()),
+    tinNumber: v.optional(v.string()),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    message: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    let user = null;
+    const userNorm = ctx.db.normalizeId("users", args.userId);
+    if (userNorm) user = await ctx.db.get(userNorm);
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_sessionToken", (q) => q.eq("sessionToken", args.userId))
+        .first();
+    }
+    if (!user) return { success: false, message: "User not found" };
+
+    const targetRole = args.sellerType === "real_estate" ? "agent" : "merchant";
+
+    await ctx.db.patch(user._id, {
+      sellerType: args.sellerType,
+      businessName: args.businessName ?? user.businessName,
+      tinNumber: args.tinNumber ?? user.tinNumber,
+      updatedAt: Date.now(),
+    });
+
+    await ctx.db.insert("role_applications", {
+      userId: user._id,
+      targetRole,
+      businessName: args.businessName,
+      tinNumber: args.tinNumber,
+      documentUrls: [],
+      status: "pending",
+      updatedAt: Date.now(),
+    });
+
+    return {
+      success: true,
+      message: "Seller verification application submitted. Our team will review within 24 hours.",
+    };
+  },
+});
+
+/**
+ * Admin action: Approve seller/dealer verification.
+ */
+export const approveSellerVerification = mutation({
+  args: {
+    userId: v.string(),
+    sellerType: v.optional(
+      v.union(
+        v.literal("real_estate"),
+        v.literal("dealership"),
+        v.literal("vendor"),
+        v.literal("individual")
+      )
+    ),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    let user = null;
+    const userNorm = ctx.db.normalizeId("users", args.userId);
+    if (userNorm) user = await ctx.db.get(userNorm);
+    if (!user) return false;
+
+    const sType = args.sellerType ?? user.sellerType ?? "vendor";
+    const role = sType === "real_estate" ? "agent" : "merchant";
+
+    await ctx.db.patch(user._id, {
+      isVerifiedSeller: true,
+      isVerified: true,
+      verificationStatus: "verified",
+      verificationBadge: "GREEN_TICK",
+      role,
+      activeRole: role,
+      sellerType: sType,
+      sellerApprovedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    return true;
   },
 });
 

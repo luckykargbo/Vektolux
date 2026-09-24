@@ -250,6 +250,17 @@ class _RealEstateMarketplaceScreenState
       return;
     }
 
+    if (!user.canPostRealEstate) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Verified Real Estate Agent or Seller status required to publish properties.'),
+          backgroundColor: AppColors.obsidian,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     final res = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => CreateListingScreen(

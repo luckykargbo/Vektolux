@@ -171,6 +171,17 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
       return;
     }
 
+    if (!user.canPostVehicle) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Verified Auto Dealer or Seller status required to list vehicles.'),
+          backgroundColor: AppColors.obsidian,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     final res = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => CreateListingScreen(

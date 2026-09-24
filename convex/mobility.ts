@@ -17,6 +17,7 @@ import {
   commercialVehicleStatus,
 } from "./schema";
 import { encodeGeohash } from "./lib/geo";
+import { requireVerifiedSeller } from "./middleware";
 
 // ═══════════════════════════════════════════════════════════════════════
 //                 REGISTER COMMERCIAL VEHICLE LISTING
@@ -56,6 +57,9 @@ export const registerVehicleListing = mutation({
     message: v.string(),
   }),
   handler: async (ctx, args) => {
+    // Enforce verified seller or dealer status
+    await requireVerifiedSeller(ctx, args.ownerId, args.sessionToken);
+
     const userId = ctx.db.normalizeId("users", args.ownerId);
     if (!userId) {
       throw new Error("Invalid owner user ID.");
@@ -432,6 +436,9 @@ export const createVehicleListing = mutation({
   },
   returns: v.string(),
   handler: async (ctx, args) => {
+    // Enforce verified seller or dealer status
+    await requireVerifiedSeller(ctx, args.ownerId, args.sessionToken);
+
     const userId = ctx.db.normalizeId("users", args.ownerId);
     if (!userId) throw new Error("Invalid owner user ID.");
 

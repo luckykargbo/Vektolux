@@ -27,6 +27,8 @@ import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/my_listings_screen.dart';
 import '../../../auth/presentation/views/pending_verification_screen.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
+import '../../../mobility/presentation/views/my_escrow_orders_screen.dart';
+import '../../../real_estate/presentation/views/my_real_estate_escrows_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/services/payment_methods_service.dart';
 import '../../../../core/models/payment_account.dart';
@@ -1221,10 +1223,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final userRegion = user?.region;
         final userAddress = user?.address;
         final role = user?.role ?? UserRole.client;
-        final isVendor = role == UserRole.agent ||
+        final hasSellerStorefront = user?.hasVerifiedSellerStorefront == true || role == UserRole.admin;
+        final isVendor = (role == UserRole.agent ||
             role == UserRole.merchant ||
             role == UserRole.driver ||
-            role == UserRole.admin;
+            role == UserRole.admin) && hasSellerStorefront;
 
         return Scaffold(
           backgroundColor: AppColors.gray50,
@@ -1422,8 +1425,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                 const SizedBox(height: 18),
 
-                // ── 1A. Public Creator Profile Card ──
-                if (user != null) ...[
+                // ── 1A. Public Creator Profile Card (Verified Sellers/Dealers Only) ──
+                if (hasSellerStorefront && user != null) ...[
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -1524,67 +1527,119 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: 18),
                 ],
 
-                // ── 1C. My Posts & Marketplace Listings ─────────────
-                _buildSectionHeader('MY POSTS & MARKETPLACE LISTINGS'),
-                Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.white,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: Column(
-                    children: [
-                      _buildSettingsTile(
-                        icon: Icons.inventory_2_outlined,
-                        title: 'My Published Listings',
-                        subtitle: 'View, edit details, or delete & archive your posts',
-                        trailing: const Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          size: 14,
-                          color: AppColors.gray400,
+                // ── 1C. My Posts & Marketplace Listings (Verified Sellers Only) ──
+                if (hasSellerStorefront) ...[
+                  _buildSectionHeader('MY POSTS & MARKETPLACE LISTINGS'),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Column(
+                      children: [
+                        _buildSettingsTile(
+                          icon: Icons.inventory_2_outlined,
+                          title: 'My Published Listings',
+                          subtitle: 'View, edit details, or delete & archive your posts',
+                          trailing: const Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            size: 14,
+                            color: AppColors.gray400,
+                          ),
+                          onTap: () {
+                            if (user != null) {
+                              final client = context.read<ConvexClientWrapper>();
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => MyListingsScreen(
+                                    convexClient: client,
+                                    currentUser: user,
+                                  ),
+                                ),
+                              );
+                            }
+                          },
                         ),
-                        onTap: () {
-                          if (user != null) {
-                            final client = context.read<ConvexClientWrapper>();
+                        const Divider(height: 1, indent: 56),
+                        _buildSettingsTile(
+                          icon: Icons.add_business_outlined,
+                          title: 'Create New Listing',
+                          subtitle: 'Post a real estate property or vehicle for sale',
+                          trailing: const Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            size: 14,
+                            color: AppColors.gray400,
+                          ),
+                          onTap: () {
+                            if (user != null) {
+                              final client = context.read<ConvexClientWrapper>();
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => CreateListingScreen(
+                                    convexClient: client,
+                                    currentUser: user,
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                ] else ...[
+                  // ── Dedicated Buyer Activity & Escrows View for Standard Buyers ──
+                  _buildSectionHeader('MY ORDERS & ESCROW ACTIVITY'),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Column(
+                      children: [
+                        _buildSettingsTile(
+                          icon: Icons.directions_car_outlined,
+                          title: 'Vehicle Escrow Orders',
+                          subtitle: 'Track vehicle purchases, delivery & rental escrows',
+                          trailing: const Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            size: 14,
+                            color: AppColors.gray400,
+                          ),
+                          onTap: () {
                             Navigator.of(context).push(
                               MaterialPageRoute(
-                                builder: (_) => MyListingsScreen(
-                                  convexClient: client,
-                                  currentUser: user,
-                                ),
+                                builder: (_) => const MyEscrowOrdersScreen(),
                               ),
                             );
-                          }
-                        },
-                      ),
-                      const Divider(height: 1, indent: 56),
-                      _buildSettingsTile(
-                        icon: Icons.add_business_outlined,
-                        title: 'Create New Listing',
-                        subtitle: 'Post a real estate property or vehicle for sale',
-                        trailing: const Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          size: 14,
-                          color: AppColors.gray400,
+                          },
                         ),
-                        onTap: () {
-                          if (user != null) {
-                            final client = context.read<ConvexClientWrapper>();
+                        const Divider(height: 1, indent: 56),
+                        _buildSettingsTile(
+                          icon: Icons.apartment_outlined,
+                          title: 'Real Estate Escrows & Passes',
+                          subtitle: 'Property viewing passes & tenancy lease agreements',
+                          trailing: const Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            size: 14,
+                            color: AppColors.gray400,
+                          ),
+                          onTap: () {
                             Navigator.of(context).push(
                               MaterialPageRoute(
-                                builder: (_) => CreateListingScreen(
-                                  convexClient: client,
-                                  currentUser: user,
-                                ),
+                                builder: (_) => const MyRealEstateEscrowsScreen(),
                               ),
                             );
-                          }
-                        },
-                      ),
-                    ],
+                          },
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 18),
+                  const SizedBox(height: 18),
+                ],
 
                 // ── 1.5 Master Admin Portal (If Platform Administrator) ──
                 if (role == UserRole.admin) ...[
@@ -6124,7 +6179,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildVerificationBadge(UserEntity? user) {
-    final bool isVerified = user?.isVerified == true || user?.isApprovedVerification == true;
+    final bool isSellerVerified =
+        user?.hasVerifiedSellerStorefront == true || user?.role == UserRole.admin;
+    final bool isCitizenVerified =
+        user?.isVerified == true || user?.isApprovedVerification == true;
     final bool isPending = user?.isPendingVerification == true ||
         user?.kycStatus == 'pending' ||
         user?.kycStatus == 'PENDING_VERIFICATION';
@@ -6138,12 +6196,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
     IconData icon;
     String label;
 
-    if (isVerified) {
+    if (isSellerVerified) {
       bgColor = AppColors.emeraldSurface;
       borderColor = AppColors.emerald.withValues(alpha: 0.3);
       textColor = AppColors.emeraldDark;
       icon = Icons.check_circle_rounded;
-      label = 'VERIFIED';
+      label = 'VERIFIED SELLER';
+    } else if (isCitizenVerified) {
+      bgColor = const Color(0xFFEFF6FF);
+      borderColor = const Color(0xFF93C5FD);
+      textColor = const Color(0xFF1D4ED8);
+      icon = Icons.shield_outlined;
+      label = 'BUYER • KYC';
     } else if (isPending) {
       bgColor = AppColors.amberSurface;
       borderColor = AppColors.amber.withValues(alpha: 0.4);
@@ -6161,7 +6225,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       borderColor = AppColors.gray300;
       textColor = AppColors.gray600;
       icon = Icons.shield_outlined;
-      label = 'UNVERIFIED';
+      label = 'BUYER';
     }
 
     return Container(

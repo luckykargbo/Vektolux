@@ -651,20 +651,21 @@ class _MyListingsScreenState extends State<MyListingsScreen>
             icon: const Icon(Icons.refresh_rounded, color: AppColors.obsidian),
             onPressed: _loadMyListings,
           ),
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline_rounded, color: AppColors.emeraldDark),
-            tooltip: 'Create New Post',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => CreateListingScreen(
-                    convexClient: widget.convexClient,
-                    currentUser: widget.currentUser,
+          if (widget.currentUser.hasVerifiedSellerStorefront)
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline_rounded, color: AppColors.emeraldDark),
+              tooltip: 'Create New Post',
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => CreateListingScreen(
+                      convexClient: widget.convexClient,
+                      currentUser: widget.currentUser,
+                    ),
                   ),
-                ),
-              ).then((_) => _loadMyListings());
-            },
-          ),
+                ).then((_) => _loadMyListings());
+              },
+            ),
         ],
         bottom: TabBar(
           controller: _tabController,
@@ -1025,26 +1026,28 @@ class _MyListingsScreenState extends State<MyListingsScreen>
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 13, color: AppColors.gray600, height: 1.4),
             ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: Text(isProperty ? 'Post a Property' : 'Post a Vehicle'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.emerald,
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => CreateListingScreen(
-                      convexClient: widget.convexClient,
-                      currentUser: widget.currentUser,
+            if (widget.currentUser.hasVerifiedSellerStorefront) ...[
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: Text(isProperty ? 'Post a Property' : 'Post a Vehicle'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.emerald,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => CreateListingScreen(
+                        convexClient: widget.convexClient,
+                        currentUser: widget.currentUser,
+                      ),
                     ),
-                  ),
-                ).then((_) => _loadMyListings());
-              },
-            ),
+                  ).then((_) => _loadMyListings());
+                },
+              ),
+            ],
           ],
         ),
       ),

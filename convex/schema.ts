@@ -16,6 +16,7 @@ export const userRole = v.union(
   v.literal("driver"),
   v.literal("buyer"),
   v.literal("seller"),
+  v.literal("dealer"),
   v.literal("property_owner"),
   v.literal("admin"),
   v.literal("Merchant"),
@@ -399,6 +400,16 @@ export default defineSchema({
     driver_status: v.optional(v.union(v.literal("offline"), v.literal("online"), v.literal("busy"))),
     isVerifiedAgent: v.optional(v.boolean()),
     isVerifiedMerchant: v.optional(v.boolean()),
+    isVerifiedSeller: v.optional(v.boolean()),
+    sellerType: v.optional(
+      v.union(
+        v.literal("real_estate"),
+        v.literal("dealership"),
+        v.literal("vendor"),
+        v.literal("individual")
+      )
+    ),
+    sellerApprovedAt: v.optional(v.number()),
     driverVehicleId: v.optional(v.string()),
 
     // Social & Profile
@@ -428,6 +439,7 @@ export default defineSchema({
     .index("by_phone", ["phone"])
     .index("by_role", ["role"])
     .index("by_role_active", ["role", "isActive"])
+    .index("by_verified_seller", ["isVerifiedSeller"])
     .index("by_external_auth", ["authProvider", "externalAuthId"])
     .index("by_geohash", ["currentGeohash"])
     .index("by_verification_status", ["verificationStatus"])

@@ -90,14 +90,16 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
 
   /// True when the user has all required verifications to publish listings.
   bool get _canPublish {
+    if (widget.currentUser.role == UserRole.admin) return true;
     final role = widget.currentUser.role;
     if (role == UserRole.agent || role == UserRole.merchant) {
-      // Agents/merchants need approved business verification (identity KYC optional)
+      // Agents/merchants need approved business verification or verified seller status
       return _businessVerificationStatus == 'approved' ||
-          _businessVerificationStatus == 'verified';
+          _businessVerificationStatus == 'verified' ||
+          widget.currentUser.isVerifiedSeller;
     }
-    // Clients only need identity KYC
-    return _isUserVerified;
+    // Standard clients/buyers must be an approved verified seller to publish listings
+    return _isUserVerified && widget.currentUser.isVerifiedSeller;
   }
 
   /// Explanation string for the gate banner.

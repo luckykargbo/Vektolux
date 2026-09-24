@@ -14,6 +14,9 @@ import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/vx_network_image.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
+import '../../../mobility/presentation/views/my_escrow_orders_screen.dart';
+import '../../../real_estate/presentation/views/my_real_estate_escrows_screen.dart';
+import '../../../profile/presentation/views/profile_screen.dart';
 
 class PublicProfileScreen extends StatefulWidget {
   final String userId;
@@ -181,146 +184,167 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     final followingCount = (_profile!['followingCount'] as num?)?.toInt() ?? 0;
     final role = _profile!['role'] as String? ?? 'client';
     final isOwnProfile = _currentUserId == widget.userId;
+    final isVerifiedSeller = _profile!['isVerifiedSeller'] == true;
 
     final propertyPosts = _posts.where((p) => p['type'] == 'property').toList();
     final vehiclePosts = _posts.where((p) => p['type'] == 'vehicle').toList();
 
-    return NestedScrollView(
-      headerSliverBuilder: (context, _) => [
-        SliverToBoxAdapter(
-          child: Container(
-            color: AppColors.surface,
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-            child: Column(
-              children: [
-                // Avatar + Follow button row
-                Row(
+    Widget headerCard = Container(
+      color: AppColors.surface,
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+      child: Column(
+        children: [
+          // Avatar + Follow button row
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 40,
+                backgroundColor: AppColors.emeraldSurface,
+                backgroundImage: avatarUrl != null
+                    ? NetworkImage(avatarUrl)
+                    : null,
+                child: avatarUrl == null
+                    ? Text(
+                        name.isNotEmpty ? name[0].toUpperCase() : '?',
+                        style: const TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.emeraldDark,
+                        ),
+                      )
+                    : null,
+              ),
+              const SizedBox(width: 20),
+              Expanded(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    CircleAvatar(
-                      radius: 40,
-                      backgroundColor: AppColors.emeraldSurface,
-                      backgroundImage: avatarUrl != null
-                          ? NetworkImage(avatarUrl)
-                          : null,
-                      child: avatarUrl == null
-                          ? Text(
-                              name.isNotEmpty ? name[0].toUpperCase() : '?',
-                              style: const TextStyle(
-                                fontSize: 28,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.emeraldDark,
-                              ),
-                            )
-                          : null,
-                    ),
-                    const SizedBox(width: 20),
-                    Expanded(
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          _buildStatColumn(_posts.length.toString(), 'Posts'),
-                          _buildStatColumn(_formatCount(followersCount), 'Followers'),
-                          _buildStatColumn(_formatCount(followingCount), 'Following'),
-                        ],
-                      ),
-                    ),
+                    if (isVerifiedSeller)
+                      _buildStatColumn(_posts.length.toString(), 'Listings')
+                    else
+                      _buildStatColumn('Client', 'Tier'),
+                    _buildStatColumn(_formatCount(followersCount), 'Followers'),
+                    _buildStatColumn(_formatCount(followingCount), 'Following'),
                   ],
                 ),
-                const SizedBox(height: 14),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
 
-                // Name + badge + role
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          name,
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                      ),
-                      if (badge == 'GREEN_TICK') ...[
-                        const SizedBox(width: 6),
-                        const Icon(Icons.verified_rounded, size: 18, color: AppColors.emerald),
-                      ],
-                    ],
+          // Name + badge (badge only shown for verified sellers)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    name,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
                   ),
                 ),
-                if (role != 'client') ...[
-                  const SizedBox(height: 2),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      _roleName(role),
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ),
+                // Green checkmark strictly restricted to verified sellers/dealers
+                if (isVerifiedSeller &&
+                    (badge == 'GREEN_TICK' ||
+                        _profile!['sellerApprovedAt'] != null ||
+                        role == 'admin')) ...[
+                  const SizedBox(width: 6),
+                  const Icon(Icons.verified_rounded, size: 18, color: AppColors.emerald),
                 ],
-                if (bio.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      bio,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        height: 1.4,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 14),
-
-                // Follow / Unfollow button
-                if (!isOwnProfile)
-                  SizedBox(
-                    width: double.infinity,
-                    height: 40,
-                    child: FilledButton(
-                      onPressed: _isTogglingFollow ? null : _toggleFollow,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _isFollowing
-                            ? AppColors.gray200
-                            : AppColors.emerald,
-                        foregroundColor: _isFollowing
-                            ? AppColors.textPrimary
-                            : AppColors.textOnEmerald,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      child: _isTogglingFollow
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: AppColors.textSecondary,
-                              ),
-                            )
-                          : Text(
-                              _isFollowing ? 'Following' : 'Follow',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 14,
-                              ),
-                            ),
-                    ),
-                  ),
-                const SizedBox(height: 12),
               ],
             ),
           ),
-        ),
+          const SizedBox(height: 2),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              isVerifiedSeller
+                  ? _roleName(role)
+                  : 'Verified Client & Buyer',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: isVerifiedSeller ? FontWeight.w600 : FontWeight.w500,
+                color: isVerifiedSeller ? AppColors.emeraldDark : AppColors.textSecondary,
+              ),
+            ),
+          ),
+          if (bio.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                bio,
+                style: const TextStyle(
+                  fontSize: 14,
+                  height: 1.4,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
 
+          // Follow / Unfollow button
+          if (!isOwnProfile)
+            SizedBox(
+              width: double.infinity,
+              height: 40,
+              child: FilledButton(
+                onPressed: _isTogglingFollow ? null : _toggleFollow,
+                style: FilledButton.styleFrom(
+                  backgroundColor: _isFollowing
+                      ? AppColors.gray200
+                      : AppColors.emerald,
+                  foregroundColor: _isFollowing
+                      ? AppColors.textPrimary
+                      : AppColors.textOnEmerald,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: _isTogglingFollow
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors.textSecondary,
+                        ),
+                      )
+                    : Text(
+                        _isFollowing ? 'Following' : 'Follow',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
+              ),
+            ),
+          const SizedBox(height: 4),
+        ],
+      ),
+    );
+
+    // If regular buyer/client: DO NOT SHOW SELLER STOREFRONT TABS
+    if (!isVerifiedSeller) {
+      return SingleChildScrollView(
+        child: Column(
+          children: [
+            headerCard,
+            _buildBuyerProfileView(isOwnProfile),
+          ],
+        ),
+      );
+    }
+
+    // Verified Seller Storefront: Show Properties and Vehicles tabs
+    return NestedScrollView(
+      headerSliverBuilder: (context, _) => [
+        SliverToBoxAdapter(child: headerCard),
         // Tabs: Properties | Vehicles
         SliverPersistentHeader(
           pinned: true,
@@ -363,6 +387,448 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           _buildPostGrid(propertyPosts, 'property'),
           _buildPostGrid(vehiclePosts, 'vehicle'),
         ],
+      ),
+    );
+  }
+
+  Widget _buildBuyerProfileView(bool isOwnProfile) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 1. "Apply to become a Verified Seller / Dealership" Banner (if own profile)
+          if (isOwnProfile) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [AppColors.emeraldDark, Color(0xFF0F766E)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.emeraldDark.withValues(alpha: 0.25),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.storefront_rounded,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Become a Verified Seller',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Real Estate Agencies & Auto Dealerships',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Standard buyer accounts do not have public storefront listings. Apply to get verified as a dealer or agent to unlock storefront tabs, publish listings, and accept escrow settlements.',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 40,
+                    child: ElevatedButton.icon(
+                      onPressed: () => _showSellerApplicationModal(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: AppColors.emeraldDark,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      icon: const Icon(Icons.verified_rounded, size: 18),
+                      label: const Text(
+                        'Apply for Seller Verification',
+                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+          ],
+
+          // 2. Buyer Escrows & Bookings Card (if own profile)
+          if (isOwnProfile) ...[
+            const Text(
+              'MY ESCROWS & BOOKINGS',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
+                color: AppColors.gray500,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppColors.emeraldSurface,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.directions_car_rounded, color: AppColors.emeraldDark, size: 20),
+                    ),
+                    title: const Text(
+                      'Vehicle Escrow Orders',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                    ),
+                    subtitle: const Text(
+                      'Track vehicle purchase & rental escrow contracts',
+                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.gray400),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const MyEscrowOrdersScreen()),
+                      );
+                    },
+                  ),
+                  const Divider(height: 1, indent: 56),
+                  ListTile(
+                    leading: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppColors.emeraldSurface,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.apartment_rounded, color: AppColors.emeraldDark, size: 20),
+                    ),
+                    title: const Text(
+                      'Real Estate Contracts & Passes',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                    ),
+                    subtitle: const Text(
+                      'Viewing passes & property lease/purchase escrows',
+                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.gray400),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const MyRealEstateEscrowsScreen()),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+          ],
+
+          // 3. Buyer Trust & Activity Profile
+          const Text(
+            'ACCOUNT & TRUST PROFILE',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.8,
+              color: AppColors.gray500,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.shield_outlined, color: AppColors.emerald, size: 22),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Verified Client Profile',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            'Protected by Vektolux Multi-Sig Escrow protocols',
+                            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.emeraldSurface,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        'BUYER',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.emeraldDark,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (isOwnProfile) ...[
+                  const SizedBox(height: 14),
+                  const Divider(height: 1),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => ProfileScreen(currentUserId: _currentUserId),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.settings_outlined, size: 16),
+                      label: const Text('Account Details & Settings'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.textPrimary,
+                        side: const BorderSide(color: AppColors.border),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSellerApplicationModal(BuildContext context) {
+    final businessNameController = TextEditingController();
+    final tinController = TextEditingController();
+    String selectedType = 'real_estate';
+    bool isSubmitting = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => Container(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 24,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
+          decoration: const BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Apply for Seller Verification',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded),
+                      onPressed: () => Navigator.of(ctx).pop(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Unlock your public storefront, list properties and vehicles, and accept escrow payments.',
+                  style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Seller Type',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: selectedType,
+                  items: const [
+                    DropdownMenuItem(value: 'real_estate', child: Text('🏡 Real Estate Agent / Property Owner')),
+                    DropdownMenuItem(value: 'dealership', child: Text('🚗 Auto Dealership / Fleet Operator')),
+                    DropdownMenuItem(value: 'vendor', child: Text('💼 Commercial Merchant / Vendor')),
+                    DropdownMenuItem(value: 'individual', child: Text('👤 Individual Verified Seller')),
+                  ],
+                  onChanged: (val) {
+                    if (val != null) setModalState(() => selectedType = val);
+                  },
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Business or Brand Name',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: businessNameController,
+                  decoration: InputDecoration(
+                    hintText: 'e.g. Sierra Luxe Properties or Freetown Motors',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'NRA Tax ID / TIN Number (Optional)',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: tinController,
+                  decoration: InputDecoration(
+                    hintText: 'e.g. 100234890',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  ),
+                ),
+                const SizedBox(height: 22),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: FilledButton(
+                    onPressed: isSubmitting
+                        ? null
+                        : () async {
+                            final authState = context.read<AuthBloc>().state;
+                            final userId = authState.user?.id ?? _currentUserId;
+                            if (userId.isEmpty) return;
+
+                            setModalState(() => isSubmitting = true);
+                            try {
+                              final res = await widget.convexClient.mutation(
+                                'users:applyForSellerVerification',
+                                args: {
+                                  'userId': userId,
+                                  'sellerType': selectedType,
+                                  if (businessNameController.text.trim().isNotEmpty)
+                                    'businessName': businessNameController.text.trim(),
+                                  if (tinController.text.trim().isNotEmpty)
+                                    'tinNumber': tinController.text.trim(),
+                                },
+                              );
+                              if (ctx.mounted) Navigator.of(ctx).pop();
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(res.success
+                                        ? 'Application submitted! Our compliance team will review your seller credentials.'
+                                        : (res.errorMessage ?? 'Submission failed')),
+                                    backgroundColor: res.success ? AppColors.emerald : AppColors.error,
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                                _loadProfile();
+                              }
+                            } catch (e) {
+                              if (ctx.mounted) setModalState(() => isSubmitting = false);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Error submitting application: $e'),
+                                    backgroundColor: AppColors.error,
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.emerald,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: isSubmitting
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Text(
+                            'Submit Application',
+                            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                          ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
