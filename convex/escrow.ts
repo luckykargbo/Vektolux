@@ -14,6 +14,7 @@ import {
   escrowOrderStatus,
   inspectionTypeEnum,
 } from "./schema";
+import { detectSierraLeoneCarrier } from "./lib/paymentErrors";
 
 // ─── Helper: Resolve Caller User ──────────────────────────────────────
 async function resolveCallerUser(ctx: any, explicitUserId?: string): Promise<Id<"users">> {
@@ -126,8 +127,10 @@ export const initiateEscrowOrder = mutation({
     refundableDepositAmount: v.optional(v.number()),
     earnestFeeAmount: v.optional(v.number()),
     fullPurchaseAmount: v.optional(v.number()),
-    paymentProvider: v.optional(v.string()), // "ORANGE_MONEY_SL" | "AFRICELL_AFRIMONEY_SL" | "WALLET"
+    paymentRail: v.optional(v.string()), // "MOBILE_MONEY" | "BANK_TRANSFER" | "WALLET"
+    paymentProvider: v.optional(v.string()), // "ORANGE_MONEY_SL" | "AFRICELL_AFRIMONEY_SL" | "MONIME" | "WALLET" | "BANK_TRANSFER"
     paymentPhone: v.optional(v.string()),
+    bankEscrowReference: v.optional(v.string()),
     payFromWallet: v.optional(v.boolean()),
   },
   returns: v.object({
@@ -140,6 +143,9 @@ export const initiateEscrowOrder = mutation({
     split60Amount: v.number(),
     split40Amount: v.number(),
     refundableDeposit: v.number(),
+    bankEscrowReference: v.optional(v.string()),
+    paymentRail: v.optional(v.string()),
+    detectedCarrier: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
     // 1. Verify caller identity
@@ -184,9 +190,39 @@ export const initiateEscrowOrder = mutation({
     const split60 = parseFloat((netMerchant * 0.6).toFixed(2));
     const split40 = parseFloat((netMerchant * 0.4).toFixed(2));
 
-    // 3. Check wallet if paying directly from wallet
+    // Determine payment rail
+    let resolvedRail = args.paymentRail;
+    if (!resolvedRail) {
+      if (args.payFromWallet || args.paymentProvider === "WALLET") {
+        resolvedRail = "WALLET";
+      } else if (args.paymentProvider === "BANK_TRANSFER") {
+        resolvedRail = "BANK_TRANSFER";
+      } else {
+        resolvedRail = "MOBILE_MONEY";
+      }
+    }
+
+    let detectedCarrier: string | undefined;
+    if (args.paymentPhone) {
+      const carrier = detectSierraLeoneCarrier(args.paymentPhone);
+      if (carrier !== "unknown") {
+        detectedCarrier = carrier;
+      }
+    }
+
+    let bankEscrowReference = args.bankEscrowReference;
+    let bankClearingStatus: "PENDING_TRANSFER" | "CLEARED" | undefined;
+
+    if (resolvedRail === "BANK_TRANSFER") {
+      if (!bankEscrowReference) {
+        bankEscrowReference = `VKTLX-DEAL-${Math.floor(1000 + Math.random() * 9000)}`;
+      }
+      bankClearingStatus = "PENDING_TRANSFER";
+    }
+
+    // 3. Check wallet ONLY if paying directly from wallet
     let initialStatus: "PENDING_PAYMENT" | "HELD_IN_ESCROW" = "PENDING_PAYMENT";
-    if (args.payFromWallet) {
+    if (resolvedRail === "WALLET" || args.payFromWallet) {
       const renterWallet = await getOrCreateWallet(ctx, currentUserId);
       if (renterWallet.availableBalance < grossEscrow) {
         throw new Error(
@@ -226,14 +262,18 @@ export const initiateEscrowOrder = mutation({
       rentalStartDate: args.rentalStartDate,
       rentalEndDate: args.rentalEndDate,
       numberOfDays: args.numberOfDays,
-      paymentProvider: args.paymentProvider ?? (args.payFromWallet ? "WALLET" : "ORANGE_MONEY_SL"),
+      paymentProvider: args.paymentProvider ?? (resolvedRail === "WALLET" ? "WALLET" : resolvedRail === "BANK_TRANSFER" ? "BANK_TRANSFER" : "MONIME"),
       paymentPhone: args.paymentPhone,
+      paymentRail: resolvedRail,
+      bankEscrowReference,
+      bankClearingStatus,
+      detectedCarrier,
       createdAt: now,
       updatedAt: now,
     });
 
     // 5. If paid from wallet, post double-entry ledger entries
-    if (args.payFromWallet) {
+    if (resolvedRail === "WALLET" || args.payFromWallet) {
       await postLedgerTransaction(ctx, {
         code: `TX-ESCROW-WALLET-${orderCode}`,
         orderId: escrowOrderId,
@@ -265,6 +305,9 @@ export const initiateEscrowOrder = mutation({
       split60Amount: split60,
       split40Amount: split40,
       refundableDeposit,
+      bankEscrowReference,
+      paymentRail: resolvedRail,
+      detectedCarrier,
     };
   },
 });
@@ -726,6 +769,131 @@ export const confirmSlrsaTransfer = mutation({
     });
 
     return true;
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// 7B. BUYER INSPECTION APPROVAL & DEAL ESCROW RELEASE
+// ═══════════════════════════════════════════════════════════════════════
+export const releaseDealEscrowFunds = mutation({
+  args: {
+    escrowOrderId: v.id("escrow_orders"),
+    buyerPinOrConfirmation: v.optional(v.string()),
+    notes: v.optional(v.string()),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    status: v.string(),
+    amountReleased: v.number(),
+    platformFee: v.number(),
+    message: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const currentUserId = await resolveCallerUser(ctx);
+    const order = await ctx.db.get(args.escrowOrderId);
+    if (!order) throw new Error("Escrow order not found");
+
+    // Only buyer or admin can release funds
+    if (order.renterOrBuyerId !== currentUserId) {
+      const user = await ctx.db.get(currentUserId);
+      if (user?.role !== "admin") {
+        throw new Error("Only the buyer or an admin can approve inspection and release deal funds.");
+      }
+    }
+
+    if (
+      order.status !== "HELD_IN_ESCROW" &&
+      order.status !== "ESCROW_LOCKED" &&
+      order.status !== "PARTIALLY_RELEASED"
+    ) {
+      throw new Error(`Cannot release funds for order currently in status: ${order.status}`);
+    }
+
+    const now = Date.now();
+    const releaseAmount = order.netMerchantExpected;
+
+    // Credit seller available balance
+    const sellerWallet = await getOrCreateWallet(ctx, order.ownerOrSellerId);
+    await ctx.db.patch(sellerWallet._id, {
+      availableBalance: (sellerWallet.availableBalance ?? 0) + releaseAmount,
+      updatedAt: now,
+    });
+
+    // Debit buyer escrow balance
+    const buyerWallet = await getOrCreateWallet(ctx, order.renterOrBuyerId);
+    await ctx.db.patch(buyerWallet._id, {
+      escrowBalance: Math.max(0, (buyerWallet.escrowBalance ?? 0) - order.grossEscrowAmount),
+      updatedAt: now,
+    });
+
+    // Mark order settled
+    await ctx.db.patch(order._id, {
+      status: "SETTLED",
+      purchaseStage: "SETTLED",
+      split60ReleasedAmount: releaseAmount,
+      updatedAt: now,
+    });
+
+    // Post double-entry ledger transaction
+    try {
+      await postLedgerTransaction(ctx, {
+        code: `TX-DEAL-RELEASE-${order.orderCode}`,
+        orderId: order._id,
+        description: `Buyer approved inspection and released deal funds for ${order.orderCode}`,
+        entries: [
+          {
+            accountType: "CLIENT_ESCROW_LOCKED",
+            userId: order.renterOrBuyerId,
+            direction: "DEBIT",
+            amount: order.grossEscrowAmount,
+          },
+          {
+            accountType: "OWNER_AVAILABLE",
+            userId: order.ownerOrSellerId,
+            direction: "CREDIT",
+            amount: releaseAmount,
+          },
+          {
+            accountType: "PLATFORM_REVENUE_REALIZED",
+            direction: "CREDIT",
+            amount: order.platformFeeAmount,
+          },
+        ],
+      });
+    } catch (e) {
+      console.warn("Non-fatal double-entry ledger posting failure:", e);
+    }
+
+    // In-app notifications
+    try {
+      await ctx.db.insert("user_notifications", {
+        userId: order.ownerOrSellerId as string,
+        targetType: "single_user",
+        title: "Escrow Payment Released! 💰",
+        body: `Buyer has approved inspection for ${order.orderCode}. SLE ${releaseAmount.toFixed(2)} has been credited to your available balance.`,
+        read: false,
+        createdAt: now,
+      });
+
+      await ctx.db.insert("user_notifications", {
+        userId: order.renterOrBuyerId as string,
+        targetType: "single_user",
+        title: "Escrow Settled Successfully 🎉",
+        body: `You approved inspection and released payment for ${order.orderCode}. Thank you for using Vektolux Escrow.`,
+        read: false,
+        createdAt: now,
+      });
+    } catch {
+      // non-fatal
+    }
+
+    return {
+      success: true,
+      status: "SETTLED",
+      amountReleased: releaseAmount,
+      platformFee: order.platformFeeAmount,
+      message: "Deal escrow funds successfully released to seller.",
+    };
   },
 });
 

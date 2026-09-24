@@ -17,6 +17,7 @@ import {
   reMilestoneState,
   reDisputeStatus,
 } from "./schema";
+import { detectSierraLeoneCarrier } from "./lib/paymentErrors";
 
 // ─── Helper: Resolve Caller User ──────────────────────────────────────
 async function resolveCallerUser(ctx: any, explicitUserId?: string): Promise<Id<"users">> {
@@ -350,8 +351,9 @@ export const initiateRealEstateEscrow = mutation({
     cautionDepositAmount: v.optional(v.number()),
     nightsCount: v.optional(v.number()),
     leaseDurationMonths: v.optional(v.number()),
-    paymentRail: v.optional(v.string()), // ORANGE_MONEY_SL, AFRICELL_AFRIMONEY_SL, WALLET
+    paymentRail: v.optional(v.string()), // MOBILE_MONEY, BANK_TRANSFER, WALLET
     paymentPhone: v.optional(v.string()),
+    bankEscrowReference: v.optional(v.string()),
   },
   returns: v.object({
     contractId: v.string(),
@@ -363,6 +365,9 @@ export const initiateRealEstateEscrow = mutation({
     agentCommission: v.number(),
     netBeneficiaryExpected: v.number(),
     status: v.string(),
+    bankEscrowReference: v.optional(v.string()),
+    paymentRail: v.optional(v.string()),
+    detectedCarrier: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
     const currentUserId = await resolveCallerUser(ctx, args.clientId);
@@ -402,6 +407,24 @@ export const initiateRealEstateEscrow = mutation({
       cautionDeposit = 0;
     }
 
+    let resolvedRail = args.paymentRail ?? "MOBILE_MONEY";
+    let detectedCarrier: string | undefined;
+    if (args.paymentPhone) {
+      const carrier = detectSierraLeoneCarrier(args.paymentPhone);
+      if (carrier !== "unknown") {
+        detectedCarrier = carrier;
+      }
+    }
+
+    let bankEscrowReference = args.bankEscrowReference;
+    let bankClearingStatus: "PENDING_TRANSFER" | "CLEARED" | undefined;
+    if (resolvedRail === "BANK_TRANSFER") {
+      if (!bankEscrowReference) {
+        bankEscrowReference = `VKTLX-DEAL-${Math.floor(1000 + Math.random() * 9000)}`;
+      }
+      bankClearingStatus = "PENDING_TRANSFER";
+    }
+
     // Insert master contract
     const contractId = await ctx.db.insert("re_escrow_contracts", {
       contractCode,
@@ -417,7 +440,10 @@ export const initiateRealEstateEscrow = mutation({
       netBeneficiaryExpected: netBeneficiary,
       releasedBeneficiaryAmount: 0,
       refundedClientAmount: 0,
-      paymentRail: args.paymentRail ?? "ORANGE_MONEY_SL",
+      paymentRail: resolvedRail,
+      bankEscrowReference,
+      bankClearingStatus,
+      detectedCarrier,
       currentState: "FUNDS_LOCKED",
       leaseDurationMonths: args.leaseDurationMonths,
       createdAt: now,

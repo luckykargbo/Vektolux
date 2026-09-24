@@ -63,6 +63,46 @@ export function sanitizeSierraLeonePhone(raw?: string): string {
   return digits;
 }
 
+export type SierraLeoneCarrier = "orange" | "africell" | "qmoney" | "unknown";
+
+/**
+ * Automatically detects the Sierra Leone Mobile Money carrier from phone prefix.
+ *
+ * Rules:
+ * - Orange Money: prefixes 71, 72, 73, 74, 75, 76, 78, 79
+ * - Africell Afrimoney: prefixes 70, 77, 80, 88, 90, 99, 30, 33
+ * - QCell QMoney: prefixes 31, 32, 34
+ */
+export function detectSierraLeoneCarrier(raw?: string): SierraLeoneCarrier {
+  const sanitized = sanitizeSierraLeonePhone(raw);
+  if (!sanitized) return "unknown";
+
+  // When sanitized, standard Sierra Leone phone is 232 + 8 digits = 11 digits
+  let prefix = "";
+  if (sanitized.startsWith("232") && sanitized.length >= 5) {
+    prefix = sanitized.substring(3, 5);
+  } else if (sanitized.length >= 2) {
+    prefix = sanitized.substring(0, 2);
+  }
+
+  // Orange Money
+  if (["71", "72", "73", "74", "75", "76", "78", "79"].includes(prefix)) {
+    return "orange";
+  }
+
+  // Africell Afrimoney
+  if (["70", "77", "80", "88", "90", "99", "30", "33"].includes(prefix)) {
+    return "africell";
+  }
+
+  // QCell QMoney
+  if (["31", "32", "34"].includes(prefix)) {
+    return "qmoney";
+  }
+
+  return "unknown";
+}
+
 /**
  * Parses raw HTTP status code and response payload from payment gateways
  * (Moneroo, Flutterwave, Paystack, Carrier direct) into structured error codes.

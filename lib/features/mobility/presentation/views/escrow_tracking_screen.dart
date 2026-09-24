@@ -164,6 +164,67 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
     }
   }
 
+  Future<void> _handleReleaseDealFunds() async {
+    final order = _orderData?['order'] as Map<String, dynamic>?;
+    final netAmount = (order?['netMerchantExpected'] as num?)?.toDouble() ?? 0.0;
+    final currencyFmt = NumberFormat('#,##0.00');
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Approve Inspection & Release Funds'),
+        content: Text(
+          'Confirm that you have thoroughly inspected the vehicle and are satisfied.\n\nThis will release SLE ${currencyFmt.format(netAmount)} from escrow directly to the seller.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.emerald, foregroundColor: Colors.white),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Approve & Release'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isActionExecuting = true);
+    try {
+      final client = context.read<ConvexClientWrapper>();
+      final res = await client.mutation(
+        'escrow:releaseDealEscrowFunds',
+        args: {'escrowOrderId': widget.escrowOrderId},
+      );
+
+      if (res.success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✓ Inspection approved! Escrow funds released to seller.'),
+              backgroundColor: AppColors.emerald,
+            ),
+          );
+          _loadOrderDetails();
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed: ${res.errorMessage}'), backgroundColor: AppColors.error),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.error),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isActionExecuting = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -300,7 +361,7 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
             const SizedBox(height: 24),
 
             // Interactive Actions Bar
-            if (status == 'HELD_IN_ESCROW') ...[
+            if (status == 'HELD_IN_ESCROW' || status == 'ESCROW_LOCKED') ...[
               VxButton(
                 label: '1. Take Pre-Trip Photos & Complete Inspection',
                 icon: Icons.camera_alt_outlined,
@@ -318,7 +379,16 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
                 },
               ),
               const SizedBox(height: 10),
-              if (inspections.isNotEmpty)
+              if (order?['orderType'] == 'VEHICLE_PURCHASE' || inspections.isNotEmpty) ...[
+                VxButton(
+                  label: 'Approve Inspection & Release Payment to Seller',
+                  icon: Icons.verified_rounded,
+                  isLoading: _isActionExecuting,
+                  onPressed: _handleReleaseDealFunds,
+                ),
+                const SizedBox(height: 10),
+              ],
+              if (inspections.isNotEmpty && order?['orderType'] != 'VEHICLE_PURCHASE')
                 VxButton(
                   label: '2. Release 60% Handoff to Owner',
                   icon: Icons.check_circle_outline,
@@ -442,6 +512,7 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
   Color _getStatusColor(String status) {
     switch (status) {
       case 'HELD_IN_ESCROW':
+      case 'ESCROW_LOCKED':
         return const Color(0xFFD97706); // Amber
       case 'PARTIALLY_RELEASED':
         return const Color(0xFF2563EB); // Blue
@@ -449,6 +520,8 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
         return AppColors.emeraldDark;
       case 'DISPUTED':
         return AppColors.error;
+      case 'PENDING_PAYMENT':
+        return const Color(0xFF475569);
       default:
         return AppColors.gray600;
     }
@@ -457,6 +530,7 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
   IconData _getStatusIcon(String status) {
     switch (status) {
       case 'HELD_IN_ESCROW':
+      case 'ESCROW_LOCKED':
         return Icons.lock_clock_rounded;
       case 'PARTIALLY_RELEASED':
         return Icons.local_shipping_rounded;
@@ -464,6 +538,8 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
         return Icons.check_circle_rounded;
       case 'DISPUTED':
         return Icons.warning_amber_rounded;
+      case 'PENDING_PAYMENT':
+        return Icons.pending_actions_rounded;
       default:
         return Icons.info_outline_rounded;
     }
@@ -472,6 +548,7 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
   String _getStatusTitle(String status) {
     switch (status) {
       case 'HELD_IN_ESCROW':
+      case 'ESCROW_LOCKED':
         return 'Funds Secured in Escrow';
       case 'PARTIALLY_RELEASED':
         return '60% Disbursed • In Trip';
@@ -479,6 +556,8 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
         return 'Contract Settled & Cleared';
       case 'DISPUTED':
         return 'Damage Dispute Opened';
+      case 'PENDING_PAYMENT':
+        return 'Awaiting Payment Clearance';
       default:
         return status;
     }
@@ -487,13 +566,16 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
   String _getStatusDescription(String status) {
     switch (status) {
       case 'HELD_IN_ESCROW':
-        return '100% of upfront funds are locked in platform escrow. Complete pre-trip inspection to unlock vehicle handoff.';
+      case 'ESCROW_LOCKED':
+        return '100% of upfront funds are locked in platform escrow. Complete pre-trip inspection to unlock vehicle handoff or release payment.';
       case 'PARTIALLY_RELEASED':
         return '60% of base rental proceeds have been paid to owner. Vehicle is in renter custody.';
       case 'SETTLED':
-        return 'Return confirmed. 40% balance was paid to owner, and 100% of damage deposit was refunded to renter.';
+        return 'Return confirmed. Payout disbursed to owner/seller and escrow closed.';
       case 'DISPUTED':
         return 'Damage reported. Deposit is held in escrow pending admin review.';
+      case 'PENDING_PAYMENT':
+        return 'Awaiting mobile money approval or commercial bank wire clearing.';
       default:
         return 'Status: $status';
     }

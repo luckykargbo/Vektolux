@@ -31,6 +31,8 @@ import '../../../mobility/presentation/views/my_escrow_orders_screen.dart';
 import '../../../real_estate/presentation/views/my_real_estate_escrows_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/services/payment_methods_service.dart';
+import '../../../../core/services/carrier_detection_service.dart';
+import '../../../../core/widgets/universal_phone_input.dart';
 import '../../../../core/models/payment_account.dart';
 import 'dart:async';
 import 'dart:io';
@@ -4352,34 +4354,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return clean;
   }
 
-  String _findDefaultPhoneForProvider(String providerCode, UserEntity? user) {
-    final matchingDefault = _userPaymentAccounts.cast<PaymentAccount?>().firstWhere(
-      (a) => a?.providerCode == providerCode && a?.isDefault == true,
-      orElse: () => null,
-    );
-    if (matchingDefault != null && matchingDefault.accountNumber.isNotEmpty) {
-      return matchingDefault.accountNumber;
-    }
-    final matchingAny = _userPaymentAccounts.cast<PaymentAccount?>().firstWhere(
-      (a) => a?.providerCode == providerCode,
-      orElse: () => null,
-    );
-    if (matchingAny != null && matchingAny.accountNumber.isNotEmpty) {
-      return matchingAny.accountNumber;
-    }
-    final anyDefault = _userPaymentAccounts.cast<PaymentAccount?>().firstWhere(
-      (a) => a?.isDefault == true,
-      orElse: () => null,
-    );
-    if (anyDefault != null && anyDefault.accountNumber.isNotEmpty) {
-      return anyDefault.accountNumber;
-    }
-    if (user?.phone != null && user!.phone.isNotEmpty) {
-      return user.phone;
-    }
-    return '';
-  }
-
   Widget _buildProviderIcon(String providerCode) {
     IconData iconData;
     Color bgColor;
@@ -5276,8 +5250,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _showTopUpEscrowSheet(BuildContext context, UserEntity? user) {
     final amountCtrl = TextEditingController(text: '500');
     final referenceCtrl = TextEditingController();
-    String selectedTopUpProvider = 'orange';
-    String activePhoneNumber = _findDefaultPhoneForProvider('orange', user);
+    final phoneCtrl = TextEditingController(text: user?.phone ?? '');
+    SierraLeoneCarrier detectedCarrier = CarrierDetectionService.detectCarrier(user?.phone);
+    String selectedTopUpProvider = detectedCarrier.isRecognized ? detectedCarrier.providerSlug : 'orange';
+    String activePhoneNumber = user?.phone ?? '';
     bool isProcessing = false;
     bool showReferenceStep = false; // Step 2 for manual providers
     String? errorCode;
@@ -5329,33 +5305,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 return;
               }
 
-              if (activePhoneNumber.trim().isEmpty) {
-                setModalState(() => errorMessage = 'Please set or select a mobile money number.');
-                _showChangeNumberSheet(
-                  context: context,
-                  currentProvider: selectedTopUpProvider,
-                  currentPhone: activePhoneNumber,
-                  onSelected: (newPhone) {
-                    setModalState(() {
-                      activePhoneNumber = newPhone;
-                      errorCode = null;
-                      errorMessage = null;
-                    });
-                  },
-                );
+              final rawPhone = phoneCtrl.text.trim();
+              if (rawPhone.isEmpty) {
+                setModalState(() => errorMessage = 'Please enter a mobile money phone number.');
                 return;
               }
 
+              final carrier = CarrierDetectionService.detectCarrier(rawPhone);
+              final normalizedPhone = CarrierDetectionService.normalizeToSierraLeoneFormat(rawPhone);
+              final carrierSlug = carrier.isRecognized ? carrier.providerSlug : 'orange';
+              final pName = carrier.isRecognized ? carrier.displayName : 'Mobile Money';
+
               setModalState(() => isProcessing = true);
               try {
-                final pName = providerLabels[selectedTopUpProvider] ?? 'Mobile Money';
                 final uEmail = user?.email.trim();
                 final uName = user?.name.trim();
                 final result = await PaymentMethodsService.instance.initiateMoniMePayment(
                   amount: amt,
                   currency: 'SLE',
-                  phoneNumber: activePhoneNumber,
-                  provider: selectedTopUpProvider, // "orange", "africell", "qmoney"
+                  phoneNumber: normalizedPhone,
+                  provider: carrierSlug, // "orange", "africell", "qmoney"
                   userId: user?.id ?? '',
                   email: (uEmail != null && uEmail.isNotEmpty) ? uEmail : null,
                   customerName: (uName != null && uName.isNotEmpty) ? uName : null,
@@ -5452,138 +5421,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: 20),
 
                   if (!showReferenceStep) ...[
-                    // ── Provider Selector ────────────────────────────
-                    const Text(
-                      'Payment Provider',
-                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.obsidian),
-                    ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedTopUpProvider,
-                      style: const TextStyle(
-                        color: Color(0xFF0F172A),
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      dropdownColor: Colors.white,
-                      iconEnabledColor: const Color(0xFF64748B),
-                      focusColor: Colors.transparent,
-                      decoration: InputDecoration(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
-                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
-                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.emerald, width: 1.5)),
-                      ),
-                      selectedItemBuilder: (context) => [
-                        'Orange Money Sierra Leone',
-                        'Africell Afrimoney',
-                        'QCell QMoney',
-                      ].map((label) => Text(label, style: const TextStyle(color: Color(0xFF0F172A), fontSize: 15, fontWeight: FontWeight.w600))).toList(),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'orange',
-                          child: Text('Orange Money Sierra Leone', style: TextStyle(color: Color(0xFF0F172A), fontSize: 15, fontWeight: FontWeight.w500)),
-                        ),
-                        DropdownMenuItem(
-                          value: 'africell',
-                          child: Text('Africell Afrimoney', style: TextStyle(color: Color(0xFF0F172A), fontSize: 15, fontWeight: FontWeight.w500)),
-                        ),
-                        DropdownMenuItem(
-                          value: 'qmoney',
-                          child: Text('QCell QMoney', style: TextStyle(color: Color(0xFF0F172A), fontSize: 15, fontWeight: FontWeight.w500)),
-                        ),
-                      ],
-                      onChanged: (val) {
-                        if (val != null) {
-                          setModalState(() {
-                            selectedTopUpProvider = val;
-                            activePhoneNumber = _findDefaultPhoneForProvider(val, user);
-                            errorCode = null;
-                            errorMessage = null;
-                          });
-                        }
+                    // ── Universal Phone Input with Live Carrier Detection ──
+                    UniversalPhoneInput(
+                      controller: phoneCtrl,
+                      label: 'Enter Mobile Money Phone Number',
+                      hint: '076 123456 or 077 123456',
+                      onCarrierChanged: (carrier) {
+                        setModalState(() {
+                          detectedCarrier = carrier;
+                          selectedTopUpProvider = carrier.isRecognized ? carrier.providerSlug : 'orange';
+                          errorCode = null;
+                          errorMessage = null;
+                        });
                       },
-                    ),
-                    const SizedBox(height: 14),
-
-                    // ── Active Charging Number Card ───────────────────
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                      decoration: BoxDecoration(
-                        color: AppColors.gray50,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppColors.border),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: const BoxDecoration(
-                              color: AppColors.emeraldSurface,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(Icons.phone_android_rounded, color: AppColors.emeraldDark, size: 18),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Charging: ${providerLabels[selectedTopUpProvider] ?? "Mobile Money"}',
-                                  style: const TextStyle(
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.gray500,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  activePhoneNumber.isNotEmpty
-                                      ? _formatPhoneDisplay(activePhoneNumber)
-                                      : 'No phone number set',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
-                                    color: activePhoneNumber.isNotEmpty
-                                        ? const Color(0xFF0F172A)
-                                        : AppColors.gray400,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          TextButton(
-                            style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                              minimumSize: Size.zero,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                            onPressed: () => _showChangeNumberSheet(
-                              context: context,
-                              currentProvider: selectedTopUpProvider,
-                              currentPhone: activePhoneNumber,
-                              onSelected: (newPhone) {
-                                setModalState(() {
-                                  activePhoneNumber = newPhone;
-                                  errorCode = null;
-                                  errorMessage = null;
-                                });
-                              },
-                            ),
-                            child: const Text(
-                              'Change Number',
-                              style: TextStyle(
-                                color: AppColors.emeraldDark,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
                     const SizedBox(height: 16),
 
@@ -5986,7 +5836,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           : Text(
                               showReferenceStep
                                   ? 'Submit Claim'
-                                  : 'Pay with ${providerLabels[selectedTopUpProvider] ?? "Mobile Money"}',
+                                  : 'Pay via ${detectedCarrier.displayName}',
                               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
                             ),
                     ),

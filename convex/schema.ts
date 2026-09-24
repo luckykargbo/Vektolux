@@ -145,6 +145,7 @@ export const escrowOrderStatus = v.union(
   v.literal("INITIATED"),
   v.literal("PENDING_PAYMENT"),
   v.literal("HELD_IN_ESCROW"),
+  v.literal("ESCROW_LOCKED"),
   v.literal("PARTIALLY_RELEASED"),
   v.literal("POST_INSPECTION_PENDING"),
   v.literal("SETTLED"),
@@ -886,9 +887,13 @@ export default defineSchema({
     rentalEndDate: v.optional(v.number()),
     numberOfDays: v.optional(v.number()),
 
-    // Payment Info
+    // Payment & Escrow Rail Info
     paymentProvider: v.optional(v.string()),
     paymentPhone: v.optional(v.string()),
+    paymentRail: v.optional(v.string()), // "MOBILE_MONEY" | "BANK_TRANSFER" | "WALLET"
+    bankEscrowReference: v.optional(v.string()), // e.g. "VKTLX-DEAL-8492"
+    bankClearingStatus: v.optional(v.string()), // "PENDING_DEPOSIT" | "SETTLED" | "MANUAL_VERIFIED"
+    detectedCarrier: v.optional(v.string()), // "orange" | "africell" | "qmoney"
 
     metadata: v.optional(v.string()),
     createdAt: v.number(),
@@ -899,7 +904,8 @@ export default defineSchema({
     .index("by_owner_or_seller", ["ownerOrSellerId"])
     .index("by_vehicle", ["vehicleListingId"])
     .index("by_status", ["status"])
-    .index("by_type_status", ["orderType", "status"]),
+    .index("by_type_status", ["orderType", "status"])
+    .index("by_bank_ref", ["bankEscrowReference"]),
 
   // ─── VEHICLE INSPECTIONS ──────────────────────────────────────────
   vehicle_inspections: defineTable({
@@ -1051,6 +1057,9 @@ export default defineSchema({
     releasedBeneficiaryAmount: v.number(),
     refundedClientAmount: v.number(),
     paymentRail: v.string(),
+    bankEscrowReference: v.optional(v.string()), // e.g. "VKTLX-DEAL-7812"
+    bankClearingStatus: v.optional(v.string()), // "PENDING_DEPOSIT" | "SETTLED" | "MANUAL_VERIFIED"
+    detectedCarrier: v.optional(v.string()),
     currentState: reMilestoneState,
     stayCheckInTimestamp: v.optional(v.number()),
     stay24hAutoReleaseTimestamp: v.optional(v.number()),
@@ -1062,7 +1071,8 @@ export default defineSchema({
     .index("by_client", ["clientId"])
     .index("by_beneficiary", ["beneficiaryId"])
     .index("by_property", ["propertyListingId"])
-    .index("by_state", ["currentState"]),
+    .index("by_state", ["currentState"])
+    .index("by_bank_ref", ["bankEscrowReference"]),
 
   // ─── REAL ESTATE ESCROW: LAND & PROPERTY MILESTONES (10/40/50) ────
   re_escrow_milestones: defineTable({

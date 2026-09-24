@@ -24,6 +24,7 @@ import {
 } from "./lib/validation";
 import {
   sanitizeSierraLeonePhone,
+  detectSierraLeoneCarrier,
   parseCarrierResponse,
   logGatewayError,
 } from "./lib/paymentErrors";
@@ -3289,7 +3290,7 @@ export const initiateMoniMePayment = action({
     amount: v.number(),
     phoneNumber: v.optional(v.string()),
     customerPhone: v.optional(v.string()),
-    provider: v.string(), // "orange", "africell", "qmoney"
+    provider: v.optional(v.string()), // "orange", "africell", "qmoney", or auto-detected
     email: v.optional(v.string()),
     customerEmail: v.optional(v.string()),
     customerName: v.optional(v.string()),
@@ -3323,12 +3324,22 @@ export const initiateMoniMePayment = action({
     const reference = `vktlx_monime_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const returnUrl = args.returnUrl ?? "https://app.vektolux.com/payment/callback";
 
-    let providerSlug = args.provider.toLowerCase();
-    if (providerSlug.includes("orange")) providerSlug = "orange";
-    else if (providerSlug.includes("africell") || providerSlug.includes("afrimoney"))
+    let providerSlug = (args.provider || "").toLowerCase().trim();
+    if (!providerSlug || providerSlug === "auto" || providerSlug === "monime" || providerSlug === "monime_auto") {
+      const autoCarrier = detectSierraLeoneCarrier(cleanPhone);
+      providerSlug = autoCarrier !== "unknown" ? autoCarrier : "orange";
+    } else if (providerSlug.includes("orange")) {
+      providerSlug = "orange";
+    } else if (providerSlug.includes("africell") || providerSlug.includes("afrimoney")) {
       providerSlug = "africell";
-    else if (providerSlug.includes("qcell") || providerSlug.includes("qmoney"))
+    } else if (providerSlug.includes("qcell") || providerSlug.includes("qmoney")) {
       providerSlug = "qmoney";
+    } else {
+      const autoCarrier = detectSierraLeoneCarrier(cleanPhone);
+      if (autoCarrier !== "unknown") {
+        providerSlug = autoCarrier;
+      }
+    }
 
     const description =
       args.description ?? `Vektolux Escrow Wallet Top-Up — ${args.amount} ${currency} via ${providerSlug.toUpperCase()}`;
@@ -4502,6 +4513,234 @@ export const verifyUssdOtp = action({
   },
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// OFFICIAL COMMERCIAL BANK ESCROW RAILS (High-Value Deals & Clearing)
+// ═══════════════════════════════════════════════════════════════════════
 
+export const VEKTOLUX_ESCROW_BANK_ACCOUNT = {
+  bankName: "Sierra Leone Commercial Bank (SLCB)",
+  accountName: "Vektolux Technologies (SL) Ltd — Escrow Clearing Account",
+  accountNumber: "003001014892010184",
+  branch: "Siaka Stevens Street Head Office, Freetown",
+  swiftCode: "SLCBSLFR",
+  currency: "SLE",
+  escrowNotice: "Official High-Value Escrow Clearing for Vehicles & Real Estate. Funds remain strictly locked until physical inspection approval.",
+};
 
+/**
+ * Query official Sierra Leone Commercial Bank clearing account details
+ * for direct wire / transfer deposits.
+ */
+export const getEscrowBankClearingDetails = query({
+  args: {
+    reference: v.optional(v.string()),
+  },
+  handler: async (_ctx, args) => {
+    return {
+      ...VEKTOLUX_ESCROW_BANK_ACCOUNT,
+      paymentReference: args.reference ?? "VKTLX-ESCROW",
+    };
+  },
+});
 
+/**
+ * Generate a unique, trackable bank escrow transfer reference (e.g. VKTLX-DEAL-8492)
+ * and attach it to the pending vehicle escrow order or real estate contract.
+ */
+export const generateBankEscrowReference = mutation({
+  args: {
+    orderType: v.string(), // "VEHICLE" | "REAL_ESTATE"
+    orderId: v.optional(v.string()),
+    amount: v.number(),
+    userId: v.optional(v.string()),
+    description: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000).toString();
+    const bankReference = `VKTLX-DEAL-${randomSuffix}`;
+    const now = Date.now();
+
+    if (args.orderId) {
+      if (args.orderType === "VEHICLE") {
+        const orderNorm = ctx.db.normalizeId("escrow_orders", args.orderId);
+        if (orderNorm) {
+          await ctx.db.patch(orderNorm, {
+            bankEscrowReference: bankReference,
+            paymentRail: "BANK_TRANSFER",
+            bankClearingStatus: "PENDING_TRANSFER",
+            updatedAt: now,
+          });
+        }
+      } else {
+        const reNorm = ctx.db.normalizeId("re_escrow_contracts", args.orderId);
+        if (reNorm) {
+          await ctx.db.patch(reNorm, {
+            bankEscrowReference: bankReference,
+            paymentRail: "BANK_TRANSFER",
+            bankClearingStatus: "PENDING_TRANSFER",
+            updatedAt: now,
+          });
+        }
+      }
+    }
+
+    return {
+      success: true,
+      bankReference,
+      bankDetails: {
+        ...VEKTOLUX_ESCROW_BANK_ACCOUNT,
+        paymentReference: bankReference,
+        amount: args.amount,
+      },
+    };
+  },
+});
+
+/**
+ * Confirm a commercial bank wire clearing (e.g. via SLCB interbank webhook or admin review).
+ * Automatically transitions the escrow order into ESCROW_LOCKED and posts double-entry ledger.
+ */
+export const confirmBankEscrowTransfer = mutation({
+  args: {
+    bankEscrowReference: v.string(),
+    externalBankTxnId: v.optional(v.string()),
+    amountTransferred: v.number(),
+    adminNotes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const cleanRef = args.bankEscrowReference.trim();
+
+    // 1. Check vehicle escrow_orders
+    const vehicleOrder = await ctx.db
+      .query("escrow_orders")
+      .withIndex("by_bank_ref", (q) => q.eq("bankEscrowReference", cleanRef))
+      .first();
+
+    if (vehicleOrder) {
+      await ctx.db.patch(vehicleOrder._id, {
+        status: "ESCROW_LOCKED",
+        bankClearingStatus: "CLEARED",
+        updatedAt: now,
+      });
+
+      // Credit buyer escrow balance in wallet
+      const buyerWallet = await ctx.db
+        .query("walletBalances")
+        .withIndex("by_user", (q: any) => q.eq("userId", vehicleOrder.renterOrBuyerId))
+        .first();
+
+      if (buyerWallet) {
+        await ctx.db.patch(buyerWallet._id, {
+          escrowBalance: (buyerWallet.escrowBalance ?? 0) + args.amountTransferred,
+          updatedAt: now,
+        });
+      }
+
+      // Post double-entry ledger entry
+      try {
+        const txId = await ctx.db.insert("ledger_transactions", {
+          transactionCode: `LTX_SLCB_${args.externalBankTxnId ?? cleanRef}`,
+          escrowOrderId: vehicleOrder._id,
+          description: `Bank Wire Cleared (SLCB) - Ref: ${cleanRef}`,
+          createdAt: now,
+        });
+
+        await ctx.db.insert("ledger_entries", {
+          transactionId: txId,
+          accountType: "CLIENT_ESCROW_LOCKED",
+          userId: vehicleOrder.renterOrBuyerId,
+          direction: "CREDIT",
+          amount: args.amountTransferred,
+          currency: "SLE",
+          createdAt: now,
+        });
+      } catch (e) {
+        console.warn("Ledger transaction recording error:", e);
+      }
+
+      // Notify buyer and seller
+      await ctx.db.insert("user_notifications", {
+        userId: vehicleOrder.renterOrBuyerId as string,
+        targetType: "single_user",
+        title: "Bank Wire Cleared — Escrow Locked! 🏦",
+        body: `Your bank transfer of SLE ${args.amountTransferred.toFixed(2)} for ${cleanRef} was confirmed by Sierra Leone Commercial Bank. Funds are safely locked in escrow.`,
+        read: false,
+        createdAt: now,
+      });
+
+      await ctx.db.insert("user_notifications", {
+        userId: vehicleOrder.ownerOrSellerId as string,
+        targetType: "single_user",
+        title: "Deal Escrow Funded (Bank Wire) 🏦",
+        body: `Buyer's bank transfer of SLE ${args.amountTransferred.toFixed(2)} for order ${vehicleOrder.orderCode} has cleared. You may proceed with vehicle inspection and handoff.`,
+        read: false,
+        createdAt: now,
+      });
+
+      return {
+        success: true,
+        type: "VEHICLE_ESCROW",
+        orderId: vehicleOrder._id,
+        orderCode: vehicleOrder.orderCode,
+        status: "ESCROW_LOCKED",
+        clearedAmount: args.amountTransferred,
+      };
+    }
+
+    // 2. Check real estate re_escrow_contracts
+    const reContract = await ctx.db
+      .query("re_escrow_contracts")
+      .withIndex("by_bank_ref", (q) => q.eq("bankEscrowReference", cleanRef))
+      .first();
+
+    if (reContract) {
+      await ctx.db.patch(reContract._id, {
+        currentState: "FUNDS_LOCKED",
+        bankClearingStatus: "CLEARED",
+        updatedAt: now,
+      });
+
+      // Post double-entry ledger entry
+      try {
+        const txId = await ctx.db.insert("ledger_transactions", {
+          transactionCode: `LTX_SLCB_${args.externalBankTxnId ?? cleanRef}`,
+          description: `Bank Wire Cleared (SLCB) - Ref: ${cleanRef}`,
+          createdAt: now,
+        });
+
+        await ctx.db.insert("ledger_entries", {
+          transactionId: txId,
+          accountType: "CLIENT_ESCROW_LOCKED",
+          userId: reContract.clientId,
+          direction: "CREDIT",
+          amount: args.amountTransferred,
+          currency: "SLE",
+          createdAt: now,
+        });
+      } catch (e) {
+        console.warn("Ledger transaction recording error:", e);
+      }
+
+      await ctx.db.insert("user_notifications", {
+        userId: reContract.clientId as string,
+        targetType: "single_user",
+        title: "Bank Wire Cleared — Escrow Locked! 🏦",
+        body: `Your bank transfer of SLE ${args.amountTransferred.toFixed(2)} for contract ${cleanRef} was confirmed by Sierra Leone Commercial Bank. Escrow funds are secured.`,
+        read: false,
+        createdAt: now,
+      });
+
+      return {
+        success: true,
+        type: "REAL_ESTATE_ESCROW",
+        contractId: reContract._id,
+        contractCode: reContract.contractCode,
+        status: "FUNDS_LOCKED",
+        clearedAmount: args.amountTransferred,
+      };
+    }
+
+    throw new Error(`No active escrow order or contract found for bank reference: ${cleanRef}`);
+  },
+});
