@@ -6044,7 +6044,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               setModalState(() => isProcessing = true);
                               try {
                                 final client = context.read<ConvexClientWrapper>();
-                                final res = await client.mutation(
+                                final res = await client.action(
                                   'payments:requestWithdrawal',
                                   args: {
                                     'userId': user?.id ?? '',

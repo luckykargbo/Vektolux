@@ -2195,11 +2195,9 @@ export const setDefaultPaymentAccount = mutation({
 });
 
 /**
- * Request an escrow wallet withdrawal.
- * Immediately deducts from availableBalance and records a pending payout
- * transaction in the ledger. Admin can audit via the transactions table.
+ * Internal mutation: Reserve withdrawal balance and create pending transaction
  */
-export const requestWithdrawal = mutation({
+export const reserveWithdrawalBalance = internalMutation({
   args: {
     userId: v.string(),
     amount: v.number(),
@@ -2228,7 +2226,7 @@ export const requestWithdrawal = mutation({
       );
     }
 
-    const newBalance = wallet.availableBalance - args.amount;
+    const newBalance = parseFloat((wallet.availableBalance - args.amount).toFixed(2));
     await ctx.db.patch(wallet._id, {
       availableBalance: newBalance,
       updatedAt: now,
@@ -2236,7 +2234,7 @@ export const requestWithdrawal = mutation({
 
     const ref = `WTHDRW_${now}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-    await ctx.db.insert("transactions", {
+    const txId = await ctx.db.insert("transactions", {
       walletId: wallet._id,
       userId: userNorm,
       type: "payout",
@@ -2251,11 +2249,204 @@ export const requestWithdrawal = mutation({
     });
 
     return {
-      success: true,
-      withdrawalRef: ref,
-      remainingBalance: newBalance,
+      walletId: wallet._id,
+      transactionId: txId,
+      ref,
+      userNorm,
       currency,
+      newBalance,
+      previousBalance: wallet.availableBalance,
     };
+  },
+});
+
+/**
+ * Internal mutation: Confirm successful MoniMe payout
+ */
+export const finalizeWithdrawalSuccess = internalMutation({
+  args: {
+    transactionId: v.id("transactions"),
+    payoutId: v.string(),
+    amount: v.number(),
+    currency: v.string(),
+    destination: v.string(),
+    provider: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.transactionId, {
+      status: "completed",
+      gatewayReference: args.payoutId,
+      description: `MoniMe Payout of ${args.amount} ${args.currency} disbursed to ${args.provider.toUpperCase()} ${args.destination} [ID: ${args.payoutId}]`,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
+
+/**
+ * Internal mutation: Rollback failed MoniMe payout and restore user balance
+ */
+export const rollbackFailedWithdrawal = internalMutation({
+  args: {
+    transactionId: v.id("transactions"),
+    walletId: v.id("walletBalances"),
+    amount: v.number(),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const wallet = await ctx.db.get(args.walletId);
+    const now = Date.now();
+    let restoredBalance = 0;
+
+    if (wallet) {
+      restoredBalance = parseFloat((wallet.availableBalance + args.amount).toFixed(2));
+      await ctx.db.patch(wallet._id, {
+        availableBalance: restoredBalance,
+        updatedAt: now,
+      });
+    }
+
+    await ctx.db.patch(args.transactionId, {
+      status: "failed",
+      description: `Payout failed: ${args.reason}. Restored ${args.amount} to wallet balance.`,
+      updatedAt: now,
+    });
+
+    return { success: true, restoredBalance };
+  },
+});
+
+/**
+ * Request an escrow wallet withdrawal with immediate live MoniMe payout dispatch.
+ * Atomically reserves balance, dispatches to MoniMe /v1/payouts, and auto-refunds on failure.
+ */
+export const requestWithdrawal = action({
+  args: {
+    userId: v.string(),
+    amount: v.number(),
+    destinationProviderCode: v.string(),
+    destinationAccountNumber: v.string(),
+    currency: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    if (args.amount <= 0) throw new Error("Withdrawal amount must be positive");
+
+    // 1. Clean and normalize phone number
+    let cleanPhone = args.destinationAccountNumber.replace(/\D/g, "");
+    if (cleanPhone.startsWith("0")) {
+      cleanPhone = "232" + cleanPhone.substring(1);
+    } else if (!cleanPhone.startsWith("232") && cleanPhone.length === 8) {
+      cleanPhone = "232" + cleanPhone;
+    }
+    const formattedPhone = cleanPhone.startsWith("+") ? cleanPhone : `+${cleanPhone}`;
+
+    // 2. Carrier detection & MoniMe momo provider selection
+    const carrier = detectSierraLeoneCarrier(cleanPhone);
+    const isAfricell = carrier === "africell" ||
+      args.destinationProviderCode.toLowerCase().includes("africell") ||
+      args.destinationProviderCode.toLowerCase().includes("afrimoney");
+    const providerId = isAfricell ? "m18" : "m17";
+    const providerLabel = isAfricell ? "africell" : "orange";
+
+    // 3. Atomically reserve balance in Convex database
+    const reservation: any = await ctx.runMutation(internal.payments.reserveWithdrawalBalance, {
+      userId: args.userId,
+      amount: args.amount,
+      destinationProviderCode: providerLabel,
+      destinationAccountNumber: formattedPhone,
+      currency: args.currency,
+    });
+
+    // 4. Dispatch live payout to MoniMe API
+    const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VAsS2nSa4AALw1JuBJrXtUAnF").trim();
+    const token = (process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
+    const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
+    const currency = args.currency ?? "SLE";
+    const minorAmount = Math.round(args.amount * 100);
+
+    const payload = {
+      amount: {
+        currency,
+        value: minorAmount,
+      },
+      destination: {
+        type: "momo",
+        providerId,
+        phoneNumber: formattedPhone,
+      },
+      metadata: {
+        userId: reservation.userNorm,
+        walletId: reservation.walletId,
+        reference: reservation.ref,
+        phoneNumber: formattedPhone,
+        purpose: "escrow_withdrawal",
+      },
+    };
+
+    console.log(`[MoniMe Payout] Live outbound payout dispatch for ${args.amount} ${currency} to ${formattedPhone} (${providerId})...`);
+
+    let isSuccess = false;
+    let payoutId = reservation.ref;
+    let failureReason = "";
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/payouts`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "Monime-Space-Id": spaceId,
+          "monime-space-id": spaceId,
+          "Idempotency-Key": `payout_${reservation.ref}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const responseJson = await response.json().catch(() => ({}));
+      console.log(`[MoniMe Payout] Gateway response HTTP ${response.status}:`, responseJson);
+
+      if (response.ok && responseJson.success !== false) {
+        isSuccess = true;
+        payoutId = responseJson.result?.id ?? responseJson.id ?? reservation.ref;
+      } else {
+        failureReason = responseJson.error?.message ??
+          responseJson.message ??
+          `HTTP ${response.status}: ${JSON.stringify(responseJson)}`;
+      }
+    } catch (err: any) {
+      console.error("[MoniMe Payout] Network error:", err);
+      failureReason = err?.message ?? String(err);
+    }
+
+    if (isSuccess) {
+      await ctx.runMutation(internal.payments.finalizeWithdrawalSuccess, {
+        transactionId: reservation.transactionId,
+        payoutId,
+        amount: args.amount,
+        currency,
+        destination: formattedPhone,
+        provider: providerLabel,
+      });
+
+      return {
+        success: true,
+        payoutId,
+        withdrawalRef: reservation.ref,
+        remainingBalance: reservation.newBalance,
+        currency,
+        message: `Payout of SLE ${args.amount} dispatched successfully via MoniMe.`,
+      };
+    } else {
+      // Rollback balance immediately on gateway failure
+      await ctx.runMutation(internal.payments.rollbackFailedWithdrawal, {
+        transactionId: reservation.transactionId,
+        walletId: reservation.walletId,
+        amount: args.amount,
+        reason: failureReason,
+      });
+
+      throw new Error(`Payout dispatch failed: ${failureReason}. SLE ${args.amount} has been restored to your balance.`);
+    }
   },
 });
 
