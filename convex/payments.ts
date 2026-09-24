@@ -3302,19 +3302,10 @@ export const initiateMoniMePayment = action({
     returnUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const accessToken = process.env.MONIME_ACCESS_TOKEN;
-    const spaceId = process.env.MONIME_SPACE_ID;
+    const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VASs2nSa4AALw1JuBJrXtUAnF").trim();
+    const token = (process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
+    const accessToken = token;
     const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
-
-    if (!accessToken || !spaceId) {
-      console.error("[MoniMe Config Error] Missing MONIME_ACCESS_TOKEN or MONIME_SPACE_ID in environment.");
-      return {
-        success: false,
-        code: "GATEWAY_CONFIG_ERROR",
-        message: "MoniMe gateway credentials are not configured in Convex environment",
-        error: "Missing MONIME_ACCESS_TOKEN or MONIME_SPACE_ID",
-      };
-    }
 
     const rawPhone = args.phoneNumber || args.customerPhone || "";
     let cleanPhone = rawPhone.replace(/\D/g, "");
@@ -3369,6 +3360,8 @@ export const initiateMoniMePayment = action({
     }
 
     const payload = {
+      spaceId: spaceId.trim(),
+      space_id: spaceId.trim(),
       amount: args.amount,
       currency: "SLE",
       reference,
@@ -3377,6 +3370,7 @@ export const initiateMoniMePayment = action({
       description,
       return_url: returnUrl,
       metadata: {
+        spaceId: spaceId.trim(),
         reference,
         provider: providerSlug,
         phoneNumber: sanitizedPhone,
@@ -3403,9 +3397,10 @@ export const initiateMoniMePayment = action({
       const response = await fetch(`${apiBaseUrl}/payments`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Monime-Space-Id": spaceId,
           "Content-Type": "application/json",
+          Authorization: `Bearer ${token.trim()}`,
+          "Monime-Space-Id": spaceId.trim(),
+          "monime-space-id": spaceId.trim(),
         },
         body: JSON.stringify(payload),
       });
@@ -3846,8 +3841,9 @@ export const sendUssdOtp = action({
     userId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<any> => {
-    const accessToken = process.env.MONIME_ACCESS_TOKEN;
-    const spaceId = process.env.MONIME_SPACE_ID;
+    const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VASs2nSa4AALw1JuBJrXtUAnF").trim();
+    const token = (process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
+    const accessToken = token;
     const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
 
     const sanitizedPhone = sanitizeSierraLeonePhone(args.phoneNumber);
@@ -3867,16 +3863,20 @@ export const sendUssdOtp = action({
         const monimeRes = await fetch(`${apiBaseUrl}/ussd-otps`, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Monime-Space-Id": spaceId,
             "Content-Type": "application/json",
+            Authorization: `Bearer ${token.trim()}`,
+            "Monime-Space-Id": spaceId.trim(),
+            "monime-space-id": spaceId.trim(),
             "Idempotency-Key": reference,
           },
           body: JSON.stringify({
+            spaceId: spaceId.trim(),
+            space_id: spaceId.trim(),
             authorizedPhoneNumber: sanitizedPhone,
             verificationMessage,
             duration: "5m",
             metadata: {
+              spaceId: spaceId.trim(),
               reference,
               purpose: args.purpose,
               phoneNumber: sanitizedPhone,
@@ -4006,8 +4006,9 @@ export const verifyUssdOtp = action({
 
     // Handle "escrow_payout" purpose: Disburse funds via MoniMe Payouts API
     if (args.purpose === "escrow_payout") {
-      const accessToken = process.env.MONIME_ACCESS_TOKEN;
-      const spaceId = process.env.MONIME_SPACE_ID;
+      const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VASs2nSa4AALw1JuBJrXtUAnF").trim();
+      const token = (process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
+      const accessToken = token;
       const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
       const payoutAmount = session.payoutAmount ?? 0;
       const payoutCurrency = session.payoutCurrency ?? "SLE";
@@ -4020,16 +4021,20 @@ export const verifyUssdOtp = action({
           const payoutRes = await fetch(`${apiBaseUrl}/payouts`, {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "Monime-Space-Id": spaceId,
               "Content-Type": "application/json",
+              Authorization: `Bearer ${token.trim()}`,
+              "Monime-Space-Id": spaceId.trim(),
+              "monime-space-id": spaceId.trim(),
               "Idempotency-Key": `payout_${session.reference}`,
             },
             body: JSON.stringify({
+              spaceId: spaceId.trim(),
+              space_id: spaceId.trim(),
               amount: payoutAmount,
               currency: payoutCurrency,
               destination,
               metadata: {
+                spaceId: spaceId.trim(),
                 reference: session.reference,
                 purpose: "escrow_payout",
                 ...(session.escrowOrderId ? { escrowOrderId: session.escrowOrderId } : {}),
