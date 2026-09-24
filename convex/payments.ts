@@ -3302,7 +3302,7 @@ export const initiateMoniMePayment = action({
     returnUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VASs2nSa4AALw1JuBJrXtUAnF").trim();
+    const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VAsS2nSa4AALw1JuBJrXtUAnF").trim();
     const token = (process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
     const accessToken = token;
     const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
@@ -3348,27 +3348,22 @@ export const initiateMoniMePayment = action({
       console.warn("[MoniMe Pending] Non-fatal pending recording failure:", e?.message ?? e);
     }
 
-    // 2. Construct dynamic customer payload (zero hardcoded values)
-    const customerPayload: Record<string, any> = {
-      phone: sanitizedPhone,
-    };
-    if (dynamicEmail && dynamicEmail.length > 0) {
-      customerPayload.email = dynamicEmail;
-    }
-    if (args.customerName && args.customerName.trim().length > 0) {
-      customerPayload.name = args.customerName.trim();
-    }
-
-    const payload = {
+    // 2. Construct dynamic checkout session payload
+    const checkoutPayload = {
       spaceId: spaceId.trim(),
-      space_id: spaceId.trim(),
-      amount: args.amount,
-      currency: "SLE",
-      reference,
-      customer: customerPayload,
-      provider: providerSlug,
-      description,
-      return_url: returnUrl,
+      name: description,
+      lineItems: [
+        {
+          type: "custom",
+          name: description,
+          quantity: 1,
+          price: {
+            currency: "SLE",
+            value: args.amount,
+          },
+        },
+      ],
+      returnUrl,
       metadata: {
         spaceId: spaceId.trim(),
         reference,
@@ -3382,8 +3377,8 @@ export const initiateMoniMePayment = action({
       },
     };
 
-    console.log("[MoniMe Outbound] Dispatching payment:", {
-      url: `${apiBaseUrl}/payments`,
+    console.log("[MoniMe Outbound] Dispatching checkout session:", {
+      url: `${apiBaseUrl}/checkout-sessions`,
       spaceId: spaceId ? `${spaceId.substring(0, 8)}...` : undefined,
       amount: args.amount,
       currency: "SLE",
@@ -3394,15 +3389,16 @@ export const initiateMoniMePayment = action({
     });
 
     try {
-      const response = await fetch(`${apiBaseUrl}/payments`, {
+      const response = await fetch(`${apiBaseUrl}/checkout-sessions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token.trim()}`,
           "Monime-Space-Id": spaceId.trim(),
           "monime-space-id": spaceId.trim(),
+          "Idempotency-Key": reference,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(checkoutPayload),
       });
 
       const responseStatus = response.status;
@@ -3419,10 +3415,7 @@ export const initiateMoniMePayment = action({
 
       if (!response.ok) {
         console.error(`[MoniMe Error] Gateway rejected payment (HTTP ${responseStatus}):`, resJson);
-        logGatewayError(responseStatus, resJson, {
-          ...payload,
-          customer: { ...customerPayload, phone: "[REDACTED]" },
-        });
+        logGatewayError(responseStatus, resJson, checkoutPayload);
 
         const rawMsg =
           resJson?.error?.message ||
@@ -3440,14 +3433,20 @@ export const initiateMoniMePayment = action({
         };
       }
 
-      const resData = resJson?.data ?? resJson ?? {};
+      const resData = resJson?.result ?? resJson?.data ?? resJson ?? {};
       const checkoutUrl =
-        resData.checkout_url ?? resData.link ?? resData.paymentUrl ?? "";
+        resData.url ??
+        resData.checkoutUrl ??
+        resData.checkout_url ??
+        resData.link ??
+        resData.paymentUrl ??
+        "";
       const paymentId = resData.id ?? resData.paymentId ?? reference;
       const ussdPrompt =
+        resData.ussdPrompt ??
         resData.ussd_prompt ??
         resData.prompt ??
-        `Push prompt sent to ${sanitizedPhone} via ${providerSlug.toUpperCase()}. Approve on your phone to complete.`;
+        `Payment initiated for ${sanitizedPhone} via ${providerSlug.toUpperCase()}.`;
 
       return {
         success: true,
@@ -3462,10 +3461,7 @@ export const initiateMoniMePayment = action({
       };
     } catch (err: any) {
       console.error("[MoniMe Network Error] Outbound fetch to MoniMe failed:", err);
-      logGatewayError(500, err, {
-        ...payload,
-        customer: { ...customerPayload, phone: "[REDACTED]" },
-      });
+      logGatewayError(500, err, checkoutPayload);
       return {
         success: false,
         code: "GATEWAY_UNREACHABLE",
@@ -3841,7 +3837,7 @@ export const sendUssdOtp = action({
     userId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<any> => {
-    const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VASs2nSa4AALw1JuBJrXtUAnF").trim();
+    const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VAsS2nSa4AALw1JuBJrXtUAnF").trim();
     const token = (process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
     const accessToken = token;
     const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
@@ -3855,6 +3851,7 @@ export const sendUssdOtp = action({
         : `Vektolux Escrow Payout of ${args.amount ?? 0} ${args.currency ?? "SLE"} Authorized`;
 
     let monimeSessionId: string | undefined;
+    let dialCode: string | undefined;
     let ussdPrompt = `USSD prompt dispatched to ${sanitizedPhone}. Approve or dial *715# to verify.`;
 
     if (accessToken && spaceId) {
@@ -3887,11 +3884,13 @@ export const sendUssdOtp = action({
 
         const resJson = await monimeRes.json().catch(() => ({}));
         if (monimeRes.ok) {
-          monimeSessionId = resJson?.id ?? resJson?.data?.id;
-          ussdPrompt =
-            resJson?.ussdCode ||
-            resJson?.prompt ||
-            `USSD prompt sent to ${sanitizedPhone}. Enter your PIN to verify ${args.purpose}.`;
+          monimeSessionId = resJson?.result?.id ?? resJson?.id ?? resJson?.data?.id;
+          dialCode = resJson?.result?.dialCode ?? resJson?.dialCode;
+          ussdPrompt = dialCode
+            ? `Dial ${dialCode} on your phone to verify ${args.purpose}.`
+            : (resJson?.ussdCode ||
+               resJson?.prompt ||
+               `USSD prompt sent to ${sanitizedPhone}. Enter your PIN to verify ${args.purpose}.`);
           console.log("[MoniMe USSD OTP] Successfully registered on gateway:", resJson);
         } else {
           console.warn(`[MoniMe USSD OTP] Gateway returned HTTP ${monimeRes.status}:`, resJson);
@@ -3923,6 +3922,7 @@ export const sendUssdOtp = action({
       message: ussdPrompt,
       reference,
       phoneNumber: sanitizedPhone,
+      dialCode,
       purpose: args.purpose,
       expiresInSeconds: 300,
       debugCode: process.env.NODE_ENV !== "production" ? code : undefined,
@@ -4006,7 +4006,7 @@ export const verifyUssdOtp = action({
 
     // Handle "escrow_payout" purpose: Disburse funds via MoniMe Payouts API
     if (args.purpose === "escrow_payout") {
-      const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VASs2nSa4AALw1JuBJrXtUAnF").trim();
+      const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VAsS2nSa4AALw1JuBJrXtUAnF").trim();
       const token = (process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
       const accessToken = token;
       const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
