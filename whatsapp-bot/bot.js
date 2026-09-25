@@ -39,6 +39,15 @@ Keep replies friendly, professional, clear, and concise (ideal for WhatsApp chat
 const userSessions = new Map();
 const MAX_HISTORY = 8;
 
+// Anti-loop protection & bot message identifier (invisible zero-width space)
+const BOT_WATERMARK = '\u200B';
+const sentMessageIds = new Set();
+
+function normalizeJid(jid) {
+  if (!jid) return '';
+  return jid.split(':')[0].replace(/@.*$/, '') + '@s.whatsapp.net';
+}
+
 /**
  * Generate AI reply using Google Gemini via REST API
  */
@@ -170,15 +179,12 @@ async function startBot() {
     }
   });
 
-  // Message listener
+  // Message listener (supports external users and self-testing)
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
 
     for (const m of messages) {
       try {
-        // Ignore messages sent by the bot itself
-        if (m.key.fromMe) continue;
-
         const from = m.key.remoteJid;
         // Accept messages from private chats (@s.whatsapp.net)
         if (!from || !from.endsWith('@s.whatsapp.net')) continue;
@@ -194,19 +200,45 @@ async function startBot() {
         const cleanText = text.trim();
         if (!cleanText) continue;
 
-        console.log(`📩 [WhatsApp Incoming] from ${from}: "${cleanText}"`);
+        // 1. Loop protection: Ignore if this message was sent by the AI bot
+        if (m.key.id && sentMessageIds.has(m.key.id)) continue;
+        if (cleanText.includes(BOT_WATERMARK)) continue;
+
+        // 2. Identify sender & distinguish self-chat from messages sent to external contacts
+        const rawMe = sock.user?.id || state.creds?.me?.id;
+        const myJid = rawMe ? normalizeJid(rawMe) : null;
+        const fromJid = normalizeJid(from);
+        const isSelfChat = Boolean(myJid && fromJid === myJid);
+
+        // If the message is marked fromMe, only process it if it's self-chat (user testing on their own number)
+        if (m.key.fromMe && !isSelfChat) {
+          continue; // User sent a regular message to someone else; ignore
+        }
+
+        const chatLabel = isSelfChat ? `[Self-Chat ${fromJid}]` : `from ${from}`;
+        console.log(`📩 [WhatsApp Incoming] ${chatLabel}: "${cleanText}"`);
 
         // Send 'typing...' presence update
         await sock.sendPresenceUpdate('composing', from);
 
-        // Generate response with Gemini 1.5 Flash
+        // Generate response with Gemini
         const reply = await generateGeminiResponse(from, cleanText);
 
         // Turn off typing indicator
         await sock.sendPresenceUpdate('paused', from);
 
-        // Dispatch reply back to the user
-        await sock.sendMessage(from, { text: reply });
+        // Dispatch reply back to the chat tagged with invisible watermark
+        const taggedReply = reply + BOT_WATERMARK;
+        const sent = await sock.sendMessage(from, { text: taggedReply });
+
+        if (sent?.key?.id) {
+          sentMessageIds.add(sent.key.id);
+          if (sentMessageIds.size > 200) {
+            const first = sentMessageIds.values().next().value;
+            sentMessageIds.delete(first);
+          }
+        }
+
         console.log(`📤 [WhatsApp Outgoing] to ${from}: "${reply.slice(0, 80).replace(/\n/g, ' ')}..."`);
       } catch (msgErr) {
         console.error('[Error handling message]:', msgErr);
