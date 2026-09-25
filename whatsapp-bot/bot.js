@@ -14,6 +14,7 @@ import qrcode from 'qrcode-terminal';
 import pino from 'pino';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 dotenv.config();
@@ -166,13 +167,18 @@ async function startBot() {
 
     if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      const isLoggedOut = statusCode === DisconnectReason.loggedOut || statusCode === 401;
+      const shouldReconnect = !isLoggedOut;
       console.log(`⚠️ Connection closed (status: ${statusCode}). Reconnecting: ${shouldReconnect}`);
 
       if (shouldReconnect) {
         setTimeout(startBot, 3000);
       } else {
-        console.log('❌ Logged out from WhatsApp. Clear auth_info_baileys/ and restart to scan new QR.');
+        console.log('🔄 Session expired or logged out. Auto-clearing auth_info_baileys/ and preparing a fresh QR code...');
+        try {
+          fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+        } catch (_) {}
+        setTimeout(startBot, 2000);
       }
     } else if (connection === 'open') {
       console.log('\n🚀 ✅ [Vektolux WhatsApp Bot] Connected successfully! Listening for messages...\n');
