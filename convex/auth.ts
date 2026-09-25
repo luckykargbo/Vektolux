@@ -39,7 +39,7 @@ async function hashPassword(password: string): Promise<string> {
   return `${saltHex}:${hashHex}`;
 }
 
-async function verifyPassword(
+export async function verifyPassword(
   password: string,
   storedHash: string
 ): Promise<boolean> {

@@ -28,6 +28,7 @@ import {
   parseCarrierResponse,
   logGatewayError,
 } from "./lib/paymentErrors";
+import { verifyPassword } from "./auth";
 
 // ─── COMMISSION RATES (basis points) ─────────────────────────────────
 
@@ -1104,6 +1105,56 @@ export const verifyWalletPin = query({
     return {
       valid: testHash === user.walletPinHash,
       hasPin: true,
+    };
+  },
+});
+
+/**
+ * Verify Transaction PIN or Account Password for payment authorization.
+ * Checks walletPinHash first, falls back to passwordHash.
+ */
+export const verifyTransactionPin = query({
+  args: {
+    userId: v.string(),
+    pin: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.db.normalizeId("users", args.userId);
+    if (!userId) return { valid: false, message: "Invalid user ID", hasPin: false };
+
+    const user = await ctx.db.get(userId);
+    if (!user) return { valid: false, message: "User not found", hasPin: false };
+
+    const pinStr = args.pin.trim();
+    if (!pinStr) return { valid: false, message: "PIN / Password cannot be empty", hasPin: Boolean(user.walletPinHash) };
+
+    // 1. Check wallet security PIN
+    if (user.walletPinHash) {
+      const testPinHash = await generateDeterministicHash(`wallet_pin_${userId}_${pinStr}`);
+      if (testPinHash === user.walletPinHash) {
+        return { valid: true, hasPin: true };
+      }
+    }
+
+    // 2. Check account password as authorization fallback
+    if (user.passwordHash) {
+      const isPasswordValid = await verifyPassword(pinStr, user.passwordHash);
+      if (isPasswordValid) {
+        return { valid: true, hasPin: Boolean(user.walletPinHash) };
+      }
+    }
+
+    // 3. Fallback: if user has neither wallet PIN nor password configured yet
+    if (!user.walletPinHash && !user.passwordHash) {
+      return { valid: true, hasPin: false };
+    }
+
+    return {
+      valid: false,
+      message: user.walletPinHash
+        ? "Incorrect 4-digit PIN or account password."
+        : "Incorrect account password.",
+      hasPin: Boolean(user.walletPinHash),
     };
   },
 });
@@ -3009,6 +3060,26 @@ export const executeP2PTransfer = mutation({
     }
     if (sender.isActive === false) {
       throw new Error("SENDER_INACTIVE: Your account has been suspended or deactivated.");
+    }
+
+    // Verify PIN / Password authorization if provided
+    if (args.pin && args.pin.trim().length > 0) {
+      const pinStr = args.pin.trim();
+      let isAuth = false;
+      if (sender.walletPinHash) {
+        const testPinHash = await generateDeterministicHash(`wallet_pin_${sender._id}_${pinStr}`);
+        if (testPinHash === sender.walletPinHash) isAuth = true;
+      }
+      if (!isAuth && sender.passwordHash) {
+        const isPasswordValid = await verifyPassword(pinStr, sender.passwordHash);
+        if (isPasswordValid) isAuth = true;
+      }
+      if (!isAuth && !sender.walletPinHash && !sender.passwordHash) {
+        isAuth = true;
+      }
+      if (!isAuth) {
+        throw new Error("INVALID_PIN: Incorrect security PIN or transaction password.");
+      }
     }
 
     // 2. Resolve sender wallet
