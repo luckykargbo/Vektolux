@@ -23,8 +23,8 @@ const __dirname = path.dirname(__filename);
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
 
 // ─── Gemini Configuration & Conversation Memory ─────────────────────
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || '').trim();
+const GEMINI_MODEL = (process.env.GEMINI_MODEL || 'gemini-3.8-flash').trim();
 
 const SYSTEM_PROMPT = `You are the official Vektolux AI Assistant on WhatsApp for Sierra Leone.
 Your job is to answer questions, build confidence, and explain how Vektolux works.
@@ -40,7 +40,7 @@ const userSessions = new Map();
 const MAX_HISTORY = 8;
 
 /**
- * Generate AI reply using Google Gemini 1.5 Flash via REST API
+ * Generate AI reply using Google Gemini via REST API
  */
 async function generateGeminiResponse(userId, userMessage) {
   if (!GEMINI_API_KEY) {
@@ -72,7 +72,7 @@ async function generateGeminiResponse(userId, userMessage) {
     history.shift();
   }
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY.trim()}`;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
 
   const requestBody = {
     systemInstruction: {
@@ -88,7 +88,10 @@ async function generateGeminiResponse(userId, userMessage) {
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': GEMINI_API_KEY,
+      },
       body: JSON.stringify(requestBody),
     });
 
