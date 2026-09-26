@@ -157,7 +157,26 @@ class _WebCheckoutModalState extends State<WebCheckoutModal>
         }
       }
 
-      // B. Query payment transaction status
+      // B. Actively verify and settle with MoniMe gateway
+      final settleRes = await _convex.action(
+        'payments:verifyAndSettleMoniMePayment',
+        args: {
+          'reference': widget.reference,
+          if (widget.userId.isNotEmpty) 'userId': widget.userId,
+        },
+      );
+
+      if (settleRes.success && settleRes.value is Map) {
+        final val = settleRes.value as Map<String, dynamic>;
+        final st = val['status']?.toString().toLowerCase();
+        final settled = val['settled'] == true;
+        if (settled || st == 'completed' || st == 'success') {
+          _handleSettlementSuccess();
+          return;
+        }
+      }
+
+      // C. Query payment transaction status fallback
       final statusRes = await _convex.query(
         'payments:getPaymentStatus',
         args: {'reference': widget.reference},

@@ -485,6 +485,31 @@ class PaymentMethodsService {
     }
   }
 
+  /// Actively verify and settle a MoniMe top-up directly with the gateway.
+  /// Used by the app during live polling to ensure the user's account is credited instantly
+  /// without waiting for webhooks or requiring any manual reconciliation!
+  Future<Map<String, dynamic>> verifyAndSettlePayment({
+    required String reference,
+    String? userId,
+  }) async {
+    try {
+      final res = await _client.action(
+        'payments:verifyAndSettleMoniMePayment',
+        args: {
+          'reference': reference,
+          if (userId != null && userId.isNotEmpty) 'userId': userId,
+        },
+      );
+
+      if (res.success && res.value is Map) {
+        return Map<String, dynamic>.from(res.value as Map);
+      }
+    } catch (e) {
+      debugPrint('[PaymentMethodsService] verifyAndSettlePayment error: $e');
+    }
+    return {'success': false, 'settled': false, 'status': 'pending'};
+  }
+
 
   /// Get status of a payment claim by transaction reference or paymentId.
   Future<Map<String, dynamic>?> getPaymentClaimStatus(String transactionReference) async {

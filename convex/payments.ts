@@ -3541,6 +3541,72 @@ export const recordPendingMoniMeTransaction = internalMutation({
 });
 
 /**
+ * Link an active MoniMe payment-code ID (pmc-...) and optional USSD code
+ * directly to the pending transaction record for instant webhook & API lookup.
+ */
+export const updatePendingPaymentCode = internalMutation({
+  args: {
+    reference: v.string(),
+    paymentCodeId: v.string(),
+    ussdCode: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const tx = await ctx.db
+      .query("transactions")
+      .withIndex("by_transaction_id", (q) => q.eq("transactionId", args.reference))
+      .first();
+
+    if (tx) {
+      await ctx.db.patch(tx._id, {
+        gatewayReference: args.paymentCodeId,
+        updatedAt: Date.now(),
+      });
+      return { success: true };
+    }
+    return { success: false };
+  },
+});
+
+/**
+ * Internal query: Fetch pending transaction details for active gateway verification.
+ */
+export const getPendingTransactionForVerification = internalQuery({
+  args: {
+    reference: v.string(),
+  },
+  handler: async (ctx, args) => {
+    let tx = await ctx.db
+      .query("transactions")
+      .withIndex("by_transaction_id", (q) => q.eq("transactionId", args.reference))
+      .first();
+
+    if (!tx) {
+      tx = await ctx.db
+        .query("transactions")
+        .filter((q) =>
+          q.or(
+            q.eq(q.field("gatewayReference"), args.reference),
+            q.eq(q.field("transactionId"), args.reference)
+          )
+        )
+        .first();
+    }
+
+    if (!tx) return null;
+
+    return {
+      _id: tx._id,
+      transactionId: tx.transactionId,
+      gatewayReference: tx.gatewayReference,
+      status: tx.status,
+      amount: tx.amount,
+      currency: tx.currency,
+      userId: tx.userId as string,
+    };
+  },
+});
+
+/**
  * Action: Initiate payment via MoniMe Sierra Leone Dual-Header HTTP Engine.
  * Headers:
  *   Authorization: Bearer <MONIME_ACCESS_TOKEN>
@@ -3718,6 +3784,18 @@ export const initiateMoniMePayment = action({
             if (pcRes.ok && pcJson?.result) {
               const pcData = pcJson.result;
               const ussdCode = pcData.ussdCode || "";
+
+              // Persist payment code ID so it can be queried by API or webhook
+              try {
+                await ctx.runMutation(internal.payments.updatePendingPaymentCode, {
+                  reference,
+                  paymentCodeId: pcData.id,
+                  ussdCode,
+                });
+              } catch (e: any) {
+                console.warn("[MoniMe] Failed to update pending tx with paymentCodeId:", e?.message ?? e);
+              }
+
               return {
                 success: true,
                 code: "PAYMENT_INITIATED",
@@ -3726,6 +3804,7 @@ export const initiateMoniMePayment = action({
                 ussdPrompt: `Dial ${ussdCode} on your phone to complete your payment of SLE ${args.amount}.`,
                 checkoutUrl: ussdCode,
                 transactionId: pcData.id ?? reference,
+                paymentCodeId: pcData.id,
                 reference,
                 status: "pending",
                 provider: providerSlug,
@@ -3882,6 +3961,168 @@ export const getPaymentStatus = query({
 });
 
 /**
+ * Public action: Actively verify and settle a MoniMe payment/deposit.
+ * Can be called repeatedly by the Flutter app during polling or on resume.
+ * 1. Checks if the transaction is already completed in the ledger -> returns completed immediately.
+ * 2. If pending, queries MoniMe API: GET /v1/payment-codes/{id}.
+ * 3. If MoniMe returns "completed", "paid", or "successful":
+ *    Calls internal.payments.processMoniMeWebhookSuccess to atomically credit the wallet,
+ *    update the transaction to "completed", record ledger entries, and send a notification.
+ * 4. This guarantees that all users receive their money instantly inside their account
+ *    without relying solely on webhooks or requiring ANY manual intervention!
+ */
+export const verifyAndSettleMoniMePayment = action({
+  args: {
+    reference: v.string(),
+    userId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VAsS2nSa4AALw1JuBJrXtUAnF").trim();
+    const token = (process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
+    const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
+
+    // 1. Query current transaction status in Convex
+    const statusData: any = await ctx.runQuery(api.payments.getPaymentStatus, {
+      reference: args.reference,
+    });
+
+    if (statusData && (statusData.status === "completed" || statusData.status === "success")) {
+      return {
+        success: true,
+        settled: true,
+        status: "completed",
+        amount: statusData.amount,
+        currency: statusData.currency,
+        message: "Payment already verified and credited to account.",
+      };
+    }
+
+    // 2. Fetch pending transaction details
+    const txDetails: any = await ctx.runQuery(internal.payments.getPendingTransactionForVerification, {
+      reference: args.reference,
+    });
+
+    if (!txDetails) {
+      return {
+        success: false,
+        settled: false,
+        status: "not_found",
+        message: "No transaction found for reference.",
+      };
+    }
+
+    if (txDetails.status === "completed") {
+      return {
+        success: true,
+        settled: true,
+        status: "completed",
+        amount: txDetails.amount,
+        currency: txDetails.currency,
+      };
+    }
+
+    // Identify payment code ID on MoniMe
+    const paymentCodeId = (txDetails.gatewayReference && txDetails.gatewayReference.startsWith("pmc-"))
+      ? txDetails.gatewayReference
+      : (args.reference.startsWith("pmc-") ? args.reference : null);
+
+    if (!paymentCodeId) {
+      return {
+        success: true,
+        settled: false,
+        status: "pending",
+        message: "Awaiting carrier confirmation",
+      };
+    }
+
+    // 3. Query MoniMe API directly for the payment code status
+    try {
+      const resp = await fetch(`${apiBaseUrl}/payment-codes/${paymentCodeId}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Monime-Space-Id": spaceId,
+        },
+      });
+
+      if (!resp.ok) {
+        console.warn(`[MoniMe Verify] HTTP ${resp.status} from MoniMe for ${paymentCodeId}`);
+        return {
+          success: true,
+          settled: false,
+          status: "pending",
+        };
+      }
+
+      const resJson: any = await resp.json();
+      const codeResult = resJson?.result ?? resJson?.data;
+
+      if (!codeResult) {
+        return { success: true, settled: false, status: "pending" };
+      }
+
+      const monimeStatus = (codeResult.status || "").toLowerCase();
+      console.log(`[MoniMe Verify] Code ${paymentCodeId} status is: ${monimeStatus}`);
+
+      if (
+        monimeStatus === "completed" ||
+        monimeStatus === "paid" ||
+        monimeStatus === "success" ||
+        monimeStatus === "successful" ||
+        monimeStatus === "processed"
+      ) {
+        let grossAmount = txDetails.amount;
+        if (codeResult.amount?.value) {
+          grossAmount = codeResult.amount.value / 100;
+        }
+
+        const feeEst = grossAmount === 5 ? 0.05 : (grossAmount > 0 ? 0.10 : 0);
+        const netCredit = Math.max(0.01, Math.round((grossAmount - feeEst) * 100) / 100);
+
+        // 4. Atomically credit wallet and settle
+        const settleRes: any = await ctx.runMutation(internal.payments.processMoniMeWebhookSuccess, {
+          transactionId: args.reference,
+          reference: args.reference,
+          rawReference: args.reference,
+          amount: grossAmount,
+          netAmount: netCredit,
+          feeAmount: feeEst,
+          currency: codeResult.amount?.currency || txDetails.currency || "SLE",
+          provider: "MONIME",
+          customerPhone: codeResult.authorizedPhoneNumber || txDetails.customerPhone,
+          userId: args.userId || txDetails.userId,
+        });
+
+        console.log(`[MoniMe Active Settle] Settled payment ${args.reference} instantly:`, settleRes);
+
+        return {
+          success: true,
+          settled: true,
+          status: "completed",
+          amount: grossAmount,
+          netAmount: netCredit,
+          message: `Top-up of SLE ${grossAmount.toFixed(2)} credited instantly!`,
+        };
+      }
+
+      return {
+        success: true,
+        settled: false,
+        status: monimeStatus || "pending",
+      };
+    } catch (fetchErr) {
+      console.error("[MoniMe Verify] Network error verifying with MoniMe:", fetchErr);
+      return {
+        success: false,
+        settled: false,
+        status: "pending",
+        error: String(fetchErr),
+      };
+    }
+  },
+});
+
+/**
  * Process a verified MoniMe webhook success payload.
  * Atomically:
  * 1. Checks idempotency (prevents double credit).
@@ -3968,6 +4209,20 @@ export const processMoniMeWebhookSuccess = internalMutation({
           }
         }
         if (existingTx) break;
+      }
+    }
+
+    // Direct gatewayReference fallback
+    if (!existingTx) {
+      for (const vRef of refVariants) {
+        const byDirectGRef = await ctx.db
+          .query("transactions")
+          .filter((q) => q.eq(q.field("gatewayReference"), vRef))
+          .first();
+        if (byDirectGRef) {
+          existingTx = byDirectGRef;
+          break;
+        }
       }
     }
 

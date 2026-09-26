@@ -131,7 +131,7 @@ class _UssdPaymentSheetState extends State<UssdPaymentSheet>
     }
   }
 
-  /// Poll Convex database for transaction completion status
+  /// Poll Convex and actively query MoniMe gateway for real-time completion
   void _startStatusPolling() {
     _pollingTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
       if (!mounted || _isCompleted) {
@@ -147,6 +147,29 @@ class _UssdPaymentSheetState extends State<UssdPaymentSheet>
 
       try {
         final client = context.read<ConvexClientWrapper>();
+
+        // 1. Actively verify and settle with MoniMe gateway
+        final settleRes = await client.action(
+          'payments:verifyAndSettleMoniMePayment',
+          args: {'reference': widget.reference},
+        );
+
+        if (settleRes.success && settleRes.value is Map) {
+          final data = Map<String, dynamic>.from(settleRes.value as Map);
+          final status = (data['status'] as String? ?? '').toLowerCase();
+          final settled = data['settled'] == true;
+
+          if (settled || status == 'completed' || status == 'success') {
+            timer.cancel();
+            _handleSuccess();
+            return;
+          } else if (status == 'failed') {
+            timer.cancel();
+            return;
+          }
+        }
+
+        // 2. Secondary check against Convex database status query
         final res = await client.query(
           'payments:getPaymentStatus',
           args: {'reference': widget.reference},
@@ -186,18 +209,6 @@ class _UssdPaymentSheetState extends State<UssdPaymentSheet>
     if (mounted) {
       Navigator.of(context).pop(true);
     }
-  }
-
-  void _copyUssdCode() {
-    Clipboard.setData(ClipboardData(text: widget.dialCode));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('✓ USSD code ${widget.dialCode} copied!'),
-        backgroundColor: AppColors.obsidian,
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
 
   @override
@@ -284,7 +295,7 @@ class _UssdPaymentSheetState extends State<UssdPaymentSheet>
         const Align(
           alignment: Alignment.centerLeft,
           child: Text(
-            'Dial the USSD code below to finalize your transaction',
+            'Approve the mobile money prompt on your phone with your PIN. Your Vektolux wallet is credited instantly.',
             style: TextStyle(fontSize: 12, color: AppColors.gray600),
           ),
         ),
@@ -345,40 +356,40 @@ class _UssdPaymentSheetState extends State<UssdPaymentSheet>
           ),
           child: Column(
             children: [
-              const Text(
-                'YOUR CARRIER USSD CODE',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.1,
-                  color: AppColors.emeraldDark,
-                ),
-              ),
-              const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  SelectableText(
-                    widget.dialCode,
-                    style: const TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.5,
-                      color: AppColors.obsidian,
-                      fontFamily: 'monospace',
+                  const Icon(Icons.bolt_rounded, size: 14, color: AppColors.emeraldDark),
+                  const SizedBox(width: 4),
+                  const Text(
+                    'INSTANT AUTOMATIC SETTLEMENT',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.1,
+                      color: AppColors.emeraldDark,
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    onPressed: _copyUssdCode,
-                    icon: const Icon(Icons.copy_rounded, size: 18, color: AppColors.emeraldDark),
-                    tooltip: 'Copy USSD Code',
-                    constraints: const BoxConstraints(),
-                    padding: const EdgeInsets.all(4),
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
+              SelectableText(
+                widget.dialCode,
+                style: const TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.5,
+                  color: AppColors.obsidian,
+                  fontFamily: 'monospace',
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Funds are credited automatically upon entering your PIN.\nNo codes to copy or save!',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11.5, color: AppColors.gray700, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: const [
@@ -392,7 +403,7 @@ class _UssdPaymentSheetState extends State<UssdPaymentSheet>
                   ),
                   SizedBox(width: 8),
                   Text(
-                    'Listening for carrier confirmation...',
+                    'Listening for carrier settlement...',
                     style: TextStyle(fontSize: 11, color: AppColors.gray600),
                   ),
                 ],
@@ -419,8 +430,12 @@ class _UssdPaymentSheetState extends State<UssdPaymentSheet>
             ),
             icon: const Icon(Icons.phone_in_talk_rounded, size: 20),
             label: Text(
-              _isDialing ? 'Opening Phone App...' : 'Tap to Dial / Call Now',
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+              _isDialing ? 'Connecting Dialer...' : 'Re-open Phone Dialer',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.2,
+              ),
             ),
           ),
         ),
