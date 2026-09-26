@@ -15,7 +15,7 @@ import {
   internalAction,
   MutationCtx,
 } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { internal, api } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import {
   requirePositive,
@@ -3795,6 +3795,43 @@ export const initiateMoniMePayment = action({
 });
 
 /**
+ * Public action: create an interactive web/in-app checkout or payment code top-up session.
+ * Reconciled against MoniMe gateway and automatically routed into Web Checkout Modal or carrier dialer.
+ */
+export const createTopUpSession = action({
+  args: {
+    amount: v.number(),
+    phoneNumber: v.optional(v.string()),
+    customerPhone: v.optional(v.string()),
+    provider: v.optional(v.string()),
+    email: v.optional(v.string()),
+    customerEmail: v.optional(v.string()),
+    customerName: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    walletId: v.optional(v.string()),
+    currency: v.optional(v.string()),
+    description: v.optional(v.string()),
+    returnUrl: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const res: any = await ctx.runAction(api.payments.initiateMoniMePayment, {
+      amount: args.amount,
+      phoneNumber: args.phoneNumber || args.customerPhone,
+      customerPhone: args.phoneNumber || args.customerPhone,
+      provider: args.provider,
+      email: args.email || args.customerEmail,
+      customerEmail: args.email || args.customerEmail,
+      customerName: args.customerName,
+      userId: args.userId,
+      currency: args.currency,
+      description: args.description,
+      returnUrl: args.returnUrl,
+    });
+    return res;
+  },
+});
+
+/**
  * Query payment transaction status by reference.
  * Real-time polling endpoint for USSD payment bottom sheet.
  */
@@ -3857,6 +3894,9 @@ export const processMoniMeWebhookSuccess = internalMutation({
   args: {
     transactionId: v.string(),
     reference: v.optional(v.string()),
+    rawReference: v.optional(v.string()),
+    orderNumber: v.optional(v.string()),
+    walletId: v.optional(v.string()),
     amount: v.number(),
     netAmount: v.optional(v.number()),
     feeAmount: v.optional(v.number()),
@@ -3872,18 +3912,25 @@ export const processMoniMeWebhookSuccess = internalMutation({
     const provider = args.provider || "MONIME";
     const lookupRef = args.reference || args.transactionId;
 
-    // Build reference variants handling section sign (§) vs underscore (_)
-    const rawVariants = [
+    // Build reference variants handling section sign (§) vs underscore (_) and order numbers
+    const allRefs = [
       lookupRef,
       lookupRef.replace(/§/g, "_"),
       lookupRef.replace(/_/g, "§"),
       args.transactionId,
       args.transactionId.replace(/§/g, "_"),
       args.transactionId.replace(/_/g, "§"),
-    ];
-    const refVariants = Array.from(new Set(rawVariants.filter(Boolean)));
+      args.rawReference,
+      args.rawReference?.replace(/§/g, "_"),
+      args.rawReference?.replace(/_/g, "§"),
+      args.orderNumber,
+      args.orderNumber?.replace(/-/g, ""),
+      args.orderNumber?.replace(/(\w{4})(\w{4})(\w{4})/, "$1-$2-$3"),
+    ].filter(Boolean) as string[];
 
-    // 1. Idempotency Check A: by transactionId
+    const refVariants = Array.from(new Set(allRefs));
+
+    // 1. Idempotency Check A: by transactionId across all variants
     let existingTx: Doc<"transactions"> | null = null;
     for (const vRef of refVariants) {
       existingTx = await ctx.db
@@ -3896,7 +3943,16 @@ export const processMoniMeWebhookSuccess = internalMutation({
     // Idempotency Check B: by gatewayReference across common MoniMe providers
     if (!existingTx) {
       const candidateProviders = Array.from(
-        new Set([provider, "MONIME_ORANGE", "MONIME", "MONIME_AFRICELL", "MONIME_QMONEY"])
+        new Set([
+          provider,
+          "MONIME_ORANGE",
+          "MONIME",
+          "MONIME_AFRICELL",
+          "MONIME_QMONEY",
+          "orange",
+          "africell",
+          "qmoney",
+        ])
       );
       for (const candProv of candidateProviders) {
         for (const vRef of refVariants) {
@@ -3925,9 +3981,21 @@ export const processMoniMeWebhookSuccess = internalMutation({
       };
     }
 
-    // 2. Identify target user
+    // 2. Identify target user & wallet
     let user: Doc<"users"> | null = null;
-    if (args.userId) {
+    let targetWallet: Doc<"walletBalances"> | null = null;
+
+    if (args.walletId) {
+      const normWId = ctx.db.normalizeId("walletBalances", args.walletId);
+      if (normWId) {
+        targetWallet = await ctx.db.get(normWId);
+        if (targetWallet) {
+          user = await ctx.db.get(targetWallet.userId);
+        }
+      }
+    }
+
+    if (!user && args.userId) {
       const userNorm = ctx.db.normalizeId("users", args.userId);
       if (userNorm) user = await ctx.db.get(userNorm);
     }
@@ -3947,6 +4015,33 @@ export const processMoniMeWebhookSuccess = internalMutation({
       }
     }
 
+    // Fallback: check if the reference contains a numeric timestamp
+    if (!user) {
+      for (const vRef of refVariants) {
+        const parts = vRef.split(/[§_]/);
+        for (const part of parts) {
+          if (part.length >= 12 && /^\d+$/.test(part)) {
+            const ts = parseInt(part, 10);
+            const nearTx = await ctx.db
+              .query("transactions")
+              .filter((q) =>
+                q.and(
+                  q.gte(q.field("createdAt"), ts - 60000),
+                  q.lte(q.field("createdAt"), ts + 60000)
+                )
+              )
+              .first();
+            if (nearTx) {
+              user = await ctx.db.get(nearTx.userId);
+              if (!existingTx) existingTx = nearTx;
+              break;
+            }
+          }
+        }
+        if (user) break;
+      }
+    }
+
     if (!user) {
       console.warn("MoniMe deposit: could not resolve user for phone:", args.customerPhone);
       return {
@@ -3957,20 +4052,44 @@ export const processMoniMeWebhookSuccess = internalMutation({
       };
     }
 
-    // Calculate net credit amount (e.g. 10.00 gross -> 9.90 net with 0.10 fee)
-    const fee = args.feeAmount !== undefined ? args.feeAmount : (args.netAmount !== undefined ? (args.amount - args.netAmount) : 0.10);
+    // If existingTx is still null, look for recent pending top-up from this user
+    if (!existingTx) {
+      const userTxns = await ctx.db
+        .query("transactions")
+        .withIndex("by_user", (q) => q.eq("userId", user!._id))
+        .collect();
+      existingTx =
+        userTxns.find(
+          (tx) =>
+            tx.type === "top_up" &&
+            tx.status === "pending" &&
+            Math.abs(tx.amount - args.amount) < 0.01
+        ) ?? null;
+    }
+
+    // Calculate net credit amount (e.g. 5.00 gross -> 4.95 net with 0.05 fee)
+    const fee =
+      args.feeAmount !== undefined
+        ? args.feeAmount
+        : args.netAmount !== undefined
+        ? args.amount - args.netAmount
+        : args.amount === 5
+        ? 0.05
+        : 0.10;
     const creditAmount =
       args.netAmount !== undefined && args.netAmount > 0
         ? args.netAmount
-        : Math.max(0.01, args.amount - fee);
+        : Math.max(0.01, Math.round((args.amount - fee) * 100) / 100);
 
     // 3. Atomically credit user's wallet
-    let wallet = await ctx.db
-      .query("walletBalances")
-      .withIndex("by_user_currency", (q) =>
-        q.eq("userId", user!._id).eq("currency", currency)
-      )
-      .first();
+    let wallet =
+      targetWallet ??
+      (await ctx.db
+        .query("walletBalances")
+        .withIndex("by_user_currency", (q) =>
+          q.eq("userId", user!._id).eq("currency", currency)
+        )
+        .first());
 
     let newAvailableBalance = creditAmount;
     let newEscrowBalance = creditAmount;
@@ -3987,8 +4106,8 @@ export const processMoniMeWebhookSuccess = internalMutation({
       });
     } else {
       walletId = wallet._id;
-      newAvailableBalance = (wallet.availableBalance ?? 0) + creditAmount;
-      newEscrowBalance = (wallet.escrowBalance ?? 0) + creditAmount;
+      newAvailableBalance = Math.round(((wallet.availableBalance ?? 0) + creditAmount) * 100) / 100;
+      newEscrowBalance = Math.round(((wallet.escrowBalance ?? 0) + creditAmount) * 100) / 100;
       await ctx.db.patch(wallet._id, {
         availableBalance: newAvailableBalance,
         escrowBalance: newEscrowBalance,
@@ -3998,6 +4117,8 @@ export const processMoniMeWebhookSuccess = internalMutation({
 
     // 4. Update existing pending transaction or insert new completed transaction
     const normalizedGatewayRef = lookupRef.replace(/§/g, "_");
+    const displayOrder = args.orderNumber ? ` [Order: ${args.orderNumber}]` : "";
+
     if (existingTx) {
       await ctx.db.patch(existingTx._id, {
         status: "completed",
@@ -4006,12 +4127,12 @@ export const processMoniMeWebhookSuccess = internalMutation({
         feeAmount: fee,
         gatewayReference: normalizedGatewayRef,
         failureReason: undefined,
-        description: `MoniMe Top-Up — SLE ${args.amount.toFixed(2)} (Net: SLE ${creditAmount.toFixed(2)}) via ${provider}`,
+        description: `MoniMe Top-Up — SLE ${args.amount.toFixed(2)} (Net: SLE ${creditAmount.toFixed(2)}) via ${provider}${displayOrder}`,
         updatedAt: now,
       });
     } else {
       await ctx.db.insert("transactions", {
-        transactionId: args.transactionId,
+        transactionId: args.orderNumber || args.transactionId,
         walletId,
         userId: user._id,
         type: "top_up",
@@ -4022,7 +4143,7 @@ export const processMoniMeWebhookSuccess = internalMutation({
         gatewayProvider: provider,
         gatewayReference: normalizedGatewayRef,
         status: "completed",
-        description: `MoniMe Top-Up — SLE ${args.amount.toFixed(2)} (Net: SLE ${creditAmount.toFixed(2)}) via ${provider}`,
+        description: `MoniMe Top-Up — SLE ${args.amount.toFixed(2)} (Net: SLE ${creditAmount.toFixed(2)}) via ${provider}${displayOrder}`,
         createdAt: now,
         updatedAt: now,
       });

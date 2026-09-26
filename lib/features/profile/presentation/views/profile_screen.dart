@@ -37,6 +37,7 @@ import '../../../../core/models/payment_account.dart';
 import 'widgets/ussd_payment_sheet.dart';
 import 'widgets/camera_qr_scanner_view.dart';
 import 'widgets/verified_ledger_transfer_sheet.dart';
+import 'widgets/web_checkout_modal.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -4760,7 +4761,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               try {
                 final uEmail = user?.email.trim();
                 final uName = user?.name.trim();
-                final result = await PaymentMethodsService.instance.initiateMoniMePayment(
+                final result = await PaymentMethodsService.instance.createTopUpSession(
                   amount: amt,
                   currency: 'SLE',
                   phoneNumber: normalizedPhone,
@@ -4783,27 +4784,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                   if (modalCtx.mounted) Navigator.of(modalCtx).pop();
 
-                  if (checkoutUrl.isNotEmpty && checkoutUrl.startsWith('http')) {
-                    final uri = Uri.tryParse(checkoutUrl);
-                    if (uri != null && await canLaunchUrl(uri)) {
-                      await launchUrl(uri, mode: LaunchMode.externalApplication);
-                    }
-                  }
-
                   if (context.mounted) {
-                    await UssdPaymentSheet.show(
-                      context,
-                      dialCode: carrierDial,
-                      reference: ref,
-                      amount: amt,
-                      serviceFee: 0.0,
-                      serviceProvider: pName,
-                      recipient: _formatPhoneDisplay(normalizedPhone),
-                      transactionType: 'Wallet Deposit',
-                      onPaymentCompleted: () {
-                        _fetchWalletData();
-                      },
-                    );
+                    if (checkoutUrl.isNotEmpty && checkoutUrl.startsWith('http')) {
+                      await WebCheckoutModal.show(
+                        context,
+                        checkoutUrl: checkoutUrl,
+                        reference: ref,
+                        amount: amt,
+                        serviceProvider: pName,
+                        recipient: _formatPhoneDisplay(normalizedPhone),
+                        userId: user?.id ?? '',
+                        dialCode: carrierDial,
+                        onPaymentConfirmed: () {
+                          _fetchWalletData();
+                        },
+                      );
+                    } else {
+                      await UssdPaymentSheet.show(
+                        context,
+                        dialCode: carrierDial,
+                        reference: ref,
+                        amount: amt,
+                        serviceFee: amt == 5 ? 0.05 : 0.10,
+                        serviceProvider: pName,
+                        recipient: _formatPhoneDisplay(normalizedPhone),
+                        transactionType: 'Wallet Deposit',
+                        onPaymentCompleted: () {
+                          _fetchWalletData();
+                        },
+                      );
+                    }
                     _fetchWalletData();
                   }
                 } else {

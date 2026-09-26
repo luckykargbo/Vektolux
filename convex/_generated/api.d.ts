@@ -28,6 +28,7 @@ import type * as notifications from "../notifications.js";
 import type * as payments from "../payments.js";
 import type * as realEstate from "../realEstate.js";
 import type * as realEstateEscrow from "../realEstateEscrow.js";
+import type * as reconcile from "../reconcile.js";
 import type * as rides from "../rides.js";
 import type * as seedData from "../seedData.js";
 import type * as social from "../social.js";
@@ -63,6 +64,7 @@ declare const fullApi: ApiFromModules<{
   payments: typeof payments;
   realEstate: typeof realEstate;
   realEstateEscrow: typeof realEstateEscrow;
+  reconcile: typeof reconcile;
   rides: typeof rides;
   seedData: typeof seedData;
   social: typeof social;

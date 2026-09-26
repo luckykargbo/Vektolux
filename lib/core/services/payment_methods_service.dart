@@ -387,6 +387,104 @@ class PaymentMethodsService {
     }
   }
 
+  /// Create an interactive top-up session via `payments:createTopUpSession`.
+  Future<Map<String, dynamic>> createTopUpSession({
+    required double amount,
+    String? phoneNumber,
+    String? customerPhone,
+    required String provider,
+    String? email,
+    String? customerEmail,
+    String? userId,
+    String? walletId,
+    String currency = 'SLE',
+    String? customerName,
+    String? description,
+    String? returnUrl,
+  }) async {
+    final activePhone = (phoneNumber != null && phoneNumber.trim().isNotEmpty)
+        ? phoneNumber.trim()
+        : (customerPhone?.trim() ?? '');
+    final activeEmail = (email != null && email.trim().isNotEmpty)
+        ? email.trim()
+        : (customerEmail?.trim());
+
+    try {
+      final res = await _client.action(
+        'payments:createTopUpSession',
+        args: {
+          'amount': amount,
+          'phoneNumber': activePhone,
+          'customerPhone': activePhone,
+          'provider': provider,
+          if (activeEmail != null && activeEmail.isNotEmpty)
+            'email': activeEmail,
+          'currency': currency,
+          if (userId != null && userId.isNotEmpty) 'userId': userId,
+          if (walletId != null && walletId.isNotEmpty) 'walletId': walletId,
+          if (customerName != null && customerName.isNotEmpty)
+            'customerName': customerName,
+          if (description != null && description.isNotEmpty)
+            'description': description,
+          if (returnUrl != null && returnUrl.isNotEmpty)
+            'returnUrl': returnUrl,
+        },
+      );
+
+      if (res.success && res.value is Map) {
+        final val = Map<String, dynamic>.from(res.value as Map);
+        final bool isSuccess = val['success'] == true;
+        if (isSuccess) {
+          return {
+            'success': true,
+            'code': val['code']?.toString() ?? 'PAYMENT_INITIATED',
+            'message': val['message']?.toString() ?? '',
+            'transactionId': val['transactionId']?.toString() ??
+                val['reference']?.toString() ??
+                '',
+            'checkoutUrl': val['checkoutUrl']?.toString() ?? '',
+            'ussdPrompt': val['ussdPrompt']?.toString() ?? '',
+            'ussdCode': val['ussdCode']?.toString() ?? val['dialCode']?.toString() ?? '',
+            'reference': val['reference']?.toString() ?? '',
+            'provider': val['provider']?.toString() ?? provider,
+          };
+        } else {
+          return {
+            'success': false,
+            'code': val['code']?.toString() ?? 'PAYMENT_FAILED',
+            'message': val['message']?.toString() ??
+                val['error']?.toString() ??
+                'Top-up session creation failed',
+            'error': val['message']?.toString() ??
+                val['error']?.toString() ??
+                'Top-up session creation failed',
+            'rawError': val['rawError'],
+          };
+        }
+      } else {
+        return await initiateMoniMePayment(
+          amount: amount,
+          phoneNumber: activePhone,
+          provider: provider,
+          email: activeEmail,
+          userId: userId,
+          currency: currency,
+          customerName: customerName,
+          description: description,
+          returnUrl: returnUrl,
+        );
+      }
+    } catch (e) {
+      debugPrint('[PaymentMethodsService] createTopUpSession error: $e');
+      return {
+        'success': false,
+        'code': 'GATEWAY_ERROR',
+        'message': e.toString(),
+        'error': e.toString(),
+      };
+    }
+  }
+
 
   /// Get status of a payment claim by transaction reference or paymentId.
   Future<Map<String, dynamic>?> getPaymentClaimStatus(String transactionReference) async {
