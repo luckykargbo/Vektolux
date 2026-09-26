@@ -108,9 +108,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Vektolux Mobile Release (v1.0.20) — Automated Instant Wallet Settlement & In-App Web Checkout"
+          name: "Vektolux Mobile Release (v1.0.21) — Escrow Security PIN Authorization & Live MoniMe Payouts"
           body: |
-            ## Vektolux Mobile App Builds (v1.0.20) — Automated Instant Settlement & In-App Web Checkout
+            ## Vektolux Mobile App Builds (v1.0.21) — Escrow Security PIN Authorization & Live MoniMe Payouts
 
             ### Direct Downloads:
             - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
@@ -118,19 +118,20 @@ jobs:
             - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
               * Direct sideload / install on any Android device.
 
-            ### What's New in this Build (v1.0.20):
-            - **Automated Instant Wallet Settlement (Zero Codes to Copy or Save)**:
-              * Active Gateway Verification: During the 2s polling loop, Convex queries the MoniMe gateway API directly (`GET /v1/payment-codes/{id}`).
-              * Instant Ledger Credit: The exact second the user approves the mobile money prompt with their PIN, the wallet balance is atomically credited and celebration view triggers.
-              * No manual reconciliation or transaction code copying required.
-            - **In-App Web Checkout Modal (`WebCheckoutModal`)**:
-              * Interactive in-app webview checkout portal launched with `url_launcher`.
-              * Real-time balance and gateway status polling with auto-dismissal on confirmed settlement.
-            - **Live Camera QR Scanner & PIN Auth Ledger Transfers**:
-              * Integrated `MobileScanner` viewfinder with haptic detection.
-              * Auto-fills Verified Ledger Transfer bottom sheet with scanned recipient info and double-entry PIN verification.
-            - **Hardened Dual-Header MoniMe Webhook Engine**:
-              * Verified HMAC SHA-256 signatures, space ID validation (`spc-k6VAsS2nSa4AALw1JuBJrXtUAnF`), and delimited reference parsing (`§` / `_`).
+            ### What's New in this Build (v1.0.21):
+            - **Mandatory Escrow Security PIN on Withdrawals**:
+              * When tapping "Withdraw" in the profile screen, the app validates whether the user has configured their 4-digit PIN.
+              * If not configured, automatically routes the user to set up their 4-digit Escrow Security PIN first.
+              * If configured, prompts a dedicated, sleek 4-digit PIN confirmation bottom sheet before payout submission.
+            - **Live MoniMe Outbound Payouts Pipeline**:
+              * Atomically reserves wallet balance in Convex backend.
+              * Securely calls the MoniMe API (`https://api.monime.io/v1/payouts`) to disburse funds directly to Orange Money (`m17`) or Africell Money (`m18`).
+              * Automatically transitions transaction status to `completed` upon success or auto-refunds the balance if the gateway rejects the transaction.
+            - **Instant Wallet Settlement & Web Checkout**:
+              * Zero-friction top-ups with active polling and instant ledger credit.
+              * Interactive in-app WebCheckout portal for smooth card and carrier payments.
+            - **Live Camera QR Scanner & Verified Ledger Transfers**:
+              * MobileScanner viewfinder with haptic detection and PIN authorization.
           files: release-assets/*
           prerelease: false
           make_latest: true
