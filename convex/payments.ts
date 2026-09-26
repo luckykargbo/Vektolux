@@ -1110,6 +1110,22 @@ export const verifyWalletPin = query({
 });
 
 /**
+ * Query whether a user has configured an Escrow Security PIN or password.
+ */
+export const getUserSecurityPinStatus = query({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = ctx.db.normalizeId("users", args.userId);
+    if (!userId) return { hasPin: false, hasPassword: false };
+    const user = await ctx.db.get(userId);
+    return {
+      hasPin: Boolean(user?.walletPinHash),
+      hasPassword: Boolean(user?.passwordHash),
+    };
+  },
+});
+
+/**
  * Verify Transaction PIN or Account Password for payment authorization.
  * Checks walletPinHash first, falls back to passwordHash.
  */
@@ -2378,9 +2394,22 @@ export const requestWithdrawal = action({
     destinationProviderCode: v.string(),
     destinationAccountNumber: v.string(),
     currency: v.optional(v.string()),
+    pin: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<any> => {
     if (args.amount <= 0) throw new Error("Withdrawal amount must be positive");
+
+    // 0. Verify Escrow Security PIN or Transaction Password
+    if (!args.pin || args.pin.trim().length === 0) {
+      throw new Error("Escrow Security PIN is required to authorize withdrawal.");
+    }
+    const pinCheck: any = await ctx.runQuery(api.payments.verifyTransactionPin, {
+      userId: args.userId,
+      pin: args.pin.trim(),
+    });
+    if (!pinCheck.valid) {
+      throw new Error(pinCheck.message || "Invalid Security PIN. Authorization rejected.");
+    }
 
     // 1. Clean and normalize phone number
     let cleanPhone = args.destinationAccountNumber.replace(/\D/g, "");

@@ -184,3 +184,25 @@ export const creditAhmedTopUp = mutation({
     };
   },
 });
+
+export const inspectAhmedWithdrawals = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = ctx.db.normalizeId("users", "jx760xc0621p5tgwphtfn2r98h8ex3be");
+    if (!userId) return { error: "Invalid user ID" };
+    const user = await ctx.db.get(userId);
+    const txns = await ctx.db
+      .query("transactions")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    const wallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    return {
+      user,
+      wallet,
+      txns,
+    };
+  },
+});

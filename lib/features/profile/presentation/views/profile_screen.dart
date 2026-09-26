@@ -3544,7 +3544,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _showWalletPinModal(BuildContext context, UserEntity? user) {
+  void _showWalletPinModal(BuildContext context, UserEntity? user, {VoidCallback? onPinSet}) {
     if (user == null) return;
     final pinController = TextEditingController();
     final confirmPinController = TextEditingController();
@@ -3705,6 +3705,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 if (res.success) {
                                   if (modalCtx.mounted) {
                                     Navigator.of(modalCtx).pop();
+                                  }
+                                  if (onPinSet != null) {
+                                    onPinSet();
                                   }
                                   if (context.mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
@@ -5489,6 +5492,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       onPressed: isProcessing
                           ? null
                           : () async {
+                              if (user == null) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Please log in to withdraw funds.')),
+                                );
+                                return;
+                              }
+
                               final amt = double.tryParse(amountCtrl.text.trim()) ?? 0;
                               if (amt <= 0) {
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -5503,41 +5513,70 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 return;
                               }
 
+                              final destPhone = activeMethod.accountNumber.isNotEmpty
+                                  ? activeMethod.accountNumber
+                                  : user.phone;
+                              if (destPhone.trim().isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Please link or enter a destination mobile money number.')),
+                                );
+                                return;
+                              }
+
                               setModalState(() => isProcessing = true);
                               try {
                                 final client = context.read<ConvexClientWrapper>();
-                                final res = await client.action(
-                                  'payments:requestWithdrawal',
-                                  args: {
-                                    'userId': user?.id ?? '',
-                                    'amount': amt,
-                                    'destinationProviderCode': activeMethod.providerCode,
-                                    'destinationAccountNumber': activeMethod.accountNumber.isNotEmpty
-                                        ? activeMethod.accountNumber
-                                        : (user?.phone ?? ''),
-                                  },
+                                final pinStatusRes = await client.query(
+                                  'payments:getUserSecurityPinStatus',
+                                  args: {'userId': user.id},
                                 );
+                                setModalState(() => isProcessing = false);
 
-                                if (res.success) {
-                                  await _fetchWalletData();
+                                final bool hasPin = pinStatusRes.success &&
+                                    pinStatusRes.value is Map &&
+                                    (pinStatusRes.value['hasPin'] == true);
+
+                                if (!hasPin) {
                                   if (modalCtx.mounted) {
                                     Navigator.of(modalCtx).pop();
+                                  }
+                                  if (context.mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Payout request of SLE ${amt.toStringAsFixed(2)} submitted successfully!'),
-                                        backgroundColor: AppColors.emeraldDark,
+                                      const SnackBar(
+                                        content: Text('🛡️ Please configure your 4-Digit Escrow Security PIN before withdrawing funds.'),
+                                        backgroundColor: AppColors.obsidian,
                                         behavior: SnackBarBehavior.floating,
                                       ),
                                     );
+                                    _showWalletPinModal(context, user, onPinSet: () {
+                                      _showWithdrawEscrowSheet(context, user);
+                                    });
                                   }
-                                } else {
-                                  throw Exception(res.errorMessage ?? 'Withdrawal failed');
+                                  return;
+                                }
+
+                                // User has PIN -> Close amount sheet and open PIN authorization sheet
+                                if (modalCtx.mounted) {
+                                  Navigator.of(modalCtx).pop();
+                                }
+                                if (context.mounted) {
+                                  _showWithdrawalPinConfirmationSheet(
+                                    context,
+                                    user: user,
+                                    amount: amt,
+                                    providerCode: activeMethod.providerCode,
+                                    providerName: activeMethod.providerName,
+                                    destinationPhone: destPhone,
+                                    onWithdrawalCompleted: () {
+                                      _fetchWalletData();
+                                    },
+                                  );
                                 }
                               } catch (e) {
                                 setModalState(() => isProcessing = false);
                                 if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Withdrawal error: $e'), backgroundColor: AppColors.error),
+                                    SnackBar(content: Text('Withdrawal check error: $e'), backgroundColor: AppColors.error),
                                   );
                                 }
                               }
@@ -5549,6 +5588,310 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                             )
                           : const Text('Authorize & Withdraw', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showWithdrawalPinConfirmationSheet(
+    BuildContext context, {
+    required UserEntity user,
+    required double amount,
+    required String providerCode,
+    required String providerName,
+    required String destinationPhone,
+    required VoidCallback onWithdrawalCompleted,
+  }) {
+    final pinController = TextEditingController();
+    bool isProcessing = false;
+    String? pinError;
+    bool obscurePin = true;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (modalCtx, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 24,
+                right: 24,
+                top: 20,
+                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.gray300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.emeraldSurface,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.shield_rounded,
+                            color: AppColors.emeraldDark, size: 24),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Authorize Escrow Payout',
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.obsidian,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Enter your 4-digit PIN to release funds',
+                              style: TextStyle(
+                                  fontSize: 12, color: AppColors.gray500),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Payout Amount:',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF64748B),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Text(
+                              'SLE ${amount.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.emeraldDark,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Destination:',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF64748B),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Text(
+                              '$providerName ($destinationPhone)',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.obsidian,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        const Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Carrier Fee:',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF64748B),
+                              ),
+                            ),
+                            Text(
+                              'SLE 0.00 (Free)',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.emeraldDark,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  TextFormField(
+                    controller: pinController,
+                    keyboardType: TextInputType.number,
+                    obscureText: obscurePin,
+                    maxLength: 4,
+                    autofocus: true,
+                    style: const TextStyle(
+                      color: Color(0xFF0F172A),
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 12,
+                    ),
+                    cursorColor: const Color(0xFF10B981),
+                    onChanged: (val) {
+                      if (pinError != null) {
+                        setModalState(() => pinError = null);
+                      }
+                    },
+                    decoration: InputDecoration(
+                      labelText: '4-Digit Escrow Security PIN',
+                      labelStyle: const TextStyle(color: Color(0xFF64748B), letterSpacing: 0),
+                      hintText: '••••',
+                      hintStyle: const TextStyle(color: Color(0xFF94A3B8), letterSpacing: 0),
+                      prefixIcon: const Icon(Icons.lock_rounded, color: Color(0xFF64748B)),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscurePin ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                          color: const Color(0xFF64748B),
+                          size: 20,
+                        ),
+                        onPressed: () => setModalState(() => obscurePin = !obscurePin),
+                      ),
+                      counterText: '',
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: pinError != null ? AppColors.error : const Color(0xFFCBD5E1),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (pinError != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      pinError!,
+                      style: const TextStyle(color: AppColors.error, fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.emerald,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                      onPressed: isProcessing
+                          ? null
+                          : () async {
+                              final pin = pinController.text.trim();
+                              if (pin.length != 4) {
+                                setModalState(() => pinError = 'Please enter your 4-digit PIN.');
+                                return;
+                              }
+
+                              setModalState(() {
+                                isProcessing = true;
+                                pinError = null;
+                              });
+
+                              try {
+                                final client = context.read<ConvexClientWrapper>();
+
+                                final res = await client.action(
+                                  'payments:requestWithdrawal',
+                                  args: {
+                                    'userId': user.id,
+                                    'amount': amount,
+                                    'destinationProviderCode': providerCode,
+                                    'destinationAccountNumber': destinationPhone,
+                                    'pin': pin,
+                                  },
+                                );
+
+                                if (res.success) {
+                                  if (modalCtx.mounted) {
+                                    Navigator.of(modalCtx).pop();
+                                  }
+                                  onWithdrawalCompleted();
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          '✓ Payout of SLE ${amount.toStringAsFixed(2)} disbursed to $providerName ($destinationPhone) successfully!',
+                                        ),
+                                        backgroundColor: AppColors.emeraldDark,
+                                        behavior: SnackBarBehavior.floating,
+                                        duration: const Duration(seconds: 4),
+                                      ),
+                                    );
+                                  }
+                                } else {
+                                  throw Exception(res.errorMessage ?? 'Withdrawal failed');
+                                }
+                              } catch (e) {
+                                final errStr = e.toString().replaceFirst('Exception: ', '');
+                                setModalState(() {
+                                  isProcessing = false;
+                                  pinError = errStr;
+                                });
+                              }
+                            },
+                      child: isProcessing
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            )
+                          : const Text(
+                              'Confirm & Disburse Payout',
+                              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                            ),
                     ),
                   ),
                 ],
