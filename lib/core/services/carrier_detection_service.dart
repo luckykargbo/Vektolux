@@ -93,7 +93,74 @@ extension SierraLeoneCarrierExtension on SierraLeoneCarrier {
     }
   }
 
+  String get providerId {
+    switch (this) {
+      case SierraLeoneCarrier.orange:
+        return 'm17';
+      case SierraLeoneCarrier.africell:
+        return 'm18';
+      case SierraLeoneCarrier.qmoney:
+        return 'm19';
+      case SierraLeoneCarrier.unknown:
+        return 'm17'; // default fallback
+    }
+  }
+
   bool get isRecognized => this != SierraLeoneCarrier.unknown;
+}
+
+/// Dynamic, animated badge displaying the detected carrier logo, name, and brand styling.
+class CarrierBadgeWidget extends StatelessWidget {
+  final SierraLeoneCarrier carrier;
+  final bool compact;
+
+  const CarrierBadgeWidget({
+    super.key,
+    required this.carrier,
+    this.compact = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (!carrier.isRecognized) {
+      return const SizedBox.shrink();
+    }
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 8 : 10,
+        vertical: compact ? 4 : 5,
+      ),
+      decoration: BoxDecoration(
+        color: carrier.brandBgColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: carrier.brandColor.withValues(alpha: 0.5),
+          width: 1.2,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            carrier.iconData,
+            size: compact ? 12 : 14,
+            color: carrier.brandColor,
+          ),
+          const SizedBox(width: 5),
+          Text(
+            compact ? carrier.shortName : carrier.displayName,
+            style: TextStyle(
+              fontSize: compact ? 11 : 12,
+              fontWeight: FontWeight.w700,
+              color: carrier.brandColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class CarrierDetectionService {

@@ -124,6 +124,7 @@ class _VerifiedLedgerTransferSheetState
 
   void _parseAndResolve(String raw) {
     _debounceTimer?.cancel();
+    setState(() {}); // Instant re-render for real-time carrier prefix detection
     final trimmed = raw.trim();
     if (trimmed.isEmpty) {
       setState(() {
@@ -394,7 +395,7 @@ class _VerifiedLedgerTransferSheetState
           amount: shortfall,
           currency: 'SLE',
           phoneNumber: normalizedPhone,
-          provider: detected.providerSlug,
+          provider: detected.providerId,
           userId: widget.user.id,
           customerName: widget.user.name,
           customerEmail: widget.user.email,
@@ -600,7 +601,7 @@ class _VerifiedLedgerTransferSheetState
             decoration: InputDecoration(
               labelText: 'Recipient Phone or User ID',
               labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
-              hintText: 'e.g. +232 76 123456 or User ID',
+              hintText: 'e.g. 076 123456 or User ID',
               hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
               prefixIcon: const Icon(Icons.perm_identity_rounded, color: AppColors.obsidianSoft),
               suffixIcon: _isResolving
@@ -615,9 +616,25 @@ class _VerifiedLedgerTransferSheetState
                         ),
                       ),
                     )
-                  : (_resolvedRecipient != null
-                      ? const Icon(Icons.check_circle_rounded, color: AppColors.emerald, size: 20)
-                      : null),
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (CarrierDetectionService.detectCarrier(_resolvedRecipient?['phone'] ?? _codeCtrl.text).isRecognized) ...[
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: CarrierBadgeWidget(
+                              carrier: CarrierDetectionService.detectCarrier(_resolvedRecipient?['phone'] ?? _codeCtrl.text),
+                              compact: true,
+                            ),
+                          ),
+                        ],
+                        if (_resolvedRecipient != null)
+                          const Padding(
+                            padding: EdgeInsets.only(right: 12),
+                            child: Icon(Icons.check_circle_rounded, color: AppColors.emerald, size: 20),
+                          ),
+                      ],
+                    ),
               filled: true,
               fillColor: Colors.grey.shade50,
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

@@ -3679,17 +3679,17 @@ export const initiateMoniMePayment = action({
     const dynamicEmail = (args.email || args.customerEmail)?.trim();
     const currency = args.currency ?? "SLE";
     const reference = `vktlx_monime_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    const returnUrl = args.returnUrl ?? "https://app.vektolux.com/payment/callback";
+    const returnUrl = args.returnUrl ?? "vektolux://payment/success";
 
     let providerSlug = (args.provider || "").toLowerCase().trim();
     if (!providerSlug || providerSlug === "auto" || providerSlug === "monime" || providerSlug === "monime_auto") {
       const autoCarrier = detectSierraLeoneCarrier(cleanPhone);
       providerSlug = autoCarrier !== "unknown" ? autoCarrier : "orange";
-    } else if (providerSlug.includes("orange")) {
+    } else if (providerSlug === "m17" || providerSlug.includes("orange")) {
       providerSlug = "orange";
-    } else if (providerSlug.includes("africell") || providerSlug.includes("afrimoney")) {
+    } else if (providerSlug === "m18" || providerSlug.includes("africell") || providerSlug.includes("afrimoney")) {
       providerSlug = "africell";
-    } else if (providerSlug.includes("qcell") || providerSlug.includes("qmoney")) {
+    } else if (providerSlug === "m19" || providerSlug.includes("qcell") || providerSlug.includes("qmoney")) {
       providerSlug = "qmoney";
     } else {
       const autoCarrier = detectSierraLeoneCarrier(cleanPhone);
@@ -3721,6 +3721,13 @@ export const initiateMoniMePayment = action({
     // 2. Construct dynamic checkout session payload (amounts in minor units / cents)
     const checkoutPayload: Record<string, any> = {
       name: description,
+      amount: {
+        currency: "SLE",
+        value: minorAmount,
+      },
+      paymentMethods: ["momo", "bank", "card"],
+      successUrl: returnUrl,
+      cancelUrl: "vektolux://payment/cancel",
       lineItems: [
         {
           name: args.description || "Escrow Wallet Top-Up",
@@ -3735,6 +3742,7 @@ export const initiateMoniMePayment = action({
       metadata: {
         reference,
         provider: providerSlug,
+        providerId: providerSlug === "orange" ? "m17" : (providerSlug === "africell" ? "m18" : "m19"),
         phoneNumber: sanitizedPhone,
         source: "vektolux_mobile_app",
         ...(args.userId ? { userId: args.userId } : {}),

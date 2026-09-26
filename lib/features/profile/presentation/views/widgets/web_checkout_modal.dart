@@ -200,14 +200,19 @@ class _WebCheckoutModalState extends State<WebCheckoutModal>
     _pollingTimer?.cancel();
     HapticFeedback.heavyImpact();
 
+    // Close in-app webview if open
+    try {
+      closeInAppWebView();
+    } catch (_) {}
+
     setState(() {
       _isSuccess = true;
     });
 
     widget.onPaymentConfirmed?.call();
 
-    // Auto dismiss after 1800ms
-    Future.delayed(const Duration(milliseconds: 1800), () {
+    // Auto dismiss after 2000ms
+    Future.delayed(const Duration(milliseconds: 2000), () {
       if (mounted) {
         Navigator.of(context).pop();
       }
@@ -483,19 +488,20 @@ class _WebCheckoutModalState extends State<WebCheckoutModal>
         ),
         const SizedBox(height: 18),
         const Text(
-          'Top-Up Confirmed!',
+          'Payment Received & Escrow Activated!',
+          textAlign: TextAlign.center,
           style: TextStyle(
             color: AppColors.white,
-            fontSize: 22,
+            fontSize: 20,
             fontWeight: FontWeight.w700,
             fontFamily: 'Poppins',
           ),
         ),
         const SizedBox(height: 6),
         Text(
-          'SLE ${widget.amount.toStringAsFixed(2)} successfully credited to your wallet balance.',
+          'SLE ${widget.amount.toStringAsFixed(2)} successfully credited to your escrow wallet.',
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             color: AppColors.gray300,
             fontSize: 13,
           ),
