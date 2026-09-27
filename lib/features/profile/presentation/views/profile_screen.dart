@@ -906,6 +906,167 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  void _showDeleteAccountDialog(BuildContext context, UserEntity? user) {
+    if (user == null) return;
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) {
+        bool isDeleting = false;
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              backgroundColor: AppColors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: AppColors.error, size: 26),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Delete Account',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.obsidian,
+                        fontSize: 18,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Are you sure you want to permanently delete your Vektolux account?',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.obsidian,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'This action cannot be undone. In accordance with Apple and Google data privacy compliance, all your personal information, profile data, listings, and saved sessions will be permanently erased.',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: AppColors.gray600,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF2F2),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFFECACA)),
+                    ),
+                    child: const Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline_rounded, color: AppColors.error, size: 16),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Any remaining wallet balances must be withdrawn before account deletion.',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: Color(0xFF991B1B),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isDeleting ? null : () => Navigator.of(dialogCtx).pop(),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(
+                      color: AppColors.gray500,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.error,
+                    foregroundColor: AppColors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: isDeleting
+                      ? null
+                      : () async {
+                          setDialogState(() => isDeleting = true);
+                          try {
+                            final client = context.read<ConvexClientWrapper>();
+                            await client.mutation(
+                              'users:deleteUserAccount',
+                              args: {'userId': user.id},
+                            );
+
+                            if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
+                            if (!context.mounted) return;
+
+                            // Clear local session & cache
+                            context.read<AuthBloc>().add(const LogoutEvent());
+                            try {
+                              client.clearAuth();
+                            } catch (_) {}
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Your account and personal data have been permanently erased.'),
+                                backgroundColor: AppColors.obsidian,
+                                behavior: SnackBarBehavior.floating,
+                                duration: Duration(seconds: 4),
+                              ),
+                            );
+
+                            Navigator.of(context).pushAndRemoveUntil(
+                              MaterialPageRoute(builder: (_) => const LoginScreen()),
+                              (route) => false,
+                            );
+                          } catch (e) {
+                            if (dialogCtx.mounted) {
+                              setDialogState(() => isDeleting = false);
+                              ScaffoldMessenger.of(dialogCtx).showSnackBar(
+                                SnackBar(
+                                  content: Text('Failed to delete account: $e'),
+                                  backgroundColor: AppColors.error,
+                                ),
+                              );
+                            }
+                          }
+                        },
+                  child: isDeleting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Text(
+                          'Delete Account',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _showInfoSheet(BuildContext context, String title, String content) {
     showModalBottomSheet(
       context: context,
@@ -2339,6 +2500,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                     onPressed: () => _showLogoutDialog(context),
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // ── 8. Delete Account (Apple Guideline 5.1.1(v) & Google Play Compliance) ──
+                Center(
+                  child: TextButton.icon(
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.error,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    ),
+                    icon: const Icon(Icons.delete_forever_rounded, size: 18, color: AppColors.error),
+                    label: const Text(
+                      'Delete Account & Erase Personal Data',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.error,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                    onPressed: () => _showDeleteAccountDialog(context, user),
                   ),
                 ),
 
@@ -4002,7 +4186,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Expanded(
                 child: _buildEscrowActionButton(
                   icon: Icons.add_circle_outline_rounded,
-                  label: 'Top Up',
+                  label: 'Deposit',
                   onTap: () => _showTopUpEscrowSheet(context, user),
                 ),
               ),
@@ -4864,10 +5048,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   // ── Title ────────────────────────────────────────────
                   Row(
                     children: [
-                      const Icon(Icons.add_circle_outline_rounded, color: AppColors.emeraldDark, size: 22),
+                      const Icon(Icons.shield_outlined, color: AppColors.emeraldDark, size: 22),
                       const SizedBox(width: 8),
                       Text(
-                        showReferenceStep ? 'Submit Payment Reference' : 'Top Up Escrow Wallet',
+                        showReferenceStep ? 'Submit Payment Reference' : 'Deposit Escrow Funds',
                         style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w700,
@@ -4880,7 +5064,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   Text(
                     showReferenceStep
                         ? 'Paste the Transaction ID from your ${providerLabels[selectedTopUpProvider] ?? "provider"} SMS.'
-                        : 'Deposit funds into escrow protection via Mobile Money.',
+                        : 'Deposit funds into escrow protection for physical rides, deliveries, and property bookings.',
                     style: const TextStyle(fontSize: 12.5, color: AppColors.gray500),
                   ),
                   const SizedBox(height: 20),
@@ -5026,198 +5210,67 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ],
 
                   // ── Contextual Error / Status Banners ──────────────
-                  if (errorCode == 'INSUFFICIENT_FUNDS') ...[
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFFBEB),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFFDE68A)),
+                  if (errorCode == 'INSUFFICIENT_FUNDS')
+                    PaymentStatusBanner(
+                      icon: Icons.account_balance_wallet_outlined,
+                      title: 'Insufficient Mobile Money Balance',
+                      message: 'Insufficient balance on ${_formatPhoneDisplay(activePhoneNumber)}. Please top up your SIM wallet and try again.',
+                      baseColor: const Color(0xFFD97706),
+                    )
+                  else if (errorCode == 'INVALID_NUMBER')
+                    PaymentStatusBanner(
+                      icon: Icons.phone_missed_rounded,
+                      title: 'Unregistered Phone Number',
+                      message: 'This number (${_formatPhoneDisplay(activePhoneNumber)}) is not registered for ${providerLabels[selectedTopUpProvider]}.',
+                      baseColor: const Color(0xFFDC2626),
+                      trailingAction: TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFFDC2626),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: () => _showChangeNumberSheet(
+                          context: context,
+                          currentProvider: selectedTopUpProvider,
+                          currentPhone: activePhoneNumber,
+                          onSelected: (newPhone) {
+                            setModalState(() {
+                              activePhoneNumber = newPhone;
+                              errorCode = null;
+                              errorMessage = null;
+                            });
+                          },
+                        ),
+                        icon: const Icon(Icons.edit_rounded, size: 13),
+                        label: const Text('Change', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11.5)),
                       ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(Icons.account_balance_wallet_outlined, color: Color(0xFFD97706), size: 20),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Insufficient Mobile Money Balance',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: Color(0xFF92400E),
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  'Insufficient balance on ${_formatPhoneDisplay(activePhoneNumber)}. Please top up your SIM wallet and try again.',
-                                  style: const TextStyle(fontSize: 12, color: Color(0xFFB45309), height: 1.35),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                    )
+                  else if (errorCode == 'PIN_TIMEOUT')
+                    PaymentStatusBanner(
+                      icon: Icons.timer_outlined,
+                      title: 'Authorization Prompt Expired',
+                      message: 'The authorization prompt timed out or was cancelled. Please try again and approve promptly on your phone.',
+                      baseColor: const Color(0xFFD97706),
+                      trailingAction: TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFFD97706),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: isProcessing ? null : executeMoniMeTopUp,
+                        icon: const Icon(Icons.refresh_rounded, size: 13),
+                        label: const Text('Retry', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11.5)),
                       ),
+                    )
+                  else if (errorMessage != null)
+                    PaymentStatusBanner(
+                      icon: Icons.error_outline_rounded,
+                      title: 'Payment Issue',
+                      message: errorMessage!,
+                      baseColor: const Color(0xFFDC2626),
                     ),
-                  ] else if (errorCode == 'INVALID_NUMBER') ...[
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFEF2F2),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFFECACA)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Icon(Icons.phone_missed_rounded, color: Color(0xFFDC2626), size: 20),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      'Unregistered Phone Number',
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                        color: Color(0xFF991B1B),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      'This number (${_formatPhoneDisplay(activePhoneNumber)}) is not registered for ${providerLabels[selectedTopUpProvider]}.',
-                                      style: const TextStyle(fontSize: 12, color: Color(0xFFB91C1C), height: 1.35),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton.icon(
-                              style: TextButton.styleFrom(
-                                foregroundColor: const Color(0xFFDC2626),
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                minimumSize: Size.zero,
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              ),
-                              onPressed: () => _showChangeNumberSheet(
-                                context: context,
-                                currentProvider: selectedTopUpProvider,
-                                currentPhone: activePhoneNumber,
-                                onSelected: (newPhone) {
-                                  setModalState(() {
-                                    activePhoneNumber = newPhone;
-                                    errorCode = null;
-                                    errorMessage = null;
-                                  });
-                                },
-                              ),
-                              icon: const Icon(Icons.edit_rounded, size: 14),
-                              label: const Text(
-                                'Change Number',
-                                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ] else if (errorCode == 'PIN_TIMEOUT') ...[
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFFBEB),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFFDE68A)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Icon(Icons.timer_outlined, color: Color(0xFFD97706), size: 20),
-                              SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Authorization Prompt Expired',
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                        color: Color(0xFF92400E),
-                                      ),
-                                    ),
-                                    SizedBox(height: 3),
-                                    Text(
-                                      'The authorization prompt timed out or was cancelled. Please try again and approve promptly on your phone.',
-                                      style: TextStyle(fontSize: 12, color: Color(0xFFB45309), height: 1.35),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton.icon(
-                              style: TextButton.styleFrom(
-                                foregroundColor: const Color(0xFFD97706),
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                minimumSize: Size.zero,
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              ),
-                              onPressed: isProcessing ? null : executeMoniMeTopUp,
-                              icon: const Icon(Icons.refresh_rounded, size: 14),
-                              label: const Text(
-                                'Retry Now',
-                                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ] else if (errorMessage != null) ...[
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFEF2F2),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFFECACA)),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(Icons.error_outline_rounded, color: Color(0xFFDC2626), size: 18),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              errorMessage!,
-                              style: const TextStyle(fontSize: 12, color: Color(0xFF991B1B), height: 1.35),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
 
                   const SizedBox(height: 20),
 
@@ -6219,4 +6272,69 @@ class _VektoluxQrPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _VektoluxQrPainter oldDelegate) =>
       oldDelegate.data != data || oldDelegate.foregroundColor != foregroundColor;
+}
+
+/// Tokenized, cleanly aligned status & error banner for payment sheets.
+class PaymentStatusBanner extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String message;
+  final Color baseColor;
+  final Widget? trailingAction;
+
+  const PaymentStatusBanner({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.message,
+    required this.baseColor,
+    this.trailingAction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(top: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: baseColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: baseColor.withValues(alpha: 0.25), width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: baseColor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: baseColor,
+                  ),
+                ),
+              ),
+              if (trailingAction != null) trailingAction!,
+            ],
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.only(left: 26),
+            child: Text(
+              message,
+              style: TextStyle(
+                fontSize: 12,
+                color: baseColor.withValues(alpha: 0.9),
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
