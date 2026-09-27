@@ -141,3 +141,32 @@ class SwitchUserModeEvent extends AuthEvent {
   List<Object?> get props => [targetMode];
 }
 
+/// Authenticate via Google or Apple (zero-cost social auth).
+class SocialAuthEvent extends AuthEvent {
+  /// "google" or "apple"
+  final String provider;
+
+  /// Raw ID token from the provider SDK.
+  final String token;
+
+  /// User's email address (required for account lookup/creation).
+  final String email;
+
+  /// Display name — may be null if Apple hides it.
+  final String? name;
+
+  /// Profile photo URL (Google only; Apple does not provide one).
+  final String? avatarUrl;
+
+  const SocialAuthEvent({
+    required this.provider,
+    required this.token,
+    required this.email,
+    this.name,
+    this.avatarUrl,
+  });
+
+  @override
+  List<Object?> get props => [provider, token, email, name, avatarUrl];
+}
+

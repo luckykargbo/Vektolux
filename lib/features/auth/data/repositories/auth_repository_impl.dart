@@ -427,4 +427,50 @@ class AuthRepositoryImpl implements AuthRepository {
       _log.w('Could not persist session to SharedPreferences: $e');
     }
   }
+
+  // ── OAuth (Google / Apple) ─────────────────────────────────────────
+
+  @override
+  Future<UserEntity> authenticateWithOAuth({
+    required String provider,
+    required String token,
+    required String email,
+    String? name,
+    String? avatarUrl,
+  }) async {
+    final result = await _convexClient.mutation(
+      'users:authenticateWithOAuth',
+      args: {
+        'provider': provider,
+        'token': token,
+        'email': email,
+        if (name != null && name.isNotEmpty) 'name': name,
+        if (avatarUrl != null && avatarUrl.isNotEmpty) 'avatarUrl': avatarUrl,
+      },
+    );
+
+    if (!result.success) {
+      throw AuthException(result.errorMessage ?? 'Social sign-in failed');
+    }
+
+    final data = result.value as Map<String, dynamic>;
+    final user = UserEntity(
+      id: data['userId'] as String,
+      name: data['name'] as String? ?? email.split('@').first,
+      email: data['email'] as String? ?? email,
+      phone: data['phone'] as String? ?? '',
+      role: UserRoleX.fromConvex(data['role'] as String? ?? 'client'),
+      isVerified: data['isVerified'] as bool? ?? true,
+      avatarUrl: data['avatarUrl'] as String?,
+      walletAddress: data['walletAddress'] as String?,
+      sessionToken: data['sessionToken'] as String?,
+    );
+
+    await _cacheUser(user);
+    if (user.sessionToken != null) {
+      _convexClient.setAuthToken(user.sessionToken!);
+    }
+    _log.i('OAuth login OK: ${user.email} via $provider');
+    return user;
+  }
 }

@@ -61,6 +61,16 @@ abstract class AuthRepository {
     required String userId,
     required String targetMode,
   });
+
+  /// Authenticate via Google or Apple OAuth.
+  /// Looks up existing account by email; creates a new one if absent.
+  Future<UserEntity> authenticateWithOAuth({
+    required String provider,
+    required String token,
+    required String email,
+    String? name,
+    String? avatarUrl,
+  });
 }
 
 /// Authentication and credential failure exceptions (invalid password, account not found).

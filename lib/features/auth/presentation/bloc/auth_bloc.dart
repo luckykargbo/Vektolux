@@ -28,6 +28,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<UserRoleUpdatedEvent>(_onUserRoleUpdated);
     on<SwitchUserModeEvent>(_onSwitchUserMode);
     on<RefreshUserSessionEvent>(_onRefreshUserSession);
+    on<SocialAuthEvent>(_onSocialAuth);
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -320,6 +321,37 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     final elapsed = stopwatch.elapsed;
     if (elapsed < minDuration) {
       await Future.delayed(minDuration - elapsed);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //                     SOCIAL AUTH (GOOGLE / APPLE)
+  // ═══════════════════════════════════════════════════════════════════
+
+  Future<void> _onSocialAuth(
+    SocialAuthEvent event,
+    Emitter<AuthState> emit,
+  ) async {
+    emit(state.copyWith(status: AuthStatus.loggingIn));
+    try {
+      final user = await _repository.authenticateWithOAuth(
+        provider: event.provider,
+        token: event.token,
+        email: event.email,
+        name: event.name,
+        avatarUrl: event.avatarUrl,
+      );
+      emit(state.copyWith(
+        status: AuthStatus.authenticated,
+        user: user,
+        successMessage: 'Welcome${user.name.isNotEmpty ? ", ${user.name.split(' ').first}" : ""}! 🎉',
+      ));
+    } catch (e) {
+      _log.e('Social auth failed: $e');
+      emit(state.copyWith(
+        status: AuthStatus.error,
+        errorMessage: e.toString().replaceFirst('Exception: ', ''),
+      ));
     }
   }
 }

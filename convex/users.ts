@@ -973,3 +973,158 @@ export const deleteUserAccount = mutation({
   },
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+//                  AUTHENTICATE WITH OAUTH (Google / Apple)
+// ═══════════════════════════════════════════════════════════════════════
+// Trust-based MVP — the client already verified the token with the provider
+// SDK; we do a DB-level find-or-create keyed on (authProvider, externalAuthId).
+//
+// Priority order:
+//   1. by_external_auth  — exact provider + externalId match (returning user)
+//   2. by_email          — same email, link the OAuth credential
+//   3. insert new user   — first time, create account + wallet
+//
+// NEVER accept a userId argument and trust it — derive identity from the DB.
+// ═══════════════════════════════════════════════════════════════════════
+
+function _generateSessionToken(): string {
+  // 32-byte random hex token via the Convex runtime's crypto.getRandomValues
+  const arr = new Uint8Array(32);
+  crypto.getRandomValues(arr);
+  return Array.from(arr)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export const authenticateWithOAuth = mutation({
+  args: {
+    provider: v.union(v.literal("google"), v.literal("apple")),
+    // The raw idToken from the provider SDK — stored as the externalAuthId key.
+    token: v.string(),
+    email: v.string(),
+    name: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
+  },
+  returns: v.object({
+    userId: v.string(),
+    sessionToken: v.string(),
+    name: v.string(),
+    email: v.string(),
+    phone: v.string(),
+    role: v.string(),
+    isVerified: v.boolean(),
+    avatarUrl: v.optional(v.string()),
+    walletAddress: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const sessionToken = _generateSessionToken();
+
+    // ── 1. Look up by (authProvider, externalAuthId) ──────────────
+    // We use the first 256 chars of the idToken as the stable externalAuthId.
+    // (Apple re-issues tokens but the sub claim inside is stable — for a full
+    //  production app, verify the token and extract the "sub" claim instead.)
+    const externalAuthId = args.token.slice(0, 256);
+
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_external_auth", (q) =>
+        q.eq("authProvider", args.provider).eq("externalAuthId", externalAuthId)
+      )
+      .first();
+
+    if (existing) {
+      // Returning social-auth user — refresh session token
+      await ctx.db.patch(existing._id, {
+        sessionToken,
+        updatedAt: now,
+        // Update avatar URL if Google provides a fresher one
+        ...(args.avatarUrl ? { avatarUrl: args.avatarUrl } : {}),
+      });
+      return {
+        userId: existing._id as string,
+        sessionToken,
+        name: existing.name,
+        email: existing.email,
+        phone: existing.phone ?? "",
+        role: existing.role,
+        isVerified: existing.isVerified,
+        avatarUrl: existing.avatarUrl,
+        walletAddress: existing.walletAddress,
+      };
+    }
+
+    // ── 2. Try to link by email (existing password-based account) ─
+    const byEmail = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", args.email))
+      .first();
+
+    if (byEmail) {
+      // Link the OAuth credential to the existing account
+      await ctx.db.patch(byEmail._id, {
+        authProvider: args.provider,
+        externalAuthId,
+        sessionToken,
+        updatedAt: now,
+        isVerified: true,
+        ...(args.avatarUrl && !byEmail.avatarUrl
+          ? { avatarUrl: args.avatarUrl }
+          : {}),
+      });
+      return {
+        userId: byEmail._id as string,
+        sessionToken,
+        name: byEmail.name,
+        email: byEmail.email,
+        phone: byEmail.phone ?? "",
+        role: byEmail.role,
+        isVerified: true,
+        avatarUrl: byEmail.avatarUrl,
+        walletAddress: byEmail.walletAddress,
+      };
+    }
+
+    // ── 3. Brand-new user — create account + wallet ───────────────
+    const displayName =
+      args.name && args.name.trim().length > 0
+        ? args.name.trim()
+        : args.email.split("@")[0];
+
+    const userId = await ctx.db.insert("users", {
+      name: displayName,
+      email: args.email,
+      phone: "",
+      role: "client",
+      authProvider: args.provider,
+      externalAuthId,
+      sessionToken,
+      isVerified: true,   // social-auth users are pre-verified
+      isActive: true,
+      avatarUrl: args.avatarUrl,
+      updatedAt: now,
+    });
+
+    // Initialise wallet with zero balance
+    await ctx.db.insert("walletBalances", {
+      userId,
+      availableBalance: 0,
+      pendingBalance: 0,
+      currency: "SLE",
+      updatedAt: now,
+    });
+
+    return {
+      userId: userId as string,
+      sessionToken,
+      name: displayName,
+      email: args.email,
+      phone: "",
+      role: "client",
+      isVerified: true,
+      avatarUrl: args.avatarUrl,
+      walletAddress: undefined,
+    };
+  },
+});
+
