@@ -14,9 +14,9 @@ import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../home/presentation/views/client_home_screen.dart';
 import '../../../mobility/presentation/views/auto_marketplace_screen.dart';
+import '../../../explore/presentation/views/explore_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
 import '../../../real_estate/presentation/views/real_estate_marketplace_screen.dart';
-import '../../../social/presentation/views/social_feed_screen.dart';
 import '../widgets/client_onboarding_tour_modal.dart';
 
 class MainNavigationShell extends StatefulWidget {
@@ -92,9 +92,9 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
               ? ClientHomeScreen(convexClient: convexClient)
               : const SizedBox.shrink(),
 
-          // 1: Explore — Social Feed (listings from followed agents/dealers)
+          // 1: Explore Discovery Feed & Search
           _activatedTabs.contains(1)
-              ? SocialFeedScreen(convexClient: convexClient)
+              ? ExploreScreen(convexClient: convexClient)
               : const SizedBox.shrink(),
 
           // 2: Real Estate Vertical Marketplace
