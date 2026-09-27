@@ -124,7 +124,19 @@ class _LoginScreenState extends State<LoginScreen> {
           ));
     } on SignInWithAppleAuthorizationException catch (e) {
       if (e.code == AuthorizationErrorCode.canceled) {
-        // user cancelled — do nothing
+        // User closed/cancelled sheet (error 1001) - ignore silently
+        return;
+      } else if (e.code == AuthorizationErrorCode.unknown) {
+        // Error 1000 - capabilities / simulator / unconfigured signing
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+              'Apple Sign-in is initializing. Please verify developer capabilities or sign in with password/Google.',
+            ),
+            backgroundColor: AppColors.amber,
+            behavior: SnackBarBehavior.floating,
+          ));
+        }
       } else if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('Apple sign-in failed: ${e.message}'),

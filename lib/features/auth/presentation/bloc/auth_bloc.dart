@@ -6,6 +6,7 @@
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import '../../domain/entities/user_entity.dart';
 import '../../domain/repositories/auth_repository.dart';
@@ -356,6 +357,21 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           user: result.user,
           hasPhone: true,
           successMessage: 'Welcome${result.user.name.isNotEmpty ? ", ${result.user.name.split(' ').first}" : ""}! 🎉',
+        ));
+      }
+    } on SignInWithAppleAuthorizationException catch (e) {
+      if (e.code == AuthorizationErrorCode.canceled) {
+        emit(state.copyWith(status: AuthStatus.unauthenticated));
+      } else if (e.code == AuthorizationErrorCode.unknown) {
+        emit(state.copyWith(
+          status: AuthStatus.error,
+          errorMessage:
+              'Apple Sign-in is initializing. Please verify developer capabilities or sign in with password/Google.',
+        ));
+      } else {
+        emit(state.copyWith(
+          status: AuthStatus.error,
+          errorMessage: 'Apple sign-in failed: ${e.message}',
         ));
       }
     } catch (e) {

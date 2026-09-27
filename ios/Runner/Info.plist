@@ -89,6 +89,7 @@
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
+		<!-- App Deep Link Scheme -->
 		<dict>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
@@ -97,7 +98,16 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>vektolux</string>
-				<!-- Google Sign-In URL Scheme: replace with REVERSED_CLIENT_ID from GoogleService-Info.plist -->
+			</array>
+		</dict>
+		<!-- Google Sign-In OAuth Callback Scheme -->
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>google_oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
 				<string>com.googleusercontent.apps.vektolux</string>
 			</array>
 		</dict>
