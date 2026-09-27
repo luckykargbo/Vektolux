@@ -25,6 +25,7 @@ import {
 import {
   sanitizeSierraLeonePhone,
   detectSierraLeoneCarrier,
+  resolveCarrier,
   parseCarrierResponse,
   logGatewayError,
 } from "./lib/paymentErrors";
@@ -3647,7 +3648,8 @@ export const initiateMoniMePayment = action({
     amount: v.number(),
     phoneNumber: v.optional(v.string()),
     customerPhone: v.optional(v.string()),
-    provider: v.optional(v.string()), // "orange", "africell", "qmoney", or auto-detected
+    provider: v.optional(v.string()), // slug: "orange" | "africell" | "qmoney"
+    providerId: v.optional(v.string()), // explicit MoniMe ID: "m17" | "m18" | "m19" (client override)
     email: v.optional(v.string()),
     customerEmail: v.optional(v.string()),
     customerName: v.optional(v.string()),
@@ -3678,21 +3680,19 @@ export const initiateMoniMePayment = action({
     const reference = `vktlx_monime_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const returnUrl = args.returnUrl ?? "vektolux://payment/success";
 
-    let providerSlug = (args.provider || "").toLowerCase().trim();
-    if (!providerSlug || providerSlug === "auto" || providerSlug === "monime" || providerSlug === "monime_auto" || providerSlug === "card" || providerSlug === "bank") {
+    // ── Carrier resolution: explicit client override takes priority ──
+    // Priority order:
+    //   1. args.providerId (explicit m17/m18/m19 or slug from manual override)
+    //   2. args.provider (legacy slug field)
+    //   3. Auto-detection from phone prefix
+    const explicitId = args.providerId || args.provider || "";
+    const resolvedCarrier = resolveCarrier(cleanPhone || undefined, explicitId || undefined);
+    let providerSlug: string = resolvedCarrier !== "unknown" ? resolvedCarrier : "orange";
+
+    // Normalize hosted checkout triggers back to auto-carrier
+    if (["auto", "monime", "monime_auto", "card", "bank"].includes(providerSlug)) {
       const autoCarrier = cleanPhone ? detectSierraLeoneCarrier(cleanPhone) : "unknown";
       providerSlug = autoCarrier !== "unknown" ? autoCarrier : "orange";
-    } else if (providerSlug === "m17" || providerSlug.includes("orange")) {
-      providerSlug = "orange";
-    } else if (providerSlug === "m18" || providerSlug.includes("africell") || providerSlug.includes("afrimoney")) {
-      providerSlug = "africell";
-    } else if (providerSlug === "m19" || providerSlug.includes("qcell") || providerSlug.includes("qmoney")) {
-      providerSlug = "qmoney";
-    } else {
-      const autoCarrier = cleanPhone ? detectSierraLeoneCarrier(cleanPhone) : "unknown";
-      if (autoCarrier !== "unknown") {
-        providerSlug = autoCarrier;
-      }
     }
 
     const description =
@@ -3917,6 +3917,7 @@ export const createTopUpSession = action({
     phoneNumber: v.optional(v.string()),
     customerPhone: v.optional(v.string()),
     provider: v.optional(v.string()),
+    providerId: v.optional(v.string()), // explicit MoniMe ID from manual carrier override
     email: v.optional(v.string()),
     customerEmail: v.optional(v.string()),
     customerName: v.optional(v.string()),
@@ -3932,6 +3933,7 @@ export const createTopUpSession = action({
       phoneNumber: args.phoneNumber || args.customerPhone,
       customerPhone: args.phoneNumber || args.customerPhone,
       provider: args.provider,
+      providerId: args.providerId,
       email: args.email || args.customerEmail,
       customerEmail: args.email || args.customerEmail,
       customerName: args.customerName,

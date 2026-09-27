@@ -1,8 +1,9 @@
 // lib/core/widgets/universal_phone_input.dart
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Universal Sierra Leone Mobile Money Phone Input
-// Single input field with real-time automatic carrier detection badge
-// (Orange Money, Africell Afrimoney, QCell QMoney)
+// • Real-time prefix-based carrier auto-detection badge
+// • Tap-to-override: user can manually select a different carrier
+// • Manual override lock indicator (shows "overridden" pin icon)
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
@@ -13,6 +14,8 @@ class UniversalPhoneInput extends StatefulWidget {
   final TextEditingController controller;
   final String label;
   final String hint;
+
+  /// Called whenever the effective carrier changes (auto or manual override).
   final void Function(SierraLeoneCarrier carrier)? onCarrierChanged;
   final bool enabled;
 
@@ -30,12 +33,19 @@ class UniversalPhoneInput extends StatefulWidget {
 }
 
 class _UniversalPhoneInputState extends State<UniversalPhoneInput> {
-  SierraLeoneCarrier _currentCarrier = SierraLeoneCarrier.unknown;
+  SierraLeoneCarrier _autoDetectedCarrier = SierraLeoneCarrier.unknown;
+  SierraLeoneCarrier? _manualOverride; // null = auto mode, set = locked override
+
+  SierraLeoneCarrier get _effectiveCarrier =>
+      _manualOverride ?? _autoDetectedCarrier;
+
+  bool get _isOverridden => _manualOverride != null;
 
   @override
   void initState() {
     super.initState();
-    _currentCarrier = CarrierDetectionService.detectCarrier(widget.controller.text);
+    _autoDetectedCarrier =
+        CarrierDetectionService.detectCarrier(widget.controller.text);
     widget.controller.addListener(_handlePhoneChanged);
   }
 
@@ -46,20 +56,41 @@ class _UniversalPhoneInputState extends State<UniversalPhoneInput> {
   }
 
   void _handlePhoneChanged() {
-    final carrier = CarrierDetectionService.detectCarrier(widget.controller.text);
-    if (carrier != _currentCarrier) {
+    // Only update auto-detection when not manually overridden
+    final detected =
+        CarrierDetectionService.detectCarrier(widget.controller.text);
+    if (detected != _autoDetectedCarrier) {
       setState(() {
-        _currentCarrier = carrier;
+        _autoDetectedCarrier = detected;
       });
-      widget.onCarrierChanged?.call(carrier);
+      if (!_isOverridden) {
+        widget.onCarrierChanged?.call(detected);
+      }
     }
+  }
+
+  void _applyOverride(SierraLeoneCarrier carrier) {
+    setState(() {
+      _manualOverride = carrier;
+    });
+    widget.onCarrierChanged?.call(carrier);
+  }
+
+  void _clearOverride() {
+    setState(() {
+      _manualOverride = null;
+    });
+    widget.onCarrierChanged?.call(_autoDetectedCarrier);
   }
 
   @override
   Widget build(BuildContext context) {
+    final effective = _effectiveCarrier;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // ── Label row + carrier badge ──────────────────────────────
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -71,43 +102,55 @@ class _UniversalPhoneInputState extends State<UniversalPhoneInput> {
                 color: AppColors.obsidian,
               ),
             ),
-            // Live carrier badge
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: _currentCarrier.brandBgColor,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: _currentCarrier.isRecognized
-                      ? _currentCarrier.brandColor.withOpacity(0.5)
-                      : AppColors.border,
-                  width: 1.2,
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    _currentCarrier.iconData,
-                    size: 13,
-                    color: _currentCarrier.brandColor,
-                  ),
-                  const SizedBox(width: 5),
-                  Text(
-                    _currentCarrier.displayName,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: _currentCarrier.brandColor,
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Clear override button
+                if (_isOverridden)
+                  GestureDetector(
+                    onTap: _clearOverride,
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF7ED),
+                        borderRadius: BorderRadius.circular(8),
+                        border:
+                            Border.all(color: const Color(0xFFFED7AA)),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.lock_rounded,
+                              size: 10, color: Color(0xFFEA580C)),
+                          SizedBox(width: 3),
+                          Text(
+                            'Override',
+                            style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFFEA580C)),
+                          ),
+                          SizedBox(width: 3),
+                          Icon(Icons.close_rounded,
+                              size: 10, color: Color(0xFFEA580C)),
+                        ],
+                      ),
                     ),
                   ),
-                ],
-              ),
+                // Tappable carrier badge
+                CarrierBadgeWidget(
+                  carrier: effective,
+                  onOverride: widget.enabled ? _applyOverride : null,
+                ),
+              ],
             ),
           ],
         ),
         const SizedBox(height: 8),
+
+        // ── Phone TextField ────────────────────────────────────────
         TextField(
           controller: widget.controller,
           enabled: widget.enabled,
@@ -132,9 +175,9 @@ class _UniversalPhoneInputState extends State<UniversalPhoneInput> {
                   right: BorderSide(color: AppColors.border, width: 1.2),
                 ),
               ),
-              child: Row(
+              child: const Row(
                 mainAxisSize: MainAxisSize.min,
-                children: const [
+                children: [
                   Text('🇸🇱', style: TextStyle(fontSize: 18)),
                   SizedBox(width: 6),
                   Text(
@@ -148,12 +191,14 @@ class _UniversalPhoneInputState extends State<UniversalPhoneInput> {
                 ],
               ),
             ),
-            suffixIcon: _currentCarrier.isRecognized
-                ? Icon(Icons.check_circle_rounded, color: _currentCarrier.brandColor, size: 20)
+            suffixIcon: effective.isRecognized
+                ? Icon(Icons.check_circle_rounded,
+                    color: effective.brandColor, size: 20)
                 : null,
             filled: true,
             fillColor: AppColors.white,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: const BorderSide(color: AppColors.border),
@@ -161,27 +206,41 @@ class _UniversalPhoneInputState extends State<UniversalPhoneInput> {
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide(
-                color: _currentCarrier.isRecognized
-                    ? _currentCarrier.brandColor.withOpacity(0.6)
+                color: effective.isRecognized
+                    ? effective.brandColor.withValues(alpha: 0.6)
                     : AppColors.border,
-                width: _currentCarrier.isRecognized ? 1.5 : 1.0,
+                width: effective.isRecognized ? 1.5 : 1.0,
               ),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide(
-                color: _currentCarrier.isRecognized ? _currentCarrier.brandColor : AppColors.emerald,
+                color: effective.isRecognized
+                    ? effective.brandColor
+                    : AppColors.emerald,
                 width: 2.0,
               ),
             ),
           ),
         ),
-        if (!_currentCarrier.isRecognized && widget.controller.text.isNotEmpty)
-          const Padding(
-            padding: EdgeInsets.only(top: 6, left: 4),
-            child: Text(
-              'Enter a valid Sierra Leone number (071-079 Orange, 070/077/088 Africell, 031-034 QMoney)',
-              style: TextStyle(fontSize: 11, color: AppColors.gray500),
+
+        // ── Hint text ─────────────────────────────────────────────
+        if (!effective.isRecognized && widget.controller.text.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6, left: 4),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline_rounded,
+                    size: 12, color: AppColors.gray500),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    'Tap the network badge to manually select your carrier.',
+                    style: const TextStyle(
+                        fontSize: 11, color: AppColors.gray500),
+                  ),
+                ),
+              ],
             ),
           ),
       ],

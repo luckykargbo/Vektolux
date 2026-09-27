@@ -68,40 +68,85 @@ export type SierraLeoneCarrier = "orange" | "africell" | "qmoney" | "unknown";
 /**
  * Automatically detects the Sierra Leone Mobile Money carrier from phone prefix.
  *
- * Rules:
- * - Orange Money: prefixes 71, 72, 73, 74, 75, 76, 78, 79
- * - Africell Afrimoney: prefixes 70, 77, 80, 88, 90, 99, 30, 33
- * - QCell QMoney: prefixes 31, 32, 34
+ * PREFIX RULES (2025 SL MSISDN plan):
+ * ─────────────────────────────────────────────────────────────────────
+ * Orange Money (m17):
+ *   07x  — 071, 072, 073, 074, 075, 076, 078, 079
+ *
+ * Africell Afrimoney (m18):
+ *   08x  — all (080–089)
+ *   09x  — all (090–099)
+ *   legacy overrides: 070, 077, 030, 033
+ *
+ * QCell QMoney (m19):
+ *   03x  — 031, 032, 034, 035, 036, 037, 038, 039
+ *         (030 & 033 are legacy Africell, excluded here)
+ *
+ * Catch-all (future-proofing):
+ *   Any prefix starting with '8' or '9' → Africell
+ *   Any prefix starting with '7'        → Orange
+ *   Any prefix starting with '3'        → QMoney
+ * ─────────────────────────────────────────────────────────────────────
+ * An explicit providerId from the client overrides this logic entirely
+ * (see callers in payments.ts / escrow.ts).
  */
 export function detectSierraLeoneCarrier(raw?: string): SierraLeoneCarrier {
   const sanitized = sanitizeSierraLeonePhone(raw);
   if (!sanitized) return "unknown";
 
-  // When sanitized, standard Sierra Leone phone is 232 + 8 digits = 11 digits
+  // Extract 2-digit prefix from normalized form
   let prefix = "";
   if (sanitized.startsWith("232") && sanitized.length >= 5) {
     prefix = sanitized.substring(3, 5);
   } else if (sanitized.length >= 2) {
     prefix = sanitized.substring(0, 2);
   }
+  if (!prefix) return "unknown";
 
-  // Orange Money
-  if (["71", "72", "73", "74", "75", "76", "78", "79"].includes(prefix)) {
-    return "orange";
-  }
+  // ── Africell (checked FIRST — legacy overrides for 070, 077, 030, 033) ──
+  const africellExact = new Set([
+    "80", "81", "82", "83", "84", "85", "86", "87", "88", "89",
+    "90", "91", "92", "93", "94", "95", "96", "97", "98", "99",
+    "70", "77", "30", "33",
+  ]);
+  if (africellExact.has(prefix)) return "africell";
 
-  // Africell Afrimoney
-  if (["70", "77", "80", "88", "90", "99", "30", "33"].includes(prefix)) {
-    return "africell";
-  }
+  // ── Orange Money ──
+  const orangeExact = new Set(["71", "72", "73", "74", "75", "76", "78", "79"]);
+  if (orangeExact.has(prefix)) return "orange";
 
-  // QCell QMoney
-  if (["31", "32", "34"].includes(prefix)) {
-    return "qmoney";
-  }
+  // ── QCell QMoney ──
+  const qmoneyExact = new Set(["31", "32", "34", "35", "36", "37", "38", "39"]);
+  if (qmoneyExact.has(prefix)) return "qmoney";
+
+  // ── Catch-all for new/unregistered prefixes (future-proofing) ──
+  if (prefix[0] === "8" || prefix[0] === "9") return "africell";
+  if (prefix[0] === "7") return "orange";
+  if (prefix[0] === "3") return "qmoney";
 
   return "unknown";
 }
+
+/**
+ * Resolves the effective carrier string from either an explicit providerId
+ * supplied by the client (manual override) or auto-detection from phoneNumber.
+ *
+ * Accepts both MoniMe provider IDs (m17/m18/m19) and slug names
+ * (orange/africell/qmoney).
+ */
+export function resolveCarrier(
+  phoneNumber: string | undefined,
+  explicitProviderId?: string
+): SierraLeoneCarrier {
+  if (explicitProviderId) {
+    const pid = explicitProviderId.toLowerCase().trim();
+    if (pid === "m17" || pid === "orange") return "orange";
+    if (pid === "m18" || pid === "africell" || pid === "afrimoney") return "africell";
+    if (pid === "m19" || pid === "qmoney" || pid === "qcell") return "qmoney";
+  }
+  return detectSierraLeoneCarrier(phoneNumber);
+}
+
 
 /**
  * Parses raw HTTP status code and response payload from payment gateways
