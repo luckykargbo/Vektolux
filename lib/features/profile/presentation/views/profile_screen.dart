@@ -4882,6 +4882,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     SierraLeoneCarrier detectedCarrier = CarrierDetectionService.detectCarrier(user?.phone);
     String selectedTopUpProvider = detectedCarrier.isRecognized ? detectedCarrier.providerSlug : 'orange';
     String activePhoneNumber = user?.phone ?? '';
+    String selectedPaymentChannel = 'momo'; // 'momo' | 'card_bank'
     bool isProcessing = false;
     bool showReferenceStep = false; // Step 2 for manual providers
     String? errorCode;
@@ -4942,6 +4943,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               final carrier = CarrierDetectionService.detectCarrier(rawPhone);
               final normalizedPhone = CarrierDetectionService.normalizeToSierraLeoneFormat(rawPhone);
               final carrierSlug = carrier.isRecognized ? carrier.providerSlug : 'orange';
+              final carrierProviderId = carrier.providerId.isNotEmpty ? carrier.providerId : carrierSlug;
               final pName = carrier.isRecognized ? carrier.displayName : 'Mobile Money';
 
               setModalState(() => isProcessing = true);
@@ -4952,7 +4954,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   amount: amt,
                   currency: 'SLE',
                   phoneNumber: normalizedPhone,
-                  provider: carrierSlug, // "orange", "africell", "qmoney"
+                  provider: carrierProviderId, // "m17", "m18", "m19" or "orange"
                   userId: user?.id ?? '',
                   email: (uEmail != null && uEmail.isNotEmpty) ? uEmail : null,
                   customerName: (uName != null && uName.isNotEmpty) ? uName : null,
@@ -5021,6 +5023,83 @@ class _ProfileScreenState extends State<ProfileScreen> {
               }
             }
 
+            Future<void> executeCardOrBankTopUp() async {
+              setModalState(() {
+                errorMessage = null;
+                errorCode = null;
+              });
+
+              final amt = double.tryParse(amountCtrl.text.trim()) ?? 0;
+              if (amt <= 0) {
+                setModalState(() => errorMessage = 'Please enter a valid amount.');
+                return;
+              }
+
+              setModalState(() => isProcessing = true);
+              try {
+                final uEmail = user?.email.trim();
+                final uName = user?.name.trim();
+                final rawPhone = phoneCtrl.text.trim();
+                final normalizedPhone = rawPhone.isNotEmpty
+                    ? CarrierDetectionService.normalizeToSierraLeoneFormat(rawPhone)
+                    : null;
+
+                final result = await PaymentMethodsService.instance.createTopUpSession(
+                  amount: amt,
+                  currency: 'SLE',
+                  phoneNumber: normalizedPhone,
+                  provider: 'card', // MoniMe session allowing momo, bank, card
+                  userId: user?.id ?? '',
+                  email: (uEmail != null && uEmail.isNotEmpty) ? uEmail : null,
+                  customerName: (uName != null && uName.isNotEmpty) ? uName : null,
+                  description: 'Escrow Wallet Deposit — SLE $amt via Card/Bank',
+                  returnUrl: 'vektolux://payment/success',
+                );
+
+                if (result['success'] == true) {
+                  final checkoutUrl = result['checkoutUrl'] as String? ?? '';
+                  final ref = result['reference'] as String? ?? result['transactionId'] as String? ?? '';
+
+                  if (modalCtx.mounted) Navigator.of(modalCtx).pop();
+
+                  if (context.mounted && checkoutUrl.isNotEmpty && checkoutUrl.startsWith('http')) {
+                    await WebCheckoutModal.show(
+                      context,
+                      checkoutUrl: checkoutUrl,
+                      reference: ref,
+                      amount: amt,
+                      serviceProvider: 'Card & Bank (MoniMe)',
+                      recipient: (uEmail != null && uEmail.isNotEmpty) ? uEmail : 'Card / Bank Checkout',
+                      userId: user?.id ?? '',
+                      onPaymentConfirmed: () {
+                        _fetchWalletData();
+                      },
+                    );
+                    _fetchWalletData();
+                  } else {
+                    setModalState(() {
+                      isProcessing = false;
+                      errorMessage = 'Unable to generate checkout URL. Please try again.';
+                    });
+                  }
+                } else {
+                  final code = result['code'] as String? ?? 'PAYMENT_FAILED';
+                  final msg = result['message'] as String? ?? result['error'] as String? ?? 'Payment initialization failed.';
+                  setModalState(() {
+                    errorCode = code;
+                    errorMessage = msg;
+                    isProcessing = false;
+                  });
+                }
+              } catch (e) {
+                setModalState(() {
+                  errorCode = 'NETWORK_ERROR';
+                  errorMessage = 'Error: ${e.toString()}';
+                  isProcessing = false;
+                });
+              }
+            }
+
             return SingleChildScrollView(
               padding: EdgeInsets.only(
                 left: 20,
@@ -5067,24 +5146,208 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         : 'Deposit funds into escrow protection for physical rides, deliveries, and property bookings.',
                     style: const TextStyle(fontSize: 12.5, color: AppColors.gray500),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 18),
 
                   if (!showReferenceStep) ...[
-                    // ── Universal Phone Input with Live Carrier Detection ──
-                    UniversalPhoneInput(
-                      controller: phoneCtrl,
-                      label: 'Enter Mobile Money Phone Number',
-                      hint: '076 123456 or 077 123456',
-                      onCarrierChanged: (carrier) {
-                        setModalState(() {
-                          detectedCarrier = carrier;
-                          selectedTopUpProvider = carrier.isRecognized ? carrier.providerSlug : 'orange';
-                          errorCode = null;
-                          errorMessage = null;
-                        });
-                      },
+                    // ── Payment Channel Segmented Toggle ───────────────
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 18),
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: AppColors.gray100,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () {
+                                setModalState(() {
+                                  selectedPaymentChannel = 'momo';
+                                  errorMessage = null;
+                                  errorCode = null;
+                                });
+                              },
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                padding: const EdgeInsets.symmetric(vertical: 9),
+                                decoration: BoxDecoration(
+                                  color: selectedPaymentChannel == 'momo' ? Colors.white : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(9),
+                                  boxShadow: selectedPaymentChannel == 'momo'
+                                      ? [
+                                          BoxShadow(
+                                            color: Colors.black.withValues(alpha: 0.05),
+                                            blurRadius: 4,
+                                            offset: const Offset(0, 1),
+                                          ),
+                                        ]
+                                      : null,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.phone_android_rounded,
+                                      size: 16,
+                                      color: selectedPaymentChannel == 'momo' ? AppColors.emeraldDark : AppColors.gray500,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Mobile Money',
+                                      style: TextStyle(
+                                        fontSize: 12.5,
+                                        fontWeight: selectedPaymentChannel == 'momo' ? FontWeight.w700 : FontWeight.w500,
+                                        color: selectedPaymentChannel == 'momo' ? AppColors.obsidian : AppColors.gray600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () {
+                                setModalState(() {
+                                  selectedPaymentChannel = 'card_bank';
+                                  errorMessage = null;
+                                  errorCode = null;
+                                });
+                              },
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                padding: const EdgeInsets.symmetric(vertical: 9),
+                                decoration: BoxDecoration(
+                                  color: selectedPaymentChannel == 'card_bank' ? Colors.white : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(9),
+                                  boxShadow: selectedPaymentChannel == 'card_bank'
+                                      ? [
+                                          BoxShadow(
+                                            color: Colors.black.withValues(alpha: 0.05),
+                                            blurRadius: 4,
+                                            offset: const Offset(0, 1),
+                                          ),
+                                        ]
+                                      : null,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.credit_card_rounded,
+                                      size: 16,
+                                      color: selectedPaymentChannel == 'card_bank' ? AppColors.emeraldDark : AppColors.gray500,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Card / Bank (Web)',
+                                      style: TextStyle(
+                                        fontSize: 12.5,
+                                        fontWeight: selectedPaymentChannel == 'card_bank' ? FontWeight.w700 : FontWeight.w500,
+                                        color: selectedPaymentChannel == 'card_bank' ? AppColors.obsidian : AppColors.gray600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 16),
+
+                    if (selectedPaymentChannel == 'momo') ...[
+                      // ── Universal Phone Input with Live Carrier Detection ──
+                      UniversalPhoneInput(
+                        controller: phoneCtrl,
+                        label: 'Enter Mobile Money Phone Number',
+                        hint: '076 123456 or 077 123456',
+                        onCarrierChanged: (carrier) {
+                          setModalState(() {
+                            detectedCarrier = carrier;
+                            selectedTopUpProvider = carrier.isRecognized ? carrier.providerSlug : 'orange';
+                            errorCode = null;
+                            errorMessage = null;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                    ] else ...[
+                      // ── Hosted Card / Bank Checkout Info Card ───────
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.emeraldSurface,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Icon(Icons.lock_outline_rounded, color: AppColors.emeraldDark, size: 16),
+                                ),
+                                const SizedBox(width: 10),
+                                const Expanded(
+                                  child: Text(
+                                    'MoniMe Hosted Secure Checkout',
+                                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Pay with Visa, Mastercard, or Direct Sierra Leone Bank Transfer in an official, encrypted hosted checkout window.',
+                              style: TextStyle(fontSize: 12, color: AppColors.gray600, height: 1.4),
+                            ),
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(color: AppColors.gray200),
+                                  ),
+                                  child: const Text('💳 Visa / Mastercard', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.obsidian)),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(color: AppColors.gray200),
+                                  ),
+                                  child: const Text('🏦 Bank Transfer', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.obsidian)),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.emeraldSurface,
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(color: const Color(0xFFA7F3D0)),
+                                  ),
+                                  child: const Text('🔒 256-bit SSL', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.emeraldDark)),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
 
                     // ── Amount Chips ─────────────────────────────────
                     SingleChildScrollView(
@@ -5129,8 +5392,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
 
-                    // ── Manual instructions banner ───────────────────
-                    if (isManual) ...[
+                    // ── Manual instructions banner (Only for manual Momo) ──
+                    if (selectedPaymentChannel == 'momo' && isManual) ...[
                       const SizedBox(height: 14),
                       Container(
                         padding: const EdgeInsets.all(12),
@@ -5288,6 +5551,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       onPressed: isProcessing
                           ? null
                           : () async {
+                              // If Card/Bank checkout channel:
+                              if (selectedPaymentChannel == 'card_bank') {
+                                await executeCardOrBankTopUp();
+                                return;
+                              }
+
                               // ── AUTOMATED MONIME PROVIDERS (Orange, Africell, QMoney) ──
                               if (!showReferenceStep) {
                                 await executeMoniMeTopUp();
@@ -5351,17 +5620,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               height: 20,
                               child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                             )
-                          : Text(
-                              showReferenceStep
-                                  ? 'Submit Claim'
-                                  : 'Pay via ${detectedCarrier.displayName}',
-                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                          : Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                if (selectedPaymentChannel == 'card_bank') ...[
+                                  const Icon(Icons.lock_outline_rounded, size: 16),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Proceed to Hosted Checkout (SLE ${amountCtrl.text.trim().isEmpty ? "0" : amountCtrl.text.trim()})',
+                                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
+                                  ),
+                                ] else ...[
+                                  Text(
+                                    showReferenceStep
+                                        ? 'Submit Claim'
+                                        : 'Pay via ${detectedCarrier.displayName}',
+                                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                                  ),
+                                ],
+                              ],
                             ),
                     ),
                   ),
 
                   // ── Option to enter reference manually if user already paid via USSD ──
-                  if (!showReferenceStep) ...[
+                  if (selectedPaymentChannel == 'momo' && !showReferenceStep) ...[
                     const SizedBox(height: 8),
                     Center(
                       child: TextButton(

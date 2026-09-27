@@ -3672,18 +3672,15 @@ export const initiateMoniMePayment = action({
     } else if (!cleanPhone.startsWith("232") && cleanPhone.length === 8) {
       cleanPhone = "232" + cleanPhone;
     }
-    if (!cleanPhone) {
-      throw new Error("Phone number is required for mobile money payment.");
-    }
-    const sanitizedPhone = cleanPhone;
+    const sanitizedPhone = cleanPhone || "23276000000";
     const dynamicEmail = (args.email || args.customerEmail)?.trim();
     const currency = args.currency ?? "SLE";
     const reference = `vktlx_monime_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const returnUrl = args.returnUrl ?? "vektolux://payment/success";
 
     let providerSlug = (args.provider || "").toLowerCase().trim();
-    if (!providerSlug || providerSlug === "auto" || providerSlug === "monime" || providerSlug === "monime_auto") {
-      const autoCarrier = detectSierraLeoneCarrier(cleanPhone);
+    if (!providerSlug || providerSlug === "auto" || providerSlug === "monime" || providerSlug === "monime_auto" || providerSlug === "card" || providerSlug === "bank") {
+      const autoCarrier = cleanPhone ? detectSierraLeoneCarrier(cleanPhone) : "unknown";
       providerSlug = autoCarrier !== "unknown" ? autoCarrier : "orange";
     } else if (providerSlug === "m17" || providerSlug.includes("orange")) {
       providerSlug = "orange";
@@ -3692,7 +3689,7 @@ export const initiateMoniMePayment = action({
     } else if (providerSlug === "m19" || providerSlug.includes("qcell") || providerSlug.includes("qmoney")) {
       providerSlug = "qmoney";
     } else {
-      const autoCarrier = detectSierraLeoneCarrier(cleanPhone);
+      const autoCarrier = cleanPhone ? detectSierraLeoneCarrier(cleanPhone) : "unknown";
       if (autoCarrier !== "unknown") {
         providerSlug = autoCarrier;
       }
