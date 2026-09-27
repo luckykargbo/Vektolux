@@ -97,8 +97,11 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>vektolux</string>
+				<!-- Google Sign-In URL Scheme: replace with REVERSED_CLIENT_ID from GoogleService-Info.plist -->
+				<string>com.googleusercontent.apps.vektolux</string>
 			</array>
 		</dict>
 	</array>
+
 </dict>
 </plist>

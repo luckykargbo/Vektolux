@@ -138,6 +138,8 @@ class UserEntity extends Equatable {
 
   bool get canPostAnyListing => hasVerifiedSellerStorefront;
 
+  bool get hasPhone => phone.trim().isNotEmpty && phone.trim() != '+232';
+
   UserEntity copyWith({
     String? id,
     String? name,

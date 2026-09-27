@@ -18,6 +18,7 @@ import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
 import 'register_screen.dart';
 import 'forgot_password_screen.dart';
+import 'complete_profile_phone_screen.dart';
 
 // ── Google Sign-In singleton ─────────────────────────────────────────────
 final _googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
@@ -150,7 +151,13 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return BlocListener<AuthBloc, AuthState>(
       listener: (context, state) {
-        if (state.status == AuthStatus.authenticated && state.user != null) {
+        if (state.status == AuthStatus.needsPhoneSetup && state.user != null) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => CompleteProfilePhoneScreen(user: state.user!),
+            ),
+          );
+        } else if (state.status == AuthStatus.authenticated && state.user != null) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const MainNavigationShell()),
           );

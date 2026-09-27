@@ -473,4 +473,88 @@ class AuthRepositoryImpl implements AuthRepository {
     _log.i('OAuth login OK: ${user.email} via $provider');
     return user;
   }
+
+  @override
+  Future<({UserEntity user, bool hasPhone})> socialSignIn({
+    required String email,
+    String? name,
+    String? avatarUrl,
+    required String provider,
+    required String providerId,
+  }) async {
+    final result = await _convexClient.mutation(
+      'users:socialSignIn',
+      args: {
+        'email': email,
+        'provider': provider,
+        'providerId': providerId,
+        if (name != null && name.isNotEmpty) 'name': name,
+        if (avatarUrl != null && avatarUrl.isNotEmpty) 'avatarUrl': avatarUrl,
+      },
+    );
+
+    if (!result.success) {
+      throw AuthException(result.errorMessage ?? 'Social sign-in failed');
+    }
+
+    final data = result.value as Map<String, dynamic>;
+    final hasPhone = data['hasPhone'] as bool? ?? false;
+    final sessionToken = data['sessionToken'] as String?;
+    final userData = data['user'] as Map<String, dynamic>;
+
+    final user = UserEntity(
+      id: (data['userId'] ?? userData['id']) as String,
+      name: userData['name'] as String? ?? (name ?? email.split('@').first),
+      email: userData['email'] as String? ?? email,
+      phone: (userData['phoneNumber'] ?? userData['phone']) as String? ?? '',
+      role: UserRoleX.fromConvex(userData['role'] as String? ?? 'client'),
+      isVerified: userData['isVerified'] as bool? ?? true,
+      avatarUrl: userData['avatarUrl'] as String? ?? avatarUrl,
+      walletAddress: userData['walletAddress'] as String?,
+      sessionToken: sessionToken,
+    );
+
+    await _cacheUser(user);
+    if (sessionToken != null) {
+      _convexClient.setAuthToken(sessionToken);
+    }
+    _log.i('Social sign in OK: ${user.email} (hasPhone: $hasPhone)');
+    return (user: user, hasPhone: hasPhone);
+  }
+
+  @override
+  Future<UserEntity> linkPhoneNumber({
+    required String userId,
+    required String phoneNumber,
+  }) async {
+    final result = await _convexClient.mutation(
+      'users:linkPhoneNumber',
+      args: {
+        'userId': userId,
+        'phoneNumber': phoneNumber,
+      },
+    );
+
+    if (!result.success) {
+      throw AuthException(result.errorMessage ?? 'Failed to link phone number');
+    }
+
+    final cached = await getActiveSession();
+    final updated = (cached ??
+            UserEntity(
+              id: userId,
+              name: '',
+              email: '',
+              phone: phoneNumber,
+              role: UserRole.client,
+            ))
+        .copyWith(
+      phone: (result.value as Map<String, dynamic>?)?['phoneNumber'] as String? ?? phoneNumber,
+    );
+
+    await _cacheUser(updated);
+    _log.i('Linked phone number for user $userId: ${updated.phone}');
+    return updated;
+  }
 }
+

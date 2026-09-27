@@ -170,3 +170,18 @@ class SocialAuthEvent extends AuthEvent {
   List<Object?> get props => [provider, token, email, name, avatarUrl];
 }
 
+/// Link phone number to authenticated user profile to complete setup.
+class LinkPhoneNumberEvent extends AuthEvent {
+  final String userId;
+  final String phoneNumber;
+
+  const LinkPhoneNumberEvent({
+    required this.userId,
+    required this.phoneNumber,
+  });
+
+  @override
+  List<Object?> get props => [userId, phoneNumber];
+}
+
+

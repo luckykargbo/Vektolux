@@ -11,8 +11,10 @@ enum AuthStatus {
   splashChecking,
   unauthenticated,
   authenticated,
+  needsPhoneSetup,
   registering,
   loggingIn,
+  linkingPhone,
   error,
 }
 
@@ -27,6 +29,7 @@ class AuthState extends Equatable {
   final bool isSqliteReady;
   final bool isConvexReachable;
   final bool hasExistingSession;
+  final bool hasPhone;
 
   const AuthState({
     this.status = AuthStatus.initial,
@@ -37,6 +40,7 @@ class AuthState extends Equatable {
     this.isSqliteReady = false,
     this.isConvexReachable = false,
     this.hasExistingSession = false,
+    this.hasPhone = false,
   });
 
   AuthState copyWith({
@@ -50,6 +54,7 @@ class AuthState extends Equatable {
     bool? isSqliteReady,
     bool? isConvexReachable,
     bool? hasExistingSession,
+    bool? hasPhone,
   }) {
     return AuthState(
       status: status ?? this.status,
@@ -60,6 +65,7 @@ class AuthState extends Equatable {
       isSqliteReady: isSqliteReady ?? this.isSqliteReady,
       isConvexReachable: isConvexReachable ?? this.isConvexReachable,
       hasExistingSession: hasExistingSession ?? this.hasExistingSession,
+      hasPhone: hasPhone ?? this.hasPhone,
     );
   }
 
@@ -67,7 +73,8 @@ class AuthState extends Equatable {
   bool get isLoading =>
       status == AuthStatus.splashChecking ||
       status == AuthStatus.registering ||
-      status == AuthStatus.loggingIn;
+      status == AuthStatus.loggingIn ||
+      status == AuthStatus.linkingPhone;
 
   @override
   List<Object?> get props => [
@@ -79,5 +86,7 @@ class AuthState extends Equatable {
         isSqliteReady,
         isConvexReachable,
         hasExistingSession,
+        hasPhone,
       ];
 }
+

@@ -378,6 +378,8 @@ export default defineSchema({
     walletPinHash: v.optional(v.string()),
     authProvider: v.optional(v.string()),
     externalAuthId: v.optional(v.string()),
+    phoneNumber: v.optional(v.string()),
+    lastLoginAt: v.optional(v.number()),
 
     // Geolocation (for drivers)
     currentLat: v.optional(v.number()),

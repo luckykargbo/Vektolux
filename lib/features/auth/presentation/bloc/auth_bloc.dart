@@ -29,6 +29,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<SwitchUserModeEvent>(_onSwitchUserMode);
     on<RefreshUserSessionEvent>(_onRefreshUserSession);
     on<SocialAuthEvent>(_onSocialAuth);
+    on<LinkPhoneNumberEvent>(_onLinkPhoneNumber);
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -334,18 +335,29 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   ) async {
     emit(state.copyWith(status: AuthStatus.loggingIn));
     try {
-      final user = await _repository.authenticateWithOAuth(
+      final result = await _repository.socialSignIn(
         provider: event.provider,
-        token: event.token,
+        providerId: event.token,
         email: event.email,
         name: event.name,
         avatarUrl: event.avatarUrl,
       );
-      emit(state.copyWith(
-        status: AuthStatus.authenticated,
-        user: user,
-        successMessage: 'Welcome${user.name.isNotEmpty ? ", ${user.name.split(' ').first}" : ""}! 🎉',
-      ));
+
+      if (!result.hasPhone) {
+        emit(state.copyWith(
+          status: AuthStatus.needsPhoneSetup,
+          user: result.user,
+          hasPhone: false,
+          successMessage: 'Signed in! Please complete your phone number setup.',
+        ));
+      } else {
+        emit(state.copyWith(
+          status: AuthStatus.authenticated,
+          user: result.user,
+          hasPhone: true,
+          successMessage: 'Welcome${result.user.name.isNotEmpty ? ", ${result.user.name.split(' ').first}" : ""}! 🎉',
+        ));
+      }
     } catch (e) {
       _log.e('Social auth failed: $e');
       emit(state.copyWith(
@@ -354,4 +366,34 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       ));
     }
   }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //                     LINK PHONE NUMBER (SETUP PROFILE)
+  // ═══════════════════════════════════════════════════════════════════
+
+  Future<void> _onLinkPhoneNumber(
+    LinkPhoneNumberEvent event,
+    Emitter<AuthState> emit,
+  ) async {
+    emit(state.copyWith(status: AuthStatus.linkingPhone));
+    try {
+      final updatedUser = await _repository.linkPhoneNumber(
+        userId: event.userId,
+        phoneNumber: event.phoneNumber,
+      );
+      emit(state.copyWith(
+        status: AuthStatus.authenticated,
+        user: updatedUser,
+        hasPhone: true,
+        successMessage: 'Profile completed! Mobile money & escrow ready.',
+      ));
+    } catch (e) {
+      _log.e('Failed to link phone: $e');
+      emit(state.copyWith(
+        status: AuthStatus.error,
+        errorMessage: e.toString().replaceFirst('Exception: ', ''),
+      ));
+    }
+  }
 }
+

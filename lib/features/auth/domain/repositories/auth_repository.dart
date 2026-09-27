@@ -71,6 +71,21 @@ abstract class AuthRepository {
     String? name,
     String? avatarUrl,
   });
+
+  /// Social sign-in returning user + hasPhone flag.
+  Future<({UserEntity user, bool hasPhone})> socialSignIn({
+    required String email,
+    String? name,
+    String? avatarUrl,
+    required String provider,
+    required String providerId,
+  });
+
+  /// Link Sierra Leone phone number to complete profile setup.
+  Future<UserEntity> linkPhoneNumber({
+    required String userId,
+    required String phoneNumber,
+  });
 }
 
 /// Authentication and credential failure exceptions (invalid password, account not found).

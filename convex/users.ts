@@ -1128,3 +1128,189 @@ export const authenticateWithOAuth = mutation({
   },
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+//                        SOCIAL SIGN IN
+// Returns { userId, hasPhone, sessionToken, user }
+// If hasPhone is false, client prompts to complete Sierra Leone phone number.
+// ═══════════════════════════════════════════════════════════════════════
+
+export const socialSignIn = mutation({
+  args: {
+    email: v.string(),
+    name: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
+    provider: v.string(),
+    providerId: v.string(),
+  },
+  returns: v.object({
+    userId: v.string(),
+    hasPhone: v.boolean(),
+    sessionToken: v.string(),
+    user: v.object({
+      id: v.string(),
+      name: v.string(),
+      email: v.string(),
+      phone: v.string(),
+      phoneNumber: v.optional(v.string()),
+      role: v.string(),
+      isVerified: v.boolean(),
+      avatarUrl: v.optional(v.string()),
+      walletAddress: v.optional(v.string()),
+    }),
+  }),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const sessionToken = _generateSessionToken();
+    const normalizedEmail = args.email.trim().toLowerCase();
+
+    // Query user by email
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", normalizedEmail))
+      .first();
+
+    if (existing) {
+      const hasPhone = !!(
+        (existing.phoneNumber && existing.phoneNumber.trim().length > 0) ||
+        (existing.phone && existing.phone.trim().length > 0)
+      );
+
+      await ctx.db.patch(existing._id, {
+        sessionToken,
+        lastLoginAt: now,
+        updatedAt: now,
+        authProvider: args.provider,
+        externalAuthId: args.providerId.slice(0, 256),
+        ...(args.avatarUrl && !existing.avatarUrl ? { avatarUrl: args.avatarUrl } : {}),
+      });
+
+      return {
+        userId: existing._id as string,
+        hasPhone,
+        sessionToken,
+        user: {
+          id: existing._id as string,
+          name: existing.name,
+          email: existing.email,
+          phone: existing.phone ?? "",
+          phoneNumber: existing.phoneNumber,
+          role: existing.role,
+          isVerified: existing.isVerified,
+          avatarUrl: existing.avatarUrl,
+          walletAddress: existing.walletAddress,
+        },
+      };
+    }
+
+    // New user
+    const displayName =
+      args.name && args.name.trim().length > 0
+        ? args.name.trim()
+        : normalizedEmail.split("@")[0];
+
+    const userId = await ctx.db.insert("users", {
+      name: displayName,
+      email: normalizedEmail,
+      phone: "",
+      phoneNumber: undefined,
+      role: "client",
+      authProvider: args.provider,
+      externalAuthId: args.providerId.slice(0, 256),
+      sessionToken,
+      isVerified: true,
+      isActive: true,
+      avatarUrl: args.avatarUrl,
+      lastLoginAt: now,
+      updatedAt: now,
+    });
+
+    // Initialize wallet with zero balance
+    await ctx.db.insert("walletBalances", {
+      userId,
+      availableBalance: 0,
+      pendingBalance: 0,
+      escrowBalance: 0,
+      currency: "SLE",
+      updatedAt: now,
+    });
+
+    return {
+      userId: userId as string,
+      hasPhone: false,
+      sessionToken,
+      user: {
+        id: userId as string,
+        name: displayName,
+        email: normalizedEmail,
+        phone: "",
+        phoneNumber: undefined,
+        role: "client",
+        isVerified: true,
+        avatarUrl: args.avatarUrl,
+        walletAddress: undefined,
+      },
+    };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                      LINK PHONE NUMBER
+// Formats and stores Sierra Leone phone number, ensures wallet exists.
+// ═══════════════════════════════════════════════════════════════════════
+
+export const linkPhoneNumber = mutation({
+  args: {
+    userId: v.id("users"),
+    phoneNumber: v.string(),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    phoneNumber: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    // Format phone number to Sierra Leone E.164 (+232...)
+    let digits = args.phoneNumber.replace(/\D/g, "");
+    if (digits.startsWith("232")) {
+      digits = digits.substring(3);
+    } else if (digits.startsWith("0")) {
+      digits = digits.substring(1);
+    }
+    const formattedPhone = `+232${digits}`;
+
+    const now = Date.now();
+    await ctx.db.patch(args.userId, {
+      phone: formattedPhone,
+      phoneNumber: formattedPhone,
+      updatedAt: now,
+    });
+
+    // Ensure wallet balance exists
+    const existingWallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .first();
+
+    if (!existingWallet) {
+      await ctx.db.insert("walletBalances", {
+        userId: args.userId,
+        availableBalance: 0,
+        pendingBalance: 0,
+        escrowBalance: 0,
+        currency: "SLE",
+        updatedAt: now,
+      });
+    }
+
+    return {
+      success: true,
+      phoneNumber: formattedPhone,
+    };
+  },
+});
+
+
