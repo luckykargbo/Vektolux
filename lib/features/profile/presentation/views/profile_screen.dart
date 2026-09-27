@@ -68,9 +68,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _escrowBiometricEnabled = true;
 
   // ── Live Convex wallet data (replaces hardcoded _escrowBalance) ───
-  double? _walletBalance;        // null = loading
+  double _walletBalance = 0.0;
   int _activeEscrowDeals = 0;
   bool _isLoadingBalance = true;
+
 
   // ── Live Convex payment accounts (replaces local _savedPaymentMethods) ──
   List<PaymentAccount> _userPaymentAccounts = [];
@@ -223,9 +224,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Wallet Synced • Available: SLE ${_walletBalance?.toStringAsFixed(2) ?? "0.00"}',
+                  'Wallet Synced • Available: SLE ${_walletBalance.toStringAsFixed(2)}',
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
+
               ),
             ],
           ),
@@ -2105,8 +2107,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             _buildVendorStatCard(
                               icon: Icons.account_balance_wallet_outlined,
                               label: 'Escrow Balance',
-                              value: 'SLE ${_walletBalance != null ? _walletBalance!.toStringAsFixed(0) : '...'}',
+                              value: 'SLE ${_walletBalance.toStringAsFixed(2)}',
                               color: AppColors.emeraldDark,
+
                             ),
                           ],
                         ),
@@ -3720,7 +3723,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     await VerifiedLedgerTransferSheet.show(
       context,
       user: user,
-      currentBalance: _walletBalance ?? 0.0,
+      currentBalance: _walletBalance,
       initialQuery: initialQuery,
       onTransferCompleted: () {
         _fetchWalletData();
@@ -4024,8 +4027,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildEscrowWalletHeroCard(BuildContext context, UserEntity? user) {
     final balanceText = _isBalanceVisible
-        ? 'SLE ${_walletBalance?.toStringAsFixed(2) ?? '0.00'}'
+        ? 'SLE ${_walletBalance.toStringAsFixed(2)}'
         : 'SLE ••••••';
+
 
     return Container(
       decoration: BoxDecoration(
@@ -5762,7 +5766,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Available for payout: SLE ${_walletBalance?.toStringAsFixed(2) ?? '0.00'}',
+                    'Available for payout: SLE ${_walletBalance.toStringAsFixed(2)}',
                     style: const TextStyle(fontSize: 12.5, color: AppColors.gray600, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 16),
@@ -5842,7 +5846,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 );
                                 return;
                               }
-                              if (amt > (_walletBalance ?? 0.0)) {
+                              if (amt > _walletBalance) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('Withdrawal amount exceeds available escrow balance.')),
                                 );

@@ -561,11 +561,22 @@ export const getWalletBalance = query({
   },
   handler: async (ctx, args) => {
     const currency = args.currency ?? "SLE";
-    const userConvexId = ctx.db.normalizeId("users", args.userId);
+    let userConvexId = ctx.db.normalizeId("users", args.userId);
+
+    if (!userConvexId) {
+      const u = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", args.userId))
+        .first();
+      if (u) userConvexId = u._id;
+    }
+
     if (!userConvexId) {
       return {
-        availableBalance: 0,
-        pendingBalance: 0,
+        availableBalance: 0.0,
+        pendingBalance: 0.0,
+        escrowLockedBalance: 0.0,
+        escrowBalance: 0.0,
         currency,
         exists: false,
       };
@@ -573,15 +584,15 @@ export const getWalletBalance = query({
 
     const wallet = await ctx.db
       .query("walletBalances")
-      .withIndex("by_user_currency", (q) =>
-        q.eq("userId", userConvexId).eq("currency", currency)
-      )
+      .withIndex("by_user", (q) => q.eq("userId", userConvexId!))
       .first();
 
     if (!wallet) {
       return {
-        availableBalance: 0,
-        pendingBalance: 0,
+        availableBalance: 0.0,
+        pendingBalance: 0.0,
+        escrowLockedBalance: 0.0,
+        escrowBalance: 0.0,
         currency,
         exists: false,
       };
@@ -591,6 +602,8 @@ export const getWalletBalance = query({
       walletId: wallet._id,
       availableBalance: wallet.availableBalance,
       pendingBalance: wallet.pendingBalance,
+      escrowLockedBalance: wallet.escrowBalance ?? 0.0,
+      escrowBalance: wallet.escrowBalance ?? 0.0,
       currency: wallet.currency,
       exists: true,
       updatedAt: wallet.updatedAt,
@@ -3663,7 +3676,7 @@ export const initiateMoniMePayment = action({
   },
   handler: async (ctx, args) => {
     const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VAsS2nSa4AALw1JuBJrXtUAnF").trim();
-    const token = (process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
+    const token = (process.env.MONIME_API_KEY || process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
     const accessToken = token;
     const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
 
@@ -3681,10 +3694,6 @@ export const initiateMoniMePayment = action({
     const returnUrl = args.returnUrl ?? "vektolux://payment/success";
 
     // ── Carrier resolution: explicit client override takes priority ──
-    // Priority order:
-    //   1. args.providerId (explicit m17/m18/m19 or slug from manual override)
-    //   2. args.provider (legacy slug field)
-    //   3. Auto-detection from phone prefix
     const explicitId = args.providerId || args.provider || "";
     const resolvedCarrier = resolveCarrier(cleanPhone || undefined, explicitId || undefined);
     let providerSlug: string = resolvedCarrier !== "unknown" ? resolvedCarrier : "orange";
@@ -3696,7 +3705,7 @@ export const initiateMoniMePayment = action({
     }
 
     const description =
-      args.description ?? `Vektolux Escrow Wallet Top-Up — ${args.amount} ${currency} via ${providerSlug.toUpperCase()}`;
+      args.description ?? `Deposit SLE ${args.amount} into Escrow Protection`;
 
     // 1. Record pending transaction in Convex ledger (non-blocking)
     try {
@@ -3715,19 +3724,13 @@ export const initiateMoniMePayment = action({
 
     const minorAmount = Math.round(args.amount * 100);
 
-    // 2. Construct dynamic checkout session payload (amounts in minor units / cents)
+    // 2. Construct dynamic checkout session payload strictly per MoniMe API specification
     const checkoutPayload: Record<string, any> = {
-      name: description,
-      amount: {
-        currency: "SLE",
-        value: minorAmount,
-      },
-      paymentMethods: ["momo", "bank", "card"],
-      successUrl: returnUrl,
-      cancelUrl: "vektolux://payment/cancel",
+      name: "Vektolux Escrow Deposit",
+      description: `Deposit SLE ${args.amount} into Escrow Protection`,
       lineItems: [
         {
-          name: args.description || "Escrow Wallet Top-Up",
+          name: "Escrow Wallet Deposit",
           type: "custom",
           quantity: 1,
           price: {
@@ -3736,18 +3739,28 @@ export const initiateMoniMePayment = action({
           },
         },
       ],
+      paymentOptions: {
+        card: { disable: false },
+        bank: { disable: false },
+        momo: { disable: false },
+      },
+      successUrl: returnUrl,
+      cancelUrl: "vektolux://payment/cancel",
       metadata: {
+        userId: args.userId ?? "",
+        type: "escrow_deposit",
+        amount: String(args.amount),
         reference,
         provider: providerSlug,
         providerId: providerSlug === "orange" ? "m17" : (providerSlug === "africell" ? "m18" : "m19"),
         phoneNumber: sanitizedPhone,
         source: "vektolux_mobile_app",
-        ...(args.userId ? { userId: args.userId } : {}),
         ...(args.bookingId ? { bookingId: args.bookingId } : {}),
         ...(args.escrowOrderId ? { escrowOrderId: args.escrowOrderId } : {}),
         ...(args.reContractId ? { reContractId: args.reContractId } : {}),
       },
     };
+
 
     console.log("[MoniMe Request Body]:", JSON.stringify(checkoutPayload, null, 2));
 
@@ -3869,6 +3882,7 @@ export const initiateMoniMePayment = action({
 
       const resData = resJson?.result ?? resJson?.data ?? resJson ?? {};
       const checkoutUrl =
+        resData.redirectUrl ??
         resData.url ??
         resData.checkoutUrl ??
         resData.checkout_url ??
@@ -3884,11 +3898,13 @@ export const initiateMoniMePayment = action({
 
       return {
         success: true,
+        checkoutUrl: resData.redirectUrl || resData.url || checkoutUrl,
+        redirectUrl: resData.redirectUrl || resData.url || checkoutUrl,
+        url: resData.redirectUrl || resData.url || checkoutUrl,
         code: "PAYMENT_INITIATED",
         message: ussdPrompt,
         transactionId: paymentId,
         reference,
-        checkoutUrl,
         ussdPrompt,
         ussdCode: resData.ussdCode ?? resData.dialCode ?? "",
         status: "pending",
@@ -3945,6 +3961,31 @@ export const createTopUpSession = action({
     return res;
   },
 });
+
+/**
+ * Alias action for createTopUpSession following MoniMe checkout-session convention.
+ */
+export const createCheckoutSession = action({
+  args: {
+    amount: v.number(),
+    phoneNumber: v.optional(v.string()),
+    customerPhone: v.optional(v.string()),
+    provider: v.optional(v.string()),
+    providerId: v.optional(v.string()),
+    email: v.optional(v.string()),
+    customerEmail: v.optional(v.string()),
+    customerName: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    walletId: v.optional(v.string()),
+    currency: v.optional(v.string()),
+    description: v.optional(v.string()),
+    returnUrl: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    return await ctx.runAction(api.payments.createTopUpSession, args);
+  },
+});
+
 
 /**
  * Query payment transaction status by reference.
@@ -4505,22 +4546,23 @@ export const patchPendingTopUp = mutation({
     customerPhone: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const grossAmount = args.grossAmount ?? 10.0;
-    const netAmount = args.netAmount ?? 9.9;
-    const feeAmount = args.feeAmount ?? (grossAmount - netAmount);
-    const lookupRef = args.reference || "vktlx_monime_1790272583071_hvcox8";
-    const orderId = args.orderId || "7NDE-3G38-FFP7";
+    if (!args.reference && !args.orderId) {
+      return { success: false, reason: "MISSING_REFERENCE" };
+    }
+
+    const lookupRef = args.reference;
+    const orderId = args.orderId;
+    const effectiveRef = (lookupRef ?? orderId ?? "MONIME_REF").replace(/§/g, "_");
 
     const variants = [
       lookupRef,
-      lookupRef.replace(/§/g, "_"),
-      lookupRef.replace(/_/g, "§"),
+      lookupRef ? lookupRef.replace(/§/g, "_") : undefined,
+      lookupRef ? lookupRef.replace(/_/g, "§") : undefined,
       orderId,
-      "vktlx_monime_1790272583071_hvcox8",
-      "vktlx§monime§1790272583071§hvcox8",
-    ];
+    ].filter(Boolean) as string[];
 
     let tx: Doc<"transactions"> | null = null;
+
     for (const variant of variants) {
       tx = await ctx.db
         .query("transactions")
@@ -4540,30 +4582,19 @@ export const patchPendingTopUp = mutation({
       }
     }
 
-    if (!tx && args.userId) {
-      const uNorm = ctx.db.normalizeId("users", args.userId);
-      if (uNorm) {
-        tx = await ctx.db
-          .query("transactions")
-          .withIndex("by_user", (q) => q.eq("userId", uNorm))
-          .order("desc")
-          .first();
-      }
+    if (!tx) {
+      return { success: false, reason: "TX_NOT_FOUND" };
     }
 
-    let user: Doc<"users"> | null = null;
-    if (tx) {
-      user = await ctx.db.get(tx.userId);
-    } else {
-      const fallbackUserId = ctx.db.normalizeId("users", "jx760xc0621p5tgwphtfn2r98h8ex3be");
-      if (fallbackUserId) {
-        user = await ctx.db.get(fallbackUserId);
-      }
-    }
-
+    const user = await ctx.db.get(tx.userId);
     if (!user) {
       throw new Error("Target user could not be found to patch balance.");
     }
+
+    const grossAmount = args.grossAmount ?? tx.amount ?? 0;
+    const feeAmount = args.feeAmount ?? (tx.feeAmount ?? 0);
+    const netAmount = args.netAmount ?? Math.max(0, grossAmount - feeAmount);
+
 
     const now = Date.now();
     const currency = tx?.currency || "SLE";
@@ -4619,14 +4650,14 @@ export const patchPendingTopUp = mutation({
         amount: grossAmount,
         netAmount,
         feeAmount,
-        gatewayReference: lookupRef.replace(/§/g, "_"),
+        gatewayReference: effectiveRef,
         failureReason: undefined,
-        description: `MoniMe Top-Up (Reconciled) — SLE ${grossAmount} (Net: SLE ${netAmount}) via Orange Money [Order: ${orderId}]`,
+        description: `MoniMe Top-Up (Reconciled) — SLE ${grossAmount} (Net: SLE ${netAmount}) via Orange Money [Order: ${orderId ?? effectiveRef}]`,
         updatedAt: now,
       });
     } else {
       await ctx.db.insert("transactions", {
-        transactionId: orderId,
+        transactionId: orderId ?? effectiveRef,
         walletId,
         userId: user._id,
         type: "top_up",
@@ -4635,9 +4666,9 @@ export const patchPendingTopUp = mutation({
         feeAmount,
         currency,
         gatewayProvider: "MONIME_ORANGE",
-        gatewayReference: lookupRef.replace(/§/g, "_"),
+        gatewayReference: effectiveRef,
         status: "completed",
-        description: `MoniMe Top-Up (Reconciled) — SLE ${grossAmount} (Net: SLE ${netAmount}) via Orange Money [Order: ${orderId}]`,
+        description: `MoniMe Top-Up (Reconciled) — SLE ${grossAmount} (Net: SLE ${netAmount}) via Orange Money [Order: ${orderId ?? effectiveRef}]`,
         createdAt: now,
         updatedAt: now,
       });
@@ -4646,8 +4677,8 @@ export const patchPendingTopUp = mutation({
     // 3. Double-entry ledger
     try {
       const ledgerTxId = await ctx.db.insert("ledger_transactions", {
-        transactionCode: `LTX_RECON_${orderId}`,
-        description: `MoniMe Reconciled Deposit - Ref: ${lookupRef} - Order: ${orderId}`,
+        transactionCode: `LTX_RECON_${orderId ?? effectiveRef}`,
+        description: `MoniMe Reconciled Deposit - Ref: ${effectiveRef} - Order: ${orderId ?? effectiveRef}`,
         createdAt: now,
       });
 
@@ -4734,17 +4765,6 @@ export const checkAndCompletePendingMoniMe = internalMutation({
       }
     }
 
-    if (!tx && args.userId) {
-      const uNorm = ctx.db.normalizeId("users", args.userId);
-      if (uNorm) {
-        tx = await ctx.db
-          .query("transactions")
-          .withIndex("by_user", (q) => q.eq("userId", uNorm))
-          .order("desc")
-          .first();
-      }
-    }
-
     if (!tx) {
       return { success: false, reason: "TX_NOT_FOUND" };
     }
@@ -4760,11 +4780,16 @@ export const checkAndCompletePendingMoniMe = internalMutation({
       };
     }
 
-    // Auto-complete pending transaction with net credit
-    const netAmount = 9.90;
-    const grossAmount = tx.amount || 10.00;
-    const feeAmount = 0.10;
+    // Only complete if a real reference was matched
+    if (!args.reference && !args.orderId) {
+      return { success: false, reason: "REFERENCE_REQUIRED" };
+    }
+
+    const grossAmount = tx.amount || 0;
+    const feeAmount = tx.feeAmount ?? 0;
+    const netAmount = tx.netAmount ?? Math.max(0, grossAmount - feeAmount);
     const now = Date.now();
+
 
     const wallet = await ctx.db.get(tx.walletId);
     if (!wallet) {

@@ -78,3 +78,65 @@ export const getUserBalance = query({
     };
   },
 });
+
+/**
+ * Get wallet balance strictly filtered by the authenticated user's ID.
+ * If no wallet record exists, returns { availableBalance: 0.0, escrowLockedBalance: 0.0 }.
+ */
+export const getWalletBalance = query({
+  args: {
+    userId: v.string(),
+    currency: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const currency = args.currency ?? "SLE";
+    let userConvexId = ctx.db.normalizeId("users", args.userId);
+
+    if (!userConvexId) {
+      const u = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", args.userId))
+        .first();
+      if (u) userConvexId = u._id;
+    }
+
+    if (!userConvexId) {
+      return {
+        availableBalance: 0.0,
+        pendingBalance: 0.0,
+        escrowLockedBalance: 0.0,
+        escrowBalance: 0.0,
+        currency,
+        exists: false,
+      };
+    }
+
+    const wallet = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user", (q) => q.eq("userId", userConvexId!))
+      .first();
+
+    if (!wallet) {
+      return {
+        availableBalance: 0.0,
+        pendingBalance: 0.0,
+        escrowLockedBalance: 0.0,
+        escrowBalance: 0.0,
+        currency,
+        exists: false,
+      };
+    }
+
+    return {
+      walletId: wallet._id,
+      availableBalance: wallet.availableBalance,
+      pendingBalance: wallet.pendingBalance,
+      escrowLockedBalance: wallet.escrowBalance ?? 0.0,
+      escrowBalance: wallet.escrowBalance ?? 0.0,
+      currency: wallet.currency,
+      exists: true,
+      updatedAt: wallet.updatedAt,
+    };
+  },
+});
+
