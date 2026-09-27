@@ -108,9 +108,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Vektolux Mobile Release (v1.0.21) — Escrow Security PIN Authorization & Live MoniMe Payouts"
+          name: "Vektolux Mobile Release (v1.0.22) — Unified Payments Architecture & Auto-Carrier Detection"
           body: |
-            ## Vektolux Mobile App Builds (v1.0.21) — Escrow Security PIN Authorization & Live MoniMe Payouts
+            ## Vektolux Mobile App Builds (v1.0.22) — Unified Payments Architecture & Auto-Carrier Detection
 
             ### Direct Downloads:
             - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
@@ -118,20 +118,20 @@ jobs:
             - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
               * Direct sideload / install on any Android device.
 
-            ### What's New in this Build (v1.0.21):
-            - **Mandatory Escrow Security PIN on Withdrawals**:
-              * When tapping "Withdraw" in the profile screen, the app validates whether the user has configured their 4-digit PIN.
-              * If not configured, automatically routes the user to set up their 4-digit Escrow Security PIN first.
-              * If configured, prompts a dedicated, sleek 4-digit PIN confirmation bottom sheet before payout submission.
-            - **Live MoniMe Outbound Payouts Pipeline**:
-              * Atomically reserves wallet balance in Convex backend.
-              * Securely calls the MoniMe API (`https://api.monime.io/v1/payouts`) to disburse funds directly to Orange Money (`m17`) or Africell Money (`m18`).
-              * Automatically transitions transaction status to `completed` upon success or auto-refunds the balance if the gateway rejects the transaction.
-            - **Instant Wallet Settlement & Web Checkout**:
-              * Zero-friction top-ups with active polling and instant ledger credit.
-              * Interactive in-app WebCheckout portal for smooth card and carrier payments.
-            - **Live Camera QR Scanner & Verified Ledger Transfers**:
-              * MobileScanner viewfinder with haptic detection and PIN authorization.
+            ### What's New in this Build (v1.0.22):
+            - **Universal Auto-Detecting Mobile Money**:
+              * Real-time MSISDN carrier detection across Sierra Leone prefixes without manual selection.
+              * Orange Money (`m17`), Africell Afrimoney (`m18`), and QCell QMoney (`m19`) prefix matching with live dynamic carrier badge animations.
+            - **Hosted Card & Bank Checkout Sessions (MoniMe Gateway)**:
+              * Secure Checkout Sessions API integration supporting Visa, Mastercard, and Direct Sierra Leone Bank Transfer.
+              * Deep link callbacks (`vektolux://payment/success`) registered across iOS `Info.plist` and Android `AndroidManifest.xml`.
+            - **Interactive In-App Web Checkout Modal**:
+              * Launches checkout sessions in an in-app browser view (`LaunchMode.inAppWebView`).
+              * Automatically closes the web view upon payment completion, verifies and settles ledger balances reactively, and presents a confirmation modal.
+            - **Apple Store & Google Play Compliance**:
+              * Permanent user account deletion and data erasure flow (Apple Guideline 5.1.1(v)).
+              * Clear escrow deposit framing for physical rides, deliveries, and property escrow (Guideline 3.1.5).
+              * Status banners for insufficient funds, unregistered numbers, and authorization timeouts.
           files: release-assets/*
           prerelease: false
           make_latest: true
