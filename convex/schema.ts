@@ -1505,4 +1505,103 @@ export default defineSchema({
       "checkOutTimestamp",
     ])
     .index("by_status", ["status"]),
+
+  // ─── AGENT & DEALER PROFILES ─────────────────────────────────────
+  agent_profiles: defineTable({
+    userId: v.id("users"),
+    businessName: v.string(),
+    businessType: v.string(), // "real_estate_broker", "auto_dealership", "dual"
+    tinNumber: v.optional(v.string()),
+    officeAddress: v.string(),
+    officeCity: v.string(),
+    officeLatitude: v.optional(v.number()),
+    officeLongitude: v.optional(v.number()),
+    publicContactPhone: v.string(),
+    publicWhatsAppPhone: v.optional(v.string()),
+    bio: v.optional(v.string()),
+    logoUrl: v.optional(v.string()),
+    bannerUrl: v.optional(v.string()),
+    isVerified: v.boolean(),
+    verifiedAt: v.optional(v.number()),
+    verificationRevokedAt: v.optional(v.number()),
+    allowDirectBuyerLeads: v.boolean(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_isVerified", ["isVerified"])
+    .index("by_tinNumber", ["tinNumber"]),
+
+  // ─── VERIFICATION REQUESTS (Agent KYC Pipeline) ───────────────────
+  verification_requests: defineTable({
+    userId: v.id("users"),
+    agentProfileId: v.optional(v.id("agent_profiles")),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("pending_review"),
+      v.literal("action_required"),
+      v.literal("approved_pending_payment"),
+      v.literal("active"),
+      v.literal("rejected"),
+      v.literal("revoked")
+    ),
+    roleCategory: v.string(), // "real_estate_agent" | "vehicle_dealer" | "dual"
+    businessName: v.string(),
+    tinNumber: v.optional(v.string()),
+    officeAddress: v.string(),
+    officeCity: v.string(),
+    officeCoordinates: v.optional(
+      v.object({
+        lat: v.number(),
+        lng: v.number(),
+      })
+    ),
+    publicPhone: v.string(),
+    publicWhatsApp: v.optional(v.string()),
+    submittedAt: v.optional(v.number()),
+    reviewedAt: v.optional(v.number()),
+    reviewerUserId: v.optional(v.id("users")),
+    reviewerNotes: v.optional(v.string()),
+    rejectionReasons: v.optional(v.array(v.string())),
+    attemptCount: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_status", ["status"])
+    .index("by_status_and_submittedAt", ["status", "submittedAt"]),
+
+  // ─── VERIFICATION DOCUMENTS ───────────────────────────────────────
+  verification_documents: defineTable({
+    verificationRequestId: v.id("verification_requests"),
+    documentType: v.string(), // "national_id_front" | "national_id_back" | "passport" | "drivers_license" | "live_selfie_with_id" | "business_registration_cert" | "tax_clearance_tin" | "office_utility_bill" | "office_lease_agreement"
+    fileUrl: v.string(),
+    fileStorageId: v.optional(v.id("_storage")),
+    fileMimeType: v.string(),
+    fileSizeBytes: v.number(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("approved"),
+      v.literal("rejected")
+    ),
+    rejectionComment: v.optional(v.string()),
+    reviewedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_verificationRequestId", ["verificationRequestId"])
+    .index("by_verificationRequestId_and_status", [
+      "verificationRequestId",
+      "status",
+    ]),
+
+  // ─── VERIFICATION AUDIT LOGS ──────────────────────────────────────
+  verification_audit_logs: defineTable({
+    verificationRequestId: v.id("verification_requests"),
+    adminId: v.id("users"),
+    action: v.string(), // "SUBMITTED", "MARKED_ACTION_REQUIRED", "APPROVED", "REVOKED"
+    previousStatus: v.string(),
+    newStatus: v.string(),
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_verificationRequestId", ["verificationRequestId"]),
 });

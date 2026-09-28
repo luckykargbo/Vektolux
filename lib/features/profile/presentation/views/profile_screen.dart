@@ -26,6 +26,7 @@ import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/my_listings_screen.dart';
 import '../../../auth/presentation/views/pending_verification_screen.dart';
+import '../../../verification/presentation/views/agent_verification_screen.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
 import '../../../mobility/presentation/views/my_escrow_orders_screen.dart';
 import '../../../real_estate/presentation/views/my_real_estate_escrows_screen.dart';
@@ -2116,65 +2117,80 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         const SizedBox(height: 12),
                         const Divider(height: 1),
                         const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: (user?.isVerified == true || user?.isApprovedVerification == true)
-                                    ? AppColors.emeraldSurface
-                                    : AppColors.amberSurface,
-                                borderRadius: BorderRadius.circular(8),
+                        InkWell(
+                          onTap: () {
+                            if (user != null) {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => AgentVerificationScreen(
+                                    convexClient: context.read<ConvexClientWrapper>(),
+                                    currentUser: user,
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                          borderRadius: BorderRadius.circular(8),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: (user?.isVerified == true || user?.isApprovedVerification == true)
+                                      ? AppColors.emeraldSurface
+                                      : AppColors.amberSurface,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(
+                                  (user?.isVerified == true || user?.isApprovedVerification == true)
+                                      ? Icons.badge_outlined
+                                      : Icons.pending_actions_outlined,
+                                  color: (user?.isVerified == true || user?.isApprovedVerification == true)
+                                      ? AppColors.emeraldDark
+                                      : AppColors.amberDark,
+                                  size: 18,
+                                ),
                               ),
-                              child: Icon(
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      (user?.isVerified == true || user?.isApprovedVerification == true)
+                                          ? 'KYC Verification: Verified'
+                                          : (user?.isPendingVerification == true
+                                              ? 'KYC Verification: Pending Review'
+                                              : 'KYC Verification: Unverified'),
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppColors.obsidian,
+                                      ),
+                                    ),
+                                    Text(
+                                      (user?.isVerified == true || user?.isApprovedVerification == true)
+                                          ? 'National ID & TIN credentials verified on-chain'
+                                          : 'Tap to submit business & identity verification',
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        color: AppColors.textSecondary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Icon(
                                 (user?.isVerified == true || user?.isApprovedVerification == true)
-                                    ? Icons.badge_outlined
-                                    : Icons.pending_actions_outlined,
+                                    ? Icons.check_circle
+                                    : Icons.chevron_right,
                                 color: (user?.isVerified == true || user?.isApprovedVerification == true)
-                                    ? AppColors.emeraldDark
-                                    : AppColors.amberDark,
+                                    ? AppColors.emerald
+                                    : AppColors.textSecondary,
                                 size: 18,
                               ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    (user?.isVerified == true || user?.isApprovedVerification == true)
-                                        ? 'KYC Verification: Verified'
-                                        : (user?.isPendingVerification == true
-                                            ? 'KYC Verification: Pending Review'
-                                            : 'KYC Verification: Unverified'),
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                      color: AppColors.obsidian,
-                                    ),
-                                  ),
-                                  Text(
-                                    (user?.isVerified == true || user?.isApprovedVerification == true)
-                                        ? 'National ID & TIN credentials verified on-chain'
-                                        : 'Tap to submit business & identity verification',
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      color: AppColors.textSecondary,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Icon(
-                              (user?.isVerified == true || user?.isApprovedVerification == true)
-                                  ? Icons.check_circle
-                                  : Icons.info_outline,
-                              color: (user?.isVerified == true || user?.isApprovedVerification == true)
-                                  ? AppColors.emerald
-                                  : AppColors.amberDark,
-                              size: 18,
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ],
                     ),
