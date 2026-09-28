@@ -18,6 +18,7 @@ export const userRole = v.union(
   v.literal("seller"),
   v.literal("dealer"),
   v.literal("property_owner"),
+  v.literal("hotel_operator"),
   v.literal("admin"),
   v.literal("Merchant"),
   v.literal("Client"),
@@ -1339,4 +1340,169 @@ export default defineSchema({
     .index("by_reference", ["reference"])
     .index("by_status", ["status"])
     .index("by_phone_purpose", ["phoneNumber", "purpose"]),
+
+  // ─── HOTEL & GUEST HOUSE PROFILES ────────────────────────────────
+  hotel_profiles: defineTable({
+    userId: v.id("users"),
+    businessName: v.string(),
+    operationalType: v.union(v.literal("hotel"), v.literal("guest_house")),
+    isVerified: v.boolean(),
+    verificationStatus: v.union(
+      v.literal("pending"),
+      v.literal("verified"),
+      v.literal("rejected"),
+      v.literal("suspended")
+    ),
+    tinNumber: v.optional(v.string()),
+    commercialLicenseUrl: v.optional(v.string()),
+    address: v.string(),
+    city: v.string(),
+    latitude: v.optional(v.number()),
+    longitude: v.optional(v.number()),
+    phone: v.string(),
+    email: v.optional(v.string()),
+    amenities: v.array(v.string()),
+    coverImageUrl: v.optional(v.string()),
+    mediaUrls: v.array(v.string()),
+    description: v.string(),
+    starRating: v.optional(v.number()),
+    checkInTime: v.optional(v.string()),
+    checkOutTime: v.optional(v.string()),
+    supportsHourlyStays: v.boolean(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_operationalType", ["operationalType"])
+    .index("by_isVerified", ["isVerified"])
+    .index("by_city", ["city"])
+    .index("by_isVerified_and_operationalType", ["isVerified", "operationalType"])
+    .searchIndex("search_hotel_name", {
+      searchField: "businessName",
+      filterFields: ["city", "operationalType", "isVerified"],
+    }),
+
+  // ─── SUBSCRIPTION PLANS (Dynamic Admin-Managed Pricing) ───────────
+  subscription_plans: defineTable({
+    name: v.string(),
+    tierCode: v.string(),
+    roleTarget: v.union(v.literal("hotel_operator"), v.literal("agent"), v.literal("merchant")),
+    basePrice: v.number(),
+    currency: v.string(),
+    billingInterval: v.union(v.literal("monthly"), v.literal("quarterly"), v.literal("annual")),
+    intervalDays: v.number(),
+    discountPercent: v.number(),
+    promoStart: v.optional(v.number()),
+    promoEnd: v.optional(v.number()),
+    isActive: v.boolean(),
+    features: v.array(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_tierCode", ["tierCode"])
+    .index("by_roleTarget_and_isActive", ["roleTarget", "isActive"]),
+
+  // ─── VENDOR SUBSCRIPTIONS (Anti-Double-Pay Guard) ─────────────────
+  vendor_subscriptions: defineTable({
+    userId: v.id("users"),
+    planId: v.id("subscription_plans"),
+    tierCode: v.string(),
+    status: v.union(
+      v.literal("active"),
+      v.literal("expired"),
+      v.literal("cancelled"),
+      v.literal("dunning")
+    ),
+    startDate: v.number(),
+    expiryDate: v.number(),
+    gracePeriodEndsAt: v.optional(v.number()),
+    amountPaid: v.number(),
+    currency: v.string(),
+    paymentReference: v.string(),
+    paymentMethod: v.string(),
+    autoRenew: v.boolean(),
+    lastRenewedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_status", ["userId", "status"])
+    .index("by_status_and_expiryDate", ["status", "expiryDate"]),
+
+  // ─── HOTEL UNITS / ROOMS ──────────────────────────────────────────
+  hotel_rooms: defineTable({
+    hotelId: v.id("hotel_profiles"),
+    name: v.string(),
+    roomType: v.union(
+      v.literal("Standard"),
+      v.literal("Deluxe"),
+      v.literal("Suite"),
+      v.literal("Executive"),
+      v.literal("Hourly Short-Stay")
+    ),
+    pricePerNight: v.optional(v.number()),
+    pricePerHour: v.optional(v.number()),
+    supportsHourly: v.boolean(),
+    capacityGuests: v.number(),
+    bedConfiguration: v.string(),
+    amenities: v.array(v.string()),
+    images: v.array(v.string()),
+    isAvailable: v.boolean(),
+    totalRoomUnits: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_hotelId", ["hotelId"])
+    .index("by_hotelId_and_isAvailable", ["hotelId", "isAvailable"])
+    .index("by_roomType", ["roomType"]),
+
+  // ─── HOTEL GUEST BOOKINGS & ESCROW ────────────────────────────────
+  hotel_bookings: defineTable({
+    bookingReference: v.string(),
+    hotelId: v.id("hotel_profiles"),
+    roomId: v.id("hotel_rooms"),
+    guestId: v.id("users"),
+    guestName: v.string(),
+    guestPhone: v.string(),
+    guestEmail: v.optional(v.string()),
+    bookingCategory: v.union(v.literal("nightly"), v.literal("hourly")),
+    checkInTimestamp: v.number(),
+    checkOutTimestamp: v.number(),
+    numberOfGuests: v.number(),
+    numberOfNights: v.optional(v.number()),
+    numberOfHours: v.optional(v.number()),
+    subtotalAmount: v.number(),
+    platformCommissionRate: v.number(),
+    platformCommissionAmount: v.number(),
+    operatorPayoutAmount: v.number(),
+    currency: v.string(),
+    status: v.union(
+      v.literal("pending_payment"),
+      v.literal("in_escrow"),
+      v.literal("checked_in"),
+      v.literal("completed_payout"),
+      v.literal("disputed"),
+      v.literal("cancelled"),
+      v.literal("refunded")
+    ),
+    escrowLockedAt: v.optional(v.number()),
+    checkedInAt: v.optional(v.number()),
+    payoutReleasedAt: v.optional(v.number()),
+    disputeReason: v.optional(v.string()),
+    disputedAt: v.optional(v.number()),
+    paymentGatewayRef: v.optional(v.string()),
+    specialRequests: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_bookingReference", ["bookingReference"])
+    .index("by_hotelId", ["hotelId"])
+    .index("by_hotelId_and_status", ["hotelId", "status"])
+    .index("by_roomId_and_status", ["roomId", "status"])
+    .index("by_guestId", ["guestId"])
+    .index("by_roomId_and_checkInTimestamp_and_checkOutTimestamp", [
+      "roomId",
+      "checkInTimestamp",
+      "checkOutTimestamp",
+    ])
+    .index("by_status", ["status"]),
 });
