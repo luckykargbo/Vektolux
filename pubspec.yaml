@@ -1,7 +1,7 @@
 name: vektolux
 description: Vektolux Multi-Vertical Marketplace — Real Estate & Mobility
 publish_to: 'none'
-version: 1.0.23+24
+version: 1.0.24+25
 
 
 environment:
@@ -29,9 +29,7 @@ dependencies:
   # Using HTTP fallback; replace with convex_flutter FFI when available
   http: ^1.2.2
 
-  # ── Push Notifications & Firebase Cloud Messaging ─────────────────
-  firebase_core: ^3.8.1
-  firebase_messaging: ^15.1.6
+  # ── Local Notifications ───────────────────────────────────────────
   flutter_local_notifications: ^18.0.1
 
   # ── Typography ────────────────────────────────────────────────────

@@ -64,7 +64,7 @@ jobs:
         run: |
           mkdir -p Payload
           cp -r build/ios/iphoneos/Runner.app Payload/
-          zip -r Vektolux.ipa Payload
+          zip -r -y Vektolux.ipa Payload
           ls -lh Vektolux.ipa
 
       - name: Upload iOS IPA
@@ -108,26 +108,27 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Vektolux Mobile Release (v1.0.23) — Rebuilt Real Estate, Explore & Home Marketplaces"
+          name: "Vektolux Mobile Release (v1.0.24) — Pure Convex Architecture & iOS Sideloading Fix"
           body: |
-            ## Vektolux Mobile App Builds (v1.0.23) — Rebuilt Real Estate, Explore & Home Marketplaces
+            ## Vektolux Mobile App Builds (v1.0.24) — Pure Convex Architecture & iOS Sideloading Fix
 
             ### Direct Downloads:
             - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
-              * Install on iOS devices via AltStore, Sideloadly, TrollStore, Scarlet, or Enterprise signing.
+              * Clean release AOT build packaged with symlinks (`-y`) for seamless Sideloadly / AltStore / TrollStore signing.
             - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
               * Direct sideload / install on any Android device.
 
-            ### What's New in this Build (v1.0.23):
-            - **Production Real Estate Marketplace Overhaul**:
-              * Premium 2-column card architecture with Verified Badges, Favorite toggles, and intent pills (`For Rent`, `For Sale`, `Guest House`).
-              * Privacy-First Design: Only broad area locations displayed (`Inside {City}, Sierra Leone`) with zero public exact address/map exposure.
-              * Dedicated Location Selector bottom sheet covering all 16 Sierra Leone administrative districts & towns.
-              * Multi-layer filter engine: Property types (`House`, `Apartment`, `Guest House`, `Land`, `Commercial`), search debounce, and advanced filter sheet.
-            - **Explore Screen First-User Experience**:
-              * Complete architecture with 8 dynamic content sections and polished empty states for new user onboarding.
-            - **Rebuilt Client Home Screen**:
-              * Real-time wallet balances, fintech service shortcuts, and dynamic property and vehicle showcases.
+            ### What's New in this Build (v1.0.24):
+            - **Complete Firebase & APNs Decoupling**:
+              * Removed `firebase_core` and `firebase_messaging` dependencies.
+              * Deleted incomplete `GoogleService-Info.plist` that triggered native startup crashes (`com.firebase.core` missing App ID).
+              * Decoupled notifications into a pure in-app & local notification service (`flutter_local_notifications`), removing APNs registration failures on free personal Apple IDs.
+            - **Native iOS Startup & Codesigning Fixes**:
+              * Preserved Mach-O framework symlinks (`zip -r -y`) ensuring `Flutter.framework` and `App.framework` code signatures validate cleanly during sideloading.
+              * Removed `remote-notification` background mode preventing entitlement conflicts.
+            - **Marketplace & Onboarding Systems**:
+              * Production Real Estate Marketplace with 2-column cards, Verified Badges, and privacy-first broad locations.
+              * Explore and Home Screen overhauls powered directly by Convex Cloud.
           files: release-assets/*
           prerelease: false
           make_latest: true
