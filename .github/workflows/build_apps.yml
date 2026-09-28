@@ -108,9 +108,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Vektolux Mobile Release (v1.0.22) — Unified Payments Architecture & Auto-Carrier Detection"
+          name: "Vektolux Mobile Release (v1.0.23) — Rebuilt Real Estate, Explore & Home Marketplaces"
           body: |
-            ## Vektolux Mobile App Builds (v1.0.22) — Unified Payments Architecture & Auto-Carrier Detection
+            ## Vektolux Mobile App Builds (v1.0.23) — Rebuilt Real Estate, Explore & Home Marketplaces
 
             ### Direct Downloads:
             - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
@@ -118,20 +118,16 @@ jobs:
             - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
               * Direct sideload / install on any Android device.
 
-            ### What's New in this Build (v1.0.22):
-            - **Universal Auto-Detecting Mobile Money**:
-              * Real-time MSISDN carrier detection across Sierra Leone prefixes without manual selection.
-              * Orange Money (`m17`), Africell Afrimoney (`m18`), and QCell QMoney (`m19`) prefix matching with live dynamic carrier badge animations.
-            - **Hosted Card & Bank Checkout Sessions (MoniMe Gateway)**:
-              * Secure Checkout Sessions API integration supporting Visa, Mastercard, and Direct Sierra Leone Bank Transfer.
-              * Deep link callbacks (`vektolux://payment/success`) registered across iOS `Info.plist` and Android `AndroidManifest.xml`.
-            - **Interactive In-App Web Checkout Modal**:
-              * Launches checkout sessions in an in-app browser view (`LaunchMode.inAppWebView`).
-              * Automatically closes the web view upon payment completion, verifies and settles ledger balances reactively, and presents a confirmation modal.
-            - **Apple Store & Google Play Compliance**:
-              * Permanent user account deletion and data erasure flow (Apple Guideline 5.1.1(v)).
-              * Clear escrow deposit framing for physical rides, deliveries, and property escrow (Guideline 3.1.5).
-              * Status banners for insufficient funds, unregistered numbers, and authorization timeouts.
+            ### What's New in this Build (v1.0.23):
+            - **Production Real Estate Marketplace Overhaul**:
+              * Premium 2-column card architecture with Verified Badges, Favorite toggles, and intent pills (`For Rent`, `For Sale`, `Guest House`).
+              * Privacy-First Design: Only broad area locations displayed (`Inside {City}, Sierra Leone`) with zero public exact address/map exposure.
+              * Dedicated Location Selector bottom sheet covering all 16 Sierra Leone administrative districts & towns.
+              * Multi-layer filter engine: Property types (`House`, `Apartment`, `Guest House`, `Land`, `Commercial`), search debounce, and advanced filter sheet.
+            - **Explore Screen First-User Experience**:
+              * Complete architecture with 8 dynamic content sections and polished empty states for new user onboarding.
+            - **Rebuilt Client Home Screen**:
+              * Real-time wallet balances, fintech service shortcuts, and dynamic property and vehicle showcases.
           files: release-assets/*
           prerelease: false
           make_latest: true
