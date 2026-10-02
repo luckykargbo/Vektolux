@@ -7,15 +7,14 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:intl/intl.dart';
 
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/domain/entities/user_entity.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
-import '../../../auth/presentation/bloc/auth_event.dart';
 import '../../../auth/presentation/bloc/auth_state.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
-import '../../../mobility/presentation/views/driver_vehicle_registration_screen.dart';
 
 class OperatorDashboardScreen extends StatefulWidget {
   final ConvexClientWrapper convexClient;
@@ -32,6 +31,52 @@ class OperatorDashboardScreen extends StatefulWidget {
 
 class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
   UserRole? _activeWorkspace;
+  final NumberFormat _currencyFormat = NumberFormat('#,##0.00', 'en_US');
+  double? _escrowProtected; // funds protected in active escrow deals (server)
+  double? _totalEarned; // sum of completed payouts credited to this user (server)
+  bool _isLoadingWallet = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboardData();
+  }
+
+  Future<void> _loadDashboardData() async {
+    final user = context.read<AuthBloc>().state.user;
+    if (user == null) {
+      if (mounted) setState(() => _isLoadingWallet = false);
+      return;
+    }
+    try {
+      // Identity is the session (attached by the client); nothing here is invented.
+      final results = await Future.wait([
+        widget.convexClient.query('wallet:getUserBalance', args: {'userId': user.id}),
+        widget.convexClient.query('walletCore:getEarningsSummary'),
+      ]);
+      if (!mounted) return;
+      final bal = results[0];
+      final earn = results[1];
+      setState(() {
+        _escrowProtected = (bal.success && bal.value is Map)
+            ? ((bal.value as Map)['escrowBalance'] as num?)?.toDouble()
+            : null;
+        _totalEarned = (earn.success && earn.value is Map)
+            ? ((earn.value as Map)['totalEarned'] as num?)?.toDouble()
+            : null;
+        _isLoadingWallet = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingWallet = false);
+    }
+  }
+
+  /// A figure is shown only when the server returned it; otherwise a placeholder, never "SLE 0".
+  String _money(double? v) {
+    if (_isLoadingWallet) return 'Loading...';
+    if (v == null) return 'Unavailable';
+    return 'SLE ${_currencyFormat.format(v)}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +85,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
         final user = authState.user;
         final role = user?.role ?? UserRole.client;
         final currentWorkspace =
-            _activeWorkspace ?? (role == UserRole.client ? UserRole.driver : role);
+            _activeWorkspace ?? (role == UserRole.merchant ? UserRole.merchant : UserRole.agent);
         final roleName = currentWorkspace.displayName;
 
         return Scaffold(
@@ -121,11 +166,9 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                           borderRadius: BorderRadius.circular(14),
                         ),
                         child: Icon(
-                          currentWorkspace == UserRole.driver
-                              ? Icons.local_shipping_rounded
-                              : currentWorkspace == UserRole.agent
-                                  ? Icons.apartment_rounded
-                                  : Icons.directions_car_filled_rounded,
+                          currentWorkspace == UserRole.agent
+                              ? Icons.apartment_rounded
+                              : Icons.directions_car_filled_rounded,
                           size: 32,
                           color: AppColors.emerald,
                         ),
@@ -145,11 +188,9 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              currentWorkspace == UserRole.driver
-                                  ? 'Manage delivery vans, tippers & container freight'
-                                  : currentWorkspace == UserRole.agent
-                                      ? 'Manage property listings & schedule visits'
-                                      : 'Manage showroom inventory & fleet rentals',
+                              currentWorkspace == UserRole.agent
+                                  ? 'Manage property listings & schedule visits'
+                                  : 'Manage showroom inventory & fleet rentals',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Colors.white.withValues(alpha: 0.8),
@@ -177,9 +218,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                 ],
 
                 // ── 4. Role Specific Modules ────────────────────────
-                if (currentWorkspace == UserRole.driver) ...[
-                  _buildDriverSection(user),
-                ] else if (currentWorkspace == UserRole.agent) ...[
+                if (currentWorkspace == UserRole.agent) ...[
                   _buildAgentSection(user),
                 ] else if (currentWorkspace == UserRole.merchant) ...[
                   _buildDealerSection(user),
@@ -225,120 +264,6 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  //             COMMERCIAL FLEET & LOGISTICS WORKSPACE
-  // ═══════════════════════════════════════════════════════════════════
-
-  Widget _buildDriverSection(UserEntity? user) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionHeader('COMMERCIAL FLEET & FREIGHT DISPATCH'),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 12,
-                    height: 12,
-                    decoration: const BoxDecoration(
-                      color: AppColors.emerald,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'LOGISTICS HUB ACTIVE',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.5,
-                      color: AppColors.emeraldDark,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Register and manage commercial logistics assets: Delivery Vans, Sand/Dump Tipper Trucks, and Container Freight Trucks for commercial haulage across Sierra Leone.',
-                style: TextStyle(fontSize: 13, color: AppColors.gray600, height: 1.4),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.emeraldDark,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  icon: const Icon(Icons.add_circle_outline_rounded),
-                  label: const Text(
-                    'Register Commercial Vehicle / Truck',
-                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-                  ),
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => DriverVehicleRegistrationScreen(
-                          driverId: user?.id ?? '',
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        _buildSectionHeader('FLEET CATEGORIES & CAPACITY'),
-        _buildActionTile(
-          icon: Icons.local_shipping_rounded,
-          title: 'Sand / Dump Tipper Trucks',
-          subtitle: 'Quarry sand, aggregate & construction materials haulage',
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => DriverVehicleRegistrationScreen(
-                  driverId: user?.id ?? '',
-                ),
-              ),
-            );
-          },
-        ),
-        const SizedBox(height: 10),
-        _buildActionTile(
-          icon: Icons.airport_shuttle_rounded,
-          title: 'Cargo & Delivery Vans',
-          subtitle: 'Light & medium freight moving and courier logistics',
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => DriverVehicleRegistrationScreen(
-                  driverId: user?.id ?? '',
-                ),
-              ),
-            );
-          },
-        ),
-      ],
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════════════
-  //                       AGENT WORKSPACE
-  // ═══════════════════════════════════════════════════════════════════
 
   Widget _buildAgentSection(UserEntity? user) {
     return Column(
@@ -352,8 +277,13 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: _buildStatBox('SLE 14,250', 'Escrow Balance', Icons.account_balance_wallet_rounded),
+              child: _buildStatBox(
+                _money(_escrowProtected),
+                'Escrow Protected',
+                Icons.account_balance_wallet_rounded,
+              ),
             ),
+
           ],
         ),
         const SizedBox(height: 16),
@@ -406,8 +336,13 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: _buildStatBox('SLE 18,500', 'Rental Earnings', Icons.payments_rounded),
+              child: _buildStatBox(
+                _money(_totalEarned),
+                'Total Earned',
+                Icons.payments_rounded,
+              ),
             ),
+
           ],
         ),
         const SizedBox(height: 16),
@@ -598,12 +533,6 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
       child: Row(
         children: [
           _buildWorkspaceTabItem(
-            role: UserRole.driver,
-            icon: Icons.local_shipping_rounded,
-            label: 'Logistics',
-            isSelected: activeWorkspace == UserRole.driver,
-          ),
-          _buildWorkspaceTabItem(
             role: UserRole.agent,
             icon: Icons.apartment_rounded,
             label: 'Real Estate',
@@ -744,20 +673,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
               elevation: 0,
             ),
             onPressed: () async {
-              if (currentWorkspace == UserRole.driver) {
-                final res = await Navigator.of(context).push<bool>(
-                  MaterialPageRoute(
-                    builder: (_) => DriverVehicleRegistrationScreen(
-                      driverId: user?.id ?? '',
-                    ),
-                  ),
-                );
-                if (res == true && mounted) {
-                  context
-                      .read<AuthBloc>()
-                      .add(const UserRoleUpdatedEvent(UserRole.driver));
-                }
-              } else if (currentWorkspace == UserRole.agent) {
+              if (currentWorkspace == UserRole.agent) {
                 _showAgentDialog(context, user);
               } else if (currentWorkspace == UserRole.merchant) {
                 _showDealerDialog(context, user);
@@ -777,8 +693,8 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
   void _showAgentDialog(BuildContext context, UserEntity? user) {
     if (user == null) return;
     final agencyCtrl =
-        TextEditingController(text: '${user.name} Properties SL');
-    final tinCtrl = TextEditingController(text: 'TIN-SL-88402');
+        TextEditingController();
+    final tinCtrl = TextEditingController();
 
     showModalBottomSheet(
       context: context,
@@ -869,19 +785,25 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                   ),
                 ),
                 onPressed: () async {
+                  // Submits an APPLICATION. Posting privileges and the role itself are granted only
+                  // after an administrator approves it on the server; nothing changes locally.
                   final client = context.read<ConvexClientWrapper>();
-                  await client.mutation(
-                    'users:mockApproveRoleUpgrade',
-                    args: {'userId': user.id, 'targetRole': 'agent'},
+                  final res = await client.mutation(
+                    'users:applyRoleUpgrade',
+                    args: {
+                      'userId': user.id,
+                      'targetRole': 'agent',
+                      if (agencyCtrl.text.trim().isNotEmpty) 'businessName': agencyCtrl.text.trim(),
+                      if (tinCtrl.text.trim().isNotEmpty) 'tinNumber': tinCtrl.text.trim(),
+                    },
                   );
                   if (context.mounted) {
-                    context
-                        .read<AuthBloc>()
-                        .add(const UserRoleUpdatedEvent(UserRole.agent));
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Agent credentials verified!'),
-                        backgroundColor: AppColors.emeraldDark,
+                      SnackBar(
+                        content: Text(res.success
+                            ? 'Real estate agent application submitted. You will be notified after review.'
+                            : (res.errorMessage ?? 'Could not submit the application.')),
+                        backgroundColor: res.success ? AppColors.emeraldDark : AppColors.error,
                         behavior: SnackBarBehavior.floating,
                       ),
                     );
@@ -903,8 +825,8 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
   void _showDealerDialog(BuildContext context, UserEntity? user) {
     if (user == null) return;
     final dealerCtrl =
-        TextEditingController(text: '${user.name} Motors & Fleet');
-    final tinCtrl = TextEditingController(text: 'TIN-SL-90241');
+        TextEditingController();
+    final tinCtrl = TextEditingController();
 
     showModalBottomSheet(
       context: context,
@@ -995,19 +917,25 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                   ),
                 ),
                 onPressed: () async {
+                  // Submits an APPLICATION. Posting privileges and the role itself are granted only
+                  // after an administrator approves it on the server; nothing changes locally.
                   final client = context.read<ConvexClientWrapper>();
-                  await client.mutation(
-                    'users:mockApproveRoleUpgrade',
-                    args: {'userId': user.id, 'targetRole': 'merchant'},
+                  final res = await client.mutation(
+                    'users:applyRoleUpgrade',
+                    args: {
+                      'userId': user.id,
+                      'targetRole': 'merchant',
+                      if (dealerCtrl.text.trim().isNotEmpty) 'businessName': dealerCtrl.text.trim(),
+                      if (tinCtrl.text.trim().isNotEmpty) 'tinNumber': tinCtrl.text.trim(),
+                    },
                   );
                   if (context.mounted) {
-                    context
-                        .read<AuthBloc>()
-                        .add(const UserRoleUpdatedEvent(UserRole.merchant));
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Auto Dealer verified!'),
-                        backgroundColor: Color(0xFF92400E),
+                      SnackBar(
+                        content: Text(res.success
+                            ? 'Auto dealer application submitted. You will be notified after review.'
+                            : (res.errorMessage ?? 'Could not submit the application.')),
+                        backgroundColor: res.success ? const Color(0xFF92400E) : AppColors.error,
                         behavior: SnackBarBehavior.floating,
                       ),
                     );

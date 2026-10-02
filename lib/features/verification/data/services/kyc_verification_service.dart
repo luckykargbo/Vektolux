@@ -1,22 +1,33 @@
 // lib/features/verification/data/services/kyc_verification_service.dart
 // ═══════════════════════════════════════════════════════════════════════
-// VEKTOLUX — eIDV & KYC Verification Service
-// Unified provider interface supporting Local Dev Mock, Smile ID, and Prembly.
+// VEKTOLUX — Identity verification (KYC) client service.
+//
+// The Convex backend is the ONLY authority on identity verification. This client never manufactures
+// a verified state: a result is "verified" only when the backend explicitly reports it. A failed
+// request, an unreachable network, a backend error or a malformed response is reported as an ERROR
+// (state unknown) — never as verified, and never as a fabricated rejection.
+//
+// (Client-side calls to identity providers were removed: a result computed on the device — or with
+// provider API keys shipped in the app — can be forged and must never decide verification.)
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
+
 import 'package:logger/logger.dart';
 
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../domain/entities/verification_record.dart';
 
-/// Result of an eIDV verification attempt.
+/// Result of a verification request or status lookup.
 class KycResult {
+  /// The request reached the backend and its answer was understood.
   final bool success;
-  final String status; // 'verified', 'pending', 'rejected', 'unverified'
-  final String? badge; // 'GREEN_TICK', 'NONE'
+
+  /// 'verified' | 'pending' | 'rejected' | 'unverified' | 'error' (state unknown: request failed).
+  final String status;
+
+  /// 'GREEN_TICK' only when the backend confirmed verification; otherwise 'NONE'.
+  final String badge;
   final String? referenceId;
   final String? errorMessage;
   final Map<String, dynamic>? rawData;
@@ -24,18 +35,50 @@ class KycResult {
   const KycResult({
     required this.success,
     required this.status,
-    this.badge,
+    this.badge = 'NONE',
     this.referenceId,
     this.errorMessage,
     this.rawData,
   });
 
-  bool get isVerified => success && status == 'verified';
+  /// A failure whose outcome is unknown. It must not be shown as verified OR as rejected.
+  const KycResult.error(String message)
+      : success = false,
+        status = 'error',
+        badge = 'NONE',
+        referenceId = null,
+        errorMessage = message,
+        rawData = null;
+
+  bool get isVerified => success && status == 'verified' && badge == 'GREEN_TICK';
+  bool get isPending => success && status == 'pending';
+  bool get isRejected => success && status == 'rejected';
+  bool get isError => !success;
 }
 
-/// Abstract contract for eIDV & KYC operations.
+/// Maps the backend's status vocabulary (schema `verificationStatusEnum`) to client states.
+/// Anything unrecognised returns null and is treated as a malformed response.
+String? normalizeServerVerificationStatus(Object? raw) {
+  if (raw is! String) return null;
+  switch (raw.trim().toLowerCase()) {
+    case 'verified':
+    case 'approved':
+      return 'verified';
+    case 'pending':
+    case 'pending_review':
+      return 'pending';
+    case 'rejected':
+      return 'rejected';
+    case 'unverified':
+      return 'unverified';
+    default:
+      return null;
+  }
+}
+
+/// Abstract contract for identity-verification operations.
 abstract class KycVerificationService {
-  /// Validate format of Sierra Leone NIN or passport number.
+  /// Validate the format of a Sierra Leone NIN or other document number.
   bool validateDocumentNumber({
     required IdDocumentType docType,
     required String docNumber,
@@ -47,7 +90,8 @@ abstract class KycVerificationService {
     required String docNumber,
   });
 
-  /// Run simulated instant verification for development and testing.
+  /// Submits the document for MANUAL review by Vektolux (the backend records it as pending).
+  /// Never returns verified on its own.
   Future<KycResult> runMockVerification({
     required String userId,
     required String sessionToken,
@@ -55,38 +99,15 @@ abstract class KycVerificationService {
     required String docNumber,
   });
 
-  /// Production check via Prembly Sierra Leone NIN verification API.
-  Future<KycResult> verifyNinWithPrembly({
-    required String nin,
-    required String apiKey,
-    required String appId,
-  });
-
-  /// Production biometric check via Smile ID.
-  Future<KycResult> verifyBiometricsWithSmileId({
-    required String userId,
-    required String referenceId,
-    required String selfieBase64,
-    required String documentBase64,
-    required String partnerId,
-    required String apiKey,
-  });
-
-  /// Check live status from Convex backend.
+  /// Current verification state, as reported by the backend.
   Future<KycResult> getVerificationStatus({required String userId});
 }
 
-/// Production implementation of KycVerificationService.
 class KycVerificationServiceImpl implements KycVerificationService {
   final ConvexClientWrapper _convexClient;
-  final http.Client _httpClient;
   final Logger _log = Logger(printer: PrettyPrinter(methodCount: 0));
 
-  KycVerificationServiceImpl({
-    required ConvexClientWrapper convexClient,
-    http.Client? httpClient,
-  })  : _convexClient = convexClient,
-        _httpClient = httpClient ?? http.Client();
+  KycVerificationServiceImpl({required ConvexClientWrapper convexClient}) : _convexClient = convexClient;
 
   @override
   bool validateDocumentNumber({
@@ -151,16 +172,10 @@ class KycVerificationServiceImpl implements KycVerificationService {
   }) async {
     final validationErr = getValidationError(docType: docType, docNumber: docNumber);
     if (validationErr != null) {
-      return KycResult(
-        success: false,
-        status: 'unverified',
-        errorMessage: validationErr,
-      );
+      return KycResult(success: false, status: 'unverified', errorMessage: validationErr);
     }
 
     try {
-      _log.i('Running simulated verification for user $userId (doc: ${docType.name})');
-
       final result = await _convexClient.mutation(
         'verification:mockCompleteVerification',
         args: {
@@ -170,183 +185,64 @@ class KycVerificationServiceImpl implements KycVerificationService {
           'idNumber': docNumber.trim(),
         },
       );
-
-      if (result.success && result.value != null) {
-        final data = result.value is Map<String, dynamic>
-            ? result.value as Map<String, dynamic>
-            : <String, dynamic>{};
-
-        _log.i('Simulated verification successful for user $userId');
-        return KycResult(
-          success: true,
-          status: data['status']?.toString() ?? 'verified',
-          badge: data['badge']?.toString() ?? 'GREEN_TICK',
-          referenceId: data['referenceId']?.toString(),
-          rawData: data,
-        );
+      if (!result.success) {
+        return KycResult.error(result.errorMessage ?? 'Verification could not be submitted. Please try again.');
       }
-
-      // If Convex backend returned an error or is unreachable during mock mode,
-      // gracefully complete mock verification locally so the developer/tester is never blocked.
-      _log.w('Convex mock mutation returned: ${result.errorMessage}. Gracefully completing mock verification.');
-
-      return KycResult(
-        success: true,
-        status: 'verified',
-        badge: 'GREEN_TICK',
-        referenceId: 'vkt_mock_${DateTime.now().millisecondsSinceEpoch}',
-      );
-    } catch (e) {
-      _log.w('Mock verification caught exception: $e. Gracefully completing mock verification.');
-
-      return KycResult(
-        success: true,
-        status: 'verified',
-        badge: 'GREEN_TICK',
-        referenceId: 'vkt_mock_${DateTime.now().millisecondsSinceEpoch}',
-      );
-    }
-  }
-
-  @override
-  Future<KycResult> verifyNinWithPrembly({
-    required String nin,
-    required String apiKey,
-    required String appId,
-  }) async {
-    const url = 'https://api.prembly.com/identitypass/verification/sl/nin';
-    try {
-      final response = await _httpClient.post(
-        Uri.parse(url),
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'app-id': appId,
-        },
-        body: jsonEncode({'number': nin.trim()}),
-      ).timeout(const Duration(seconds: 25));
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final body = jsonDecode(response.body) as Map<String, dynamic>;
-        final status = body['status'] == true || body['verification_status'] == 'VERIFIED';
-        return KycResult(
-          success: status,
-          status: status ? 'verified' : 'rejected',
-          badge: status ? 'GREEN_TICK' : 'NONE',
-          rawData: body,
-          errorMessage: status ? null : (body['message']?.toString() ?? 'NIN verification failed'),
-        );
-      } else {
-        return KycResult(
-          success: false,
-          status: 'rejected',
-          errorMessage: 'Prembly returned HTTP ${response.statusCode}: ${response.body}',
-        );
+      final data = result.value;
+      if (data is! Map || data['success'] != true) {
+        return const KycResult.error('Unexpected response from the server. Please try again.');
       }
+      return _fromServer(Map<String, dynamic>.from(data), serverSaysVerified: null);
     } catch (e) {
-      return KycResult(
-        success: false,
-        status: 'unverified',
-        errorMessage: 'Prembly connection error: $e',
-      );
-    }
-  }
-
-  @override
-  Future<KycResult> verifyBiometricsWithSmileId({
-    required String userId,
-    required String referenceId,
-    required String selfieBase64,
-    required String documentBase64,
-    required String partnerId,
-    required String apiKey,
-  }) async {
-    const url = 'https://api.smileidentity.com/v1/upload';
-    try {
-      final payload = {
-        'source_sdk': 'flutter',
-        'partner_id': partnerId,
-        'user_id': userId,
-        'job_id': referenceId,
-        'job_type': 1, // Biometric KYC
-        'country': 'SL',
-        'images': [
-          {'image_type_id': 2, 'image': selfieBase64},
-          {'image_type_id': 1, 'image': documentBase64},
-        ],
-      };
-
-      final response = await _httpClient.post(
-        Uri.parse(url),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $apiKey',
-        },
-        body: jsonEncode(payload),
-      ).timeout(const Duration(seconds: 30));
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final body = jsonDecode(response.body) as Map<String, dynamic>;
-        final isSuccess = body['success'] == true || body['result_code'] == '0810';
-        return KycResult(
-          success: isSuccess,
-          status: isSuccess ? 'verified' : 'pending',
-          badge: isSuccess ? 'GREEN_TICK' : 'NONE',
-          referenceId: referenceId,
-          rawData: body,
-          errorMessage: isSuccess ? null : body['result_text']?.toString(),
-        );
-      } else {
-        return KycResult(
-          success: false,
-          status: 'rejected',
-          errorMessage: 'Smile ID returned HTTP ${response.statusCode}: ${response.body}',
-        );
-      }
-    } catch (e) {
-      return KycResult(
-        success: false,
-        status: 'unverified',
-        errorMessage: 'Smile ID connection error: $e',
-      );
+      _log.w('Verification submission failed: ${e.runtimeType}');
+      return const KycResult.error('Network problem. Your verification was not submitted. Please try again.');
     }
   }
 
   @override
   Future<KycResult> getVerificationStatus({required String userId}) async {
     try {
-      final res = await _convexClient.query(
-        'verification:getVerificationStatus',
-        args: {'userId': userId},
-      );
-
-      if (res.success && res.value != null) {
-        final data = res.value as Map<String, dynamic>;
-        final isVerified = data['isVerified'] as bool? ?? false;
-        final status = data['status']?.toString() ?? (isVerified ? 'verified' : 'unverified');
-        final badge = data['badge']?.toString() ?? (isVerified ? 'GREEN_TICK' : 'NONE');
-
-        return KycResult(
-          success: true,
-          status: status,
-          badge: badge,
-          referenceId: data['recentCheckId']?.toString(),
-          errorMessage: data['rejectionReason']?.toString(),
-          rawData: data,
-        );
-      } else {
-        return KycResult(
-          success: false,
-          status: 'unverified',
-          errorMessage: res.errorMessage ?? 'Failed to retrieve verification status',
-        );
+      final res = await _convexClient.query('verification:getVerificationStatus', args: {'userId': userId});
+      if (!res.success) {
+        return KycResult.error(res.errorMessage ?? 'Could not load your verification status.');
       }
+      final data = res.value;
+      if (data is! Map) {
+        return const KycResult.error('Unexpected response from the server.');
+      }
+      final map = Map<String, dynamic>.from(data);
+      final isVerified = map['isVerified'];
+      if (isVerified is! bool) {
+        return const KycResult.error('Unexpected response from the server.');
+      }
+      return _fromServer(map, serverSaysVerified: isVerified);
     } catch (e) {
-      return KycResult(
-        success: false,
-        status: 'unverified',
-        errorMessage: 'Status query failed: $e',
-      );
+      _log.w('Verification status lookup failed: ${e.runtimeType}');
+      return const KycResult.error('Network problem. Could not load your verification status.');
     }
+  }
+
+  /// Builds a result strictly from the backend's answer. "verified" requires the backend's status to
+  /// say so AND (when the backend sends it) its isVerified flag to agree. Unknown statuses are errors.
+  KycResult _fromServer(Map<String, dynamic> data, {required bool? serverSaysVerified}) {
+    final status = normalizeServerVerificationStatus(data['status']);
+    if (status == null) {
+      return const KycResult.error('Unexpected verification status from the server.');
+    }
+    if (status == 'verified' && serverSaysVerified == false) {
+      return const KycResult.error('Inconsistent verification status from the server.');
+    }
+    if (status != 'verified' && serverSaysVerified == true) {
+      return const KycResult.error('Inconsistent verification status from the server.');
+    }
+    final verified = status == 'verified';
+    return KycResult(
+      success: true,
+      status: status,
+      badge: verified && data['badge'] == 'GREEN_TICK' ? 'GREEN_TICK' : 'NONE',
+      referenceId: (data['referenceId'] ?? data['recentCheckId'])?.toString(),
+      errorMessage: status == 'rejected' ? data['rejectionReason']?.toString() : null,
+      rawData: data,
+    );
   }
 }

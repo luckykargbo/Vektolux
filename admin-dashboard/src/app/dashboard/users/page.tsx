@@ -32,6 +32,7 @@ import {
 import { useEffect, useState, useCallback } from "react";
 import type { AdminSession, UserRecord } from "@/lib/types";
 import styles from "./users.module.css";
+import { adminFetch } from "@/lib/adminSession";
 
 interface UserFullDetails {
   user: {
@@ -134,13 +135,12 @@ export default function UsersDirectoryPage() {
     try {
       const params = new URLSearchParams({
         adminId: session.user.id,
-        sessionToken: session.user.sessionToken,
         role: roleFilter,
       });
       if (searchQuery.trim()) {
         params.append("q", searchQuery.trim());
       }
-      const res = await fetch(`/api/users?${params.toString()}`);
+      const res = await adminFetch(`/api/users?${params.toString()}`);
       const data = await res.json();
       if (res.status === 401 || data.code === "UNAUTHORIZED") {
         sessionStorage.removeItem("adminSession");
@@ -190,13 +190,12 @@ export default function UsersDirectoryPage() {
 
     setPurging(true);
     try {
-      const res = await fetch("/api/users/moderate", {
+      const res = await adminFetch("/api/users/moderate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "purge_mock",
           adminId: session.user.id,
-          sessionToken: session.user.sessionToken,
         }),
       });
       const data = await res.json();
@@ -222,10 +221,9 @@ export default function UsersDirectoryPage() {
     try {
       const params = new URLSearchParams({
         adminId: session.user.id,
-        sessionToken: session.user.sessionToken,
         userId,
       });
-      const res = await fetch(`/api/users/details?${params.toString()}`);
+      const res = await adminFetch(`/api/users/details?${params.toString()}`);
       const data = await res.json();
       if (data.success) {
         setInspectingDetails(data.data);
@@ -246,13 +244,12 @@ export default function UsersDirectoryPage() {
     if (!confirm("Verify KYC status and grant verified badge to this user?")) return;
     setModeratingAction(true);
     try {
-      const res = await fetch("/api/users/moderate", {
+      const res = await adminFetch("/api/users/moderate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "verify",
           adminId: session.user.id,
-          sessionToken: session.user.sessionToken,
           userId,
         }),
       });
@@ -277,13 +274,12 @@ export default function UsersDirectoryPage() {
     if (!confirm(`${label} this user account?`)) return;
     setModeratingAction(true);
     try {
-      const res = await fetch("/api/users/moderate", {
+      const res = await adminFetch("/api/users/moderate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "status",
           adminId: session.user.id,
-          sessionToken: session.user.sessionToken,
           userId,
           status: newStatus,
         }),
@@ -329,13 +325,12 @@ export default function UsersDirectoryPage() {
     }
     setModeratingAction(true);
     try {
-      const res = await fetch("/api/users/moderate", {
+      const res = await adminFetch("/api/users/moderate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "delete",
           adminId: session.user.id,
-          sessionToken: session.user.sessionToken,
           userId,
         }),
       });
@@ -366,12 +361,11 @@ export default function UsersDirectoryPage() {
 
     setActionId(user.id);
     try {
-      const res = await fetch("/api/users", {
+      const res = await adminFetch("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           adminId: session.user.id,
-          sessionToken: session.user.sessionToken,
           userId: user.id,
           isActive: newStatus,
         }),

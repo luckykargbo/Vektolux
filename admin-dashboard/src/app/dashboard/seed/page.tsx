@@ -3,6 +3,7 @@
 import { Building2, Home, Car, Truck, CheckCircle2, XCircle } from "lucide-react";
 import { useState } from "react";
 import styles from "./seed.module.css";
+import { adminFetch } from "@/lib/adminSession";
 
 interface SeedTask {
   label: string;
@@ -27,7 +28,7 @@ export default function SeedPage() {
   async function runSeed(task: SeedTask) {
     setRunningTask(task.label);
     try {
-      const res = await fetch("/api/seed", {
+      const res = await adminFetch("/api/seed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ vertical: task.vertical, city: task.city, isPublished }),

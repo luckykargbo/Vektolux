@@ -17,6 +17,7 @@ import {
 import { useEffect, useState } from "react";
 import type { AdminSession } from "@/lib/types";
 import styles from "./api-health.module.css";
+import { adminFetch } from "@/lib/adminSession";
 
 interface GatewayKey {
   id?: string;
@@ -80,13 +81,12 @@ export default function ApiHealthPage() {
     if (isManual) setRefreshing(true);
     try {
       const adminId = session?.user?.id || "";
-      const sessionToken = session?.user?.sessionToken || "";
 
       const queryParams = adminId
-        ? `?adminId=${encodeURIComponent(adminId)}&sessionToken=${encodeURIComponent(sessionToken)}`
+        ? `?adminId=${encodeURIComponent(adminId)}`
         : "";
 
-      const res = await fetch(`/api/admin/api-health${queryParams}`);
+      const res = await adminFetch(`/api/admin/api-health${queryParams}`);
       const json = await res.json();
 
       if (json.success && json.data?.gateways) {
@@ -115,13 +115,12 @@ export default function ApiHealthPage() {
     setPinging(true);
     setPingResult(null);
     try {
-      const res = await fetch("/api/admin/api-health", {
+      const res = await adminFetch("/api/admin/api-health", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           serviceId,
           adminId: session?.user?.id,
-          sessionToken: session?.user?.sessionToken,
         }),
       });
       const data = await res.json();
@@ -144,7 +143,7 @@ export default function ApiHealthPage() {
     const newMask = prompt(`Enter updated mask preview for ${keyName} (e.g. ****1234):`, currentMask);
     if (!newMask) return;
     try {
-      await fetch("/api/admin/api-health", {
+      await adminFetch("/api/admin/api-health", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -154,7 +153,6 @@ export default function ApiHealthPage() {
           newMaskedValue: newMask,
           healthStatus: "operational",
           adminId: session?.user?.id,
-          sessionToken: session?.user?.sessionToken,
         }),
       });
       fetchHealthData();
@@ -166,7 +164,7 @@ export default function ApiHealthPage() {
   const handleToggleHealth = async (serviceId: string, newStatus: "operational" | "outage") => {
     if (!selectedGateway || !selectedGateway.keys[0]) return;
     try {
-      await fetch("/api/admin/api-health", {
+      await adminFetch("/api/admin/api-health", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -176,7 +174,6 @@ export default function ApiHealthPage() {
           newMaskedValue: selectedGateway.keys[0].maskedValue,
           healthStatus: newStatus,
           adminId: session?.user?.id,
-          sessionToken: session?.user?.sessionToken,
         }),
       });
       fetchHealthData();

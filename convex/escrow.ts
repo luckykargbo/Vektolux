@@ -15,101 +15,101 @@ import {
   inspectionTypeEnum,
 } from "./schema";
 import { detectSierraLeoneCarrier } from "./lib/paymentErrors";
+import { requireSelf, requireParticipantOrAdmin, requireAdminSession } from "./lib/auth";
+import { fundEscrowFromExternalPayment, holdFunds, releaseHeldFunds, refundHeldFunds } from "./walletCore";
+import { FeeSnapshot, priceOrder } from "./lib/fees";
 
 // ─── Helper: Resolve Caller User ──────────────────────────────────────
-async function resolveCallerUser(ctx: any, explicitUserId?: string): Promise<Id<"users">> {
-  if (explicitUserId) {
-    const norm = ctx.db.normalizeId("users", explicitUserId);
-    if (norm) return norm;
-  }
-  const identity = await ctx.auth.getUserIdentity();
-  if (identity && identity.email) {
-    const byEmail = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q: any) => q.eq("email", identity.email!))
-      .first();
-    if (byEmail) return byEmail._id;
-  }
-  const fallback = await ctx.db.query("users").first();
-  if (fallback) return fallback._id;
-  throw new Error("User authentication required");
+async function resolveCallerUser(ctx: any, explicitUserId?: string, sessionToken?: string): Promise<Id<"users">> {
+  // Identity comes ONLY from the validated session (or JWT identity). A client-supplied
+  // user id is merely checked for consistency; it is never a source of identity.
+  const { userId } = await requireSelf(ctx, sessionToken, explicitUserId);
+  return userId;
 }
 
-// ─── Helper: Post Double-Entry Ledger Transaction ─────────────────────
-async function postLedgerTransaction(
-  ctx: any,
-  params: {
-    code: string;
-    orderId?: Id<"escrow_orders">;
-    description: string;
-    entries: Array<{
-      accountType:
-        | "CLIENT_AVAILABLE"
-        | "CLIENT_ESCROW_LOCKED"
-        | "OWNER_AVAILABLE"
-        | "OWNER_ESCROW_PENDING"
-        | "PLATFORM_REVENUE_REALIZED"
-        | "DAMAGE_DEPOSIT_CUSTODY"
-        | "TELCO_CLEARING_LIABILITY";
-      userId?: Id<"users">;
-      direction: "DEBIT" | "CREDIT";
-      amount: number;
-    }>;
-  }
-) {
-  // Enforce double-entry invariant: sum(Debit) === sum(Credit)
-  let totalDebit = 0;
-  let totalCredit = 0;
-  for (const entry of params.entries) {
-    if (entry.direction === "DEBIT") totalDebit += entry.amount;
-    if (entry.direction === "CREDIT") totalCredit += entry.amount;
-  }
-  const diff = Math.abs(totalDebit - totalCredit);
-  if (diff > 0.01) {
-    throw new Error(
-      `Double-entry ledger unbalanced: Debits (${totalDebit.toFixed(2)}) != Credits (${totalCredit.toFixed(2)})`
-    );
-  }
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
-  const txId = await ctx.db.insert("ledger_transactions", {
-    transactionCode: params.code,
-    escrowOrderId: params.orderId,
-    description: params.description,
-    createdAt: Date.now(),
+/** Escrow funds are held, released and refunded ONLY through walletCore (atomic, idempotent, double-entry). */
+const REF = "vehicle_escrow";
+
+/**
+ * Moves the order's gross amount from the buyer's available wallet funds into escrow and marks the
+ * order funded. `soft` (used when a verified provider payment has just been credited) reports a
+ * reason instead of throwing, so the credit is never rolled back.
+ */
+export async function fundVehicleOrderFromWallet(
+  ctx: { db: any },
+  orderId: Id<"escrow_orders">,
+  soft = false
+): Promise<{ funded: boolean; reason?: string }> {
+  const order = await ctx.db.get(orderId);
+  if (!order || order.status !== "PENDING_PAYMENT") {
+    return { funded: false, reason: "The order is not awaiting payment." };
+  }
+  if (soft) {
+    const w = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user_currency", (q: any) => q.eq("userId", order.renterOrBuyerId).eq("currency", "SLE"))
+      .first();
+    if (!w || w.availableBalance < order.grossEscrowAmount) {
+      return { funded: false, reason: "Available balance is lower than the escrow amount." };
+    }
+  }
+  await holdFunds(ctx, {
+    userId: order.renterOrBuyerId,
+    amount: order.grossEscrowAmount,
+    referenceType: REF,
+    referenceId: order._id,
+    idempotencyKey: `vesc:${order._id}:fund`,
+    description: `Escrow funded for ${order.orderCode}`,
+    counterpartyId: order.ownerOrSellerId,
   });
+  const now = Date.now();
+  await ctx.db.patch(order._id, { status: "HELD_IN_ESCROW", updatedAt: now });
+  await ctx.db.insert("user_notifications", {
+    userId: order.ownerOrSellerId as string,
+    targetType: "single_user",
+    title: "Deal escrow funded",
+    body: `The buyer's payment for order ${order.orderCode} is secured in escrow. You can proceed with the handoff.`,
+    read: false,
+    createdAt: now,
+  });
+  return { funded: true };
+}
 
-  for (const entry of params.entries) {
-    await ctx.db.insert("ledger_entries", {
-      transactionId: txId,
-      accountType: entry.accountType,
-      userId: entry.userId,
-      direction: entry.direction,
-      amount: entry.amount,
-      currency: "SLE",
-      createdAt: Date.now(),
+/** A bank transfer confirmed by an admin funds the order directly (no wallet top-up). */
+export async function fundVehicleOrderFromExternal(
+  ctx: { db: any },
+  orderId: Id<"escrow_orders">,
+  provider: string,
+  providerReference: string
+): Promise<{ funded: boolean; reason?: string }> {
+  const order = await ctx.db.get(orderId);
+  if (!order || order.status !== "PENDING_PAYMENT") {
+    return { funded: false, reason: "The order is not awaiting payment." };
+  }
+  await fundEscrowFromExternalPayment(ctx, {
+    userId: order.renterOrBuyerId,
+    amount: order.grossEscrowAmount,
+    provider,
+    providerReference,
+    referenceType: REF,
+    referenceId: order._id,
+    counterpartyId: order.ownerOrSellerId,
+  });
+  const now = Date.now();
+  await ctx.db.patch(order._id, { status: "HELD_IN_ESCROW", bankClearingStatus: "CLEARED", updatedAt: now });
+  for (const uid of [order.renterOrBuyerId, order.ownerOrSellerId]) {
+    await ctx.db.insert("user_notifications", {
+      userId: uid as string,
+      targetType: "single_user",
+      title: "Escrow funded",
+      body: `Payment for order ${order.orderCode} is confirmed and secured in escrow.`,
+      read: false,
+      createdAt: now,
     });
   }
-  return txId;
-}
-
-// ─── Helper: Ensure or get user wallet ────────────────────────────────
-async function getOrCreateWallet(ctx: any, userId: Id<"users">) {
-  const existing = await ctx.db
-    .query("walletBalances")
-    .withIndex("by_user", (q: any) => q.eq("userId", userId))
-    .first();
-
-  if (existing) return existing;
-
-  const newId = await ctx.db.insert("walletBalances", {
-    userId,
-    availableBalance: 0,
-    pendingBalance: 0,
-    escrowBalance: 0,
-    currency: "SLE",
-    updatedAt: Date.now(),
-  });
-  return await ctx.db.get(newId);
+  return { funded: true };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -117,6 +117,7 @@ async function getOrCreateWallet(ctx: any, userId: Id<"users">) {
 // ═══════════════════════════════════════════════════════════════════════
 export const initiateEscrowOrder = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     orderType: escrowOrderType,
     vehicleListingId: v.id("vehicleListings"),
     renterOrBuyerId: v.optional(v.string()),
@@ -143,17 +144,20 @@ export const initiateEscrowOrder = mutation({
     split60Amount: v.number(),
     split40Amount: v.number(),
     refundableDeposit: v.number(),
+    buyerFeeAmount: v.optional(v.number()),
     bankEscrowReference: v.optional(v.string()),
     paymentRail: v.optional(v.string()),
     detectedCarrier: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
-    // 1. Verify caller identity
-    const currentUserId = await resolveCallerUser(ctx, args.renterOrBuyerId);
+    // 1. Caller identity comes from the session only
+    const currentUserId = await resolveCallerUser(ctx, args.renterOrBuyerId, args.sessionToken);
 
-    // 2. Fetch vehicle listing
+    // 2. Listing must exist and be available
     const vehicle = await ctx.db.get(args.vehicleListingId);
-    if (!vehicle) throw new Error("Vehicle listing not found");
+    if (!vehicle || vehicle.isDeleted === true || vehicle.isPublished === false) {
+      throw new Error("This vehicle listing is not available.");
+    }
     if (vehicle.ownerId === currentUserId) {
       throw new Error("You cannot rent or purchase your own vehicle listing");
     }
@@ -161,6 +165,8 @@ export const initiateEscrowOrder = mutation({
     const now = Date.now();
     const orderCode = `VK-ESC-${now.toString().slice(-6)}-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    // 3. EVERY amount is computed here from the listing. Amounts sent by the app are ignored, so a
+    //    client can never change what is paid or what the seller receives.
     let baseRental = 0;
     let refundableDeposit = 0;
     let earnestFee = 0;
@@ -168,77 +174,59 @@ export const initiateEscrowOrder = mutation({
     let grossEscrow = 0;
     let platformFee = 0;
     let netMerchant = 0;
+    let fees: FeeSnapshot;
 
+    // Fees come from the Fee & Commission Engine (defaults = 15% rental / 5% sale, as before).
+    // platformFee = everything the platform keeps (owner fee + any admin-enabled buyer fee);
+    // netMerchant = what the owner receives. The rule used is snapshotted on the order.
     if (args.orderType === "VEHICLE_RENTAL") {
-      const days = args.numberOfDays ?? 1;
-      baseRental = args.baseRentalAmount ?? vehicle.price * days;
-      // Default damage deposit is 33% of base rental or min 500 SLE if not specified
-      refundableDeposit = args.refundableDepositAmount ?? Math.max(500, Math.round(baseRental * 0.33));
-      grossEscrow = baseRental + refundableDeposit;
-      // 15% platform commission strictly on base rental
-      platformFee = parseFloat((baseRental * 0.15).toFixed(2));
-      netMerchant = parseFloat((baseRental * 0.85).toFixed(2));
+      if (vehicle.pricingType === "total_sale") throw new Error("This vehicle is listed for sale, not for rent.");
+      const days = Math.floor(args.numberOfDays ?? 1);
+      if (!(days >= 1 && days <= 365)) throw new Error("Rental period must be between 1 and 365 days.");
+      baseRental = round2(vehicle.price * days);
+      refundableDeposit = Math.max(500, Math.round(baseRental * 0.33));
+      fees = await priceOrder(ctx, "vehicle_rental", baseRental, { hasAgent: false, now });
+      grossEscrow = round2(fees.buyerTotal + refundableDeposit);
+      platformFee = fees.platformTotal;
+      netMerchant = fees.payeeNet;
     } else {
-      fullPurchase = args.fullPurchaseAmount ?? vehicle.price;
-      earnestFee = args.earnestFeeAmount ?? 500;
-      grossEscrow = fullPurchase;
-      // 5% platform commission on vehicle sales
-      platformFee = parseFloat((fullPurchase * 0.05).toFixed(2));
-      netMerchant = parseFloat((fullPurchase * 0.95).toFixed(2));
+      if (vehicle.pricingType !== "total_sale") throw new Error("This vehicle is listed for rent, not for sale.");
+      fullPurchase = round2(vehicle.price);
+      earnestFee = Math.min(500, fullPurchase);
+      fees = await priceOrder(ctx, "vehicle_sale", fullPurchase, { hasAgent: false, now });
+      grossEscrow = fees.buyerTotal;
+      platformFee = fees.platformTotal;
+      netMerchant = fees.payeeNet;
     }
+    if (!(grossEscrow > 0) || !Number.isFinite(grossEscrow)) throw new Error("This listing has no valid price.");
 
-    const split60 = parseFloat((netMerchant * 0.6).toFixed(2));
-    const split40 = parseFloat((netMerchant * 0.4).toFixed(2));
+    const split60 = round2(netMerchant * 0.6);
+    const split40 = round2(netMerchant - split60);
 
-    // Determine payment rail
+    // 4. Payment rail
     let resolvedRail = args.paymentRail;
     if (!resolvedRail) {
-      if (args.payFromWallet || args.paymentProvider === "WALLET") {
-        resolvedRail = "WALLET";
-      } else if (args.paymentProvider === "BANK_TRANSFER") {
-        resolvedRail = "BANK_TRANSFER";
-      } else {
-        resolvedRail = "MOBILE_MONEY";
-      }
+      if (args.payFromWallet || args.paymentProvider === "WALLET") resolvedRail = "WALLET";
+      else if (args.paymentProvider === "BANK_TRANSFER") resolvedRail = "BANK_TRANSFER";
+      else resolvedRail = "MOBILE_MONEY";
     }
+    const payFromWallet = resolvedRail === "WALLET" || args.payFromWallet === true;
 
     let detectedCarrier: string | undefined;
     if (args.paymentPhone) {
       const carrier = detectSierraLeoneCarrier(args.paymentPhone);
-      if (carrier !== "unknown") {
-        detectedCarrier = carrier;
-      }
+      if (carrier !== "unknown") detectedCarrier = carrier;
     }
 
     let bankEscrowReference = args.bankEscrowReference;
     let bankClearingStatus: "PENDING_TRANSFER" | "CLEARED" | undefined;
-
     if (resolvedRail === "BANK_TRANSFER") {
-      if (!bankEscrowReference) {
-        bankEscrowReference = `VKTLX-DEAL-${Math.floor(1000 + Math.random() * 9000)}`;
-      }
+      if (!bankEscrowReference) bankEscrowReference = `VKTLX-DEAL-${Math.floor(1000 + Math.random() * 9000)}`;
       bankClearingStatus = "PENDING_TRANSFER";
     }
 
-    // 3. Check wallet ONLY if paying directly from wallet
-    let initialStatus: "PENDING_PAYMENT" | "HELD_IN_ESCROW" = "PENDING_PAYMENT";
-    if (resolvedRail === "WALLET" || args.payFromWallet) {
-      const renterWallet = await getOrCreateWallet(ctx, currentUserId);
-      if (renterWallet.availableBalance < grossEscrow) {
-        throw new Error(
-          `Insufficient available balance (SLE ${renterWallet.availableBalance.toFixed(2)}). Escrow requires SLE ${grossEscrow.toFixed(2)}.`
-        );
-      }
-      // Deduct from available balance, add to escrow balance
-      await ctx.db.patch(renterWallet._id, {
-        availableBalance: renterWallet.availableBalance - grossEscrow,
-        escrowBalance: (renterWallet.escrowBalance ?? 0) + grossEscrow,
-        updatedAt: now,
-      });
-      initialStatus = "HELD_IN_ESCROW";
-    }
-
-    // 4. Create escrow order
+    // 5. Create the order. It stays PENDING_PAYMENT until money is REALLY secured: from the wallet
+    //    below, from a provider payment verified by Monime, or from a bank transfer confirmed by an admin.
     const escrowOrderId = await ctx.db.insert("escrow_orders", {
       orderCode,
       orderType: args.orderType,
@@ -257,42 +245,27 @@ export const initiateEscrowOrder = mutation({
       split40ReleasedAmount: 0,
       depositRefundedAmount: 0,
       depositDamageDeductedAmount: 0,
-      status: initialStatus,
+      status: "PENDING_PAYMENT",
       purchaseStage: args.orderType === "VEHICLE_PURCHASE" ? "EARNEST_PENDING" : undefined,
       rentalStartDate: args.rentalStartDate,
       rentalEndDate: args.rentalEndDate,
       numberOfDays: args.numberOfDays,
-      paymentProvider: args.paymentProvider ?? (resolvedRail === "WALLET" ? "WALLET" : resolvedRail === "BANK_TRANSFER" ? "BANK_TRANSFER" : "MONIME"),
+      paymentProvider: args.paymentProvider ?? (payFromWallet ? "WALLET" : resolvedRail === "BANK_TRANSFER" ? "BANK_TRANSFER" : "MONIME"),
       paymentPhone: args.paymentPhone,
       paymentRail: resolvedRail,
       bankEscrowReference,
       bankClearingStatus,
       detectedCarrier,
+      feeSnapshot: fees,
       createdAt: now,
       updatedAt: now,
     });
 
-    // 5. If paid from wallet, post double-entry ledger entries
-    if (resolvedRail === "WALLET" || args.payFromWallet) {
-      await postLedgerTransaction(ctx, {
-        code: `TX-ESCROW-WALLET-${orderCode}`,
-        orderId: escrowOrderId,
-        description: `Escrow funded from wallet for order ${orderCode}`,
-        entries: [
-          {
-            accountType: "CLIENT_AVAILABLE",
-            userId: currentUserId,
-            direction: "DEBIT",
-            amount: grossEscrow,
-          },
-          {
-            accountType: "CLIENT_ESCROW_LOCKED",
-            userId: currentUserId,
-            direction: "CREDIT",
-            amount: grossEscrow,
-          },
-        ],
-      });
+    let initialStatus = "PENDING_PAYMENT";
+    if (payFromWallet) {
+      // Throws INSUFFICIENT_FUNDS (and rolls the order back) if the wallet cannot cover it.
+      await fundVehicleOrderFromWallet(ctx, escrowOrderId);
+      initialStatus = "HELD_IN_ESCROW";
     }
 
     return {
@@ -305,6 +278,7 @@ export const initiateEscrowOrder = mutation({
       split60Amount: split60,
       split40Amount: split40,
       refundableDeposit,
+      buyerFeeAmount: fees.buyerFee,
       bankEscrowReference,
       paymentRail: resolvedRail,
       detectedCarrier,
@@ -312,78 +286,17 @@ export const initiateEscrowOrder = mutation({
   },
 });
 
-// ═══════════════════════════════════════════════════════════════════════
-// 2. CONFIRM ESCROW FUNDING (Internal or Webhook Callback)
-// ═══════════════════════════════════════════════════════════════════════
-export const confirmEscrowFunding = internalMutation({
-  args: {
-    orderCode: v.string(),
-    externalTransactionId: v.string(),
-    provider: v.string(),
-    amountPaid: v.number(),
-  },
-  handler: async (ctx, args) => {
-    const order = await ctx.db
-      .query("escrow_orders")
-      .withIndex("by_order_code", (q: any) => q.eq("orderCode", args.orderCode))
-      .first();
+// (confirmEscrowFunding was removed: it credited escrow balances from an unauthenticated "webhook"
+// without any verified payment. Escrow is funded only via walletCore holds or verified provider
+// payments - see payments.ts / walletCore.fundEscrowFromExternalPayment.)
 
-    if (!order) throw new Error(`Escrow order not found: ${args.orderCode}`);
-    if (order.status !== "PENDING_PAYMENT" && order.status !== "INITIATED") {
-      return { success: true, message: `Order already in status ${order.status}` };
-    }
-
-    const now = Date.now();
-
-    // Verify amount matches gross escrow
-    if (Math.abs(args.amountPaid - order.grossEscrowAmount) > 0.05) {
-      throw new Error(
-        `Amount mismatch: Expected SLE ${order.grossEscrowAmount}, received SLE ${args.amountPaid}`
-      );
-    }
-
-    // 1. Credit Renter Escrow Balance
-    const renterWallet = await getOrCreateWallet(ctx, order.renterOrBuyerId);
-    await ctx.db.patch(renterWallet._id, {
-      escrowBalance: (renterWallet.escrowBalance ?? 0) + order.grossEscrowAmount,
-      updatedAt: now,
-    });
-
-    // 2. Update order status to HELD_IN_ESCROW
-    await ctx.db.patch(order._id, {
-      status: "HELD_IN_ESCROW",
-      updatedAt: now,
-    });
-
-    // 3. Post Double-Entry Ledger
-    await postLedgerTransaction(ctx, {
-      code: `TX-TELCO-FUND-${args.externalTransactionId}`,
-      orderId: order._id,
-      description: `Escrow funded via ${args.provider} (${args.externalTransactionId})`,
-      entries: [
-        {
-          accountType: "TELCO_CLEARING_LIABILITY",
-          direction: "DEBIT",
-          amount: order.grossEscrowAmount,
-        },
-        {
-          accountType: "CLIENT_ESCROW_LOCKED",
-          userId: order.renterOrBuyerId,
-          direction: "CREDIT",
-          amount: order.grossEscrowAmount,
-        },
-      ],
-    });
-
-    return { success: true, newStatus: "HELD_IN_ESCROW" };
-  },
-});
 
 // ═══════════════════════════════════════════════════════════════════════
 // 3. COMPLETE VEHICLE INSPECTION (Pre-trip, Post-trip, or Mechanic)
 // ═══════════════════════════════════════════════════════════════════════
 export const completeVehicleInspection = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     escrowOrderId: v.id("escrow_orders"),
     inspectorId: v.optional(v.string()),
     inspectionType: inspectionTypeEnum,
@@ -407,10 +320,12 @@ export const completeVehicleInspection = mutation({
     canReleaseMilestone: v.boolean(),
   }),
   handler: async (ctx, args) => {
-    const inspectorId = await resolveCallerUser(ctx, args.inspectorId);
-
     const order = await ctx.db.get(args.escrowOrderId);
     if (!order) throw new Error("Escrow order not found");
+    // Only a party to the order (or an admin) can record an inspection: these records are the
+    // evidence in damage disputes.
+    const who = await requireParticipantOrAdmin(ctx, args.sessionToken, [order.renterOrBuyerId, order.ownerOrSellerId]);
+    const inspectorId = who.userId;
 
     const now = Date.now();
     const hasDamages = args.damagesDetected && args.damagesDetected.length > 0;
@@ -452,6 +367,7 @@ export const completeVehicleInspection = mutation({
 export const releaseMilestoneHandoff60 = mutation({
   args: {
     escrowOrderId: v.id("escrow_orders"),
+    sessionToken: v.optional(v.string()),
   },
   returns: v.object({
     success: v.boolean(),
@@ -463,8 +379,15 @@ export const releaseMilestoneHandoff60 = mutation({
     const order = await ctx.db.get(args.escrowOrderId);
     if (!order) throw new Error("Escrow order not found");
 
+    // Only the paying renter/buyer (confirming handoff) or an admin may release the buyer's funds.
+    await requireParticipantOrAdmin(ctx, args.sessionToken, [order.renterOrBuyerId]);
+
     if (order.status !== "HELD_IN_ESCROW") {
       throw new Error(`Cannot release 60% milestone when order is in status ${order.status}`);
+    }
+
+    if (order.orderType !== "VEHICLE_RENTAL") {
+      throw new Error("The 60% handoff release only applies to rentals.");
     }
 
     // Verify pre-trip inspection completed
@@ -480,57 +403,24 @@ export const releaseMilestoneHandoff60 = mutation({
     }
 
     const now = Date.now();
+    const payoutToOwner60 = round2(order.netMerchantExpected * 0.6);
+    const platformFeeRealized60 = round2(order.platformFeeAmount * 0.6);
 
-    // 60% Payout Calculations
-    const payoutToOwner60 = parseFloat((order.netMerchantExpected * 0.6).toFixed(2));
-    const platformFeeRealized60 = parseFloat((order.platformFeeAmount * 0.6).toFixed(2));
-    const totalDeductionFromEscrow = payoutToOwner60 + platformFeeRealized60;
-
-    // 1. Deduct from Renter Escrow Balance
-    const renterWallet = await getOrCreateWallet(ctx, order.renterOrBuyerId);
-    await ctx.db.patch(renterWallet._id, {
-      escrowBalance: Math.max(0, (renterWallet.escrowBalance ?? 0) - totalDeductionFromEscrow),
-      updatedAt: now,
+    // Escrow -> owner (net) + platform fee, atomically, with transactions and ledger entries.
+    await releaseHeldFunds(ctx, {
+      buyerId: order.renterOrBuyerId,
+      recipientId: order.ownerOrSellerId,
+      amount: round2(payoutToOwner60 + platformFeeRealized60),
+      platformFee: platformFeeRealized60,
+      referenceType: REF,
+      referenceId: order._id,
+      idempotencyKey: `vesc:${order._id}:rel60`,
     });
 
-    // 2. Credit Owner Available Balance
-    const ownerWallet = await getOrCreateWallet(ctx, order.ownerOrSellerId);
-    await ctx.db.patch(ownerWallet._id, {
-      availableBalance: ownerWallet.availableBalance + payoutToOwner60,
-      updatedAt: now,
-    });
-
-    // 3. Update Order Status
     await ctx.db.patch(order._id, {
       status: "PARTIALLY_RELEASED",
       split60ReleasedAmount: payoutToOwner60,
       updatedAt: now,
-    });
-
-    // 4. Double-entry Ledger
-    await postLedgerTransaction(ctx, {
-      code: `TX-REL60-${order.orderCode}`,
-      orderId: order._id,
-      description: `60% Handoff release for rental ${order.orderCode}`,
-      entries: [
-        {
-          accountType: "CLIENT_ESCROW_LOCKED",
-          userId: order.renterOrBuyerId,
-          direction: "DEBIT",
-          amount: totalDeductionFromEscrow,
-        },
-        {
-          accountType: "OWNER_AVAILABLE",
-          userId: order.ownerOrSellerId,
-          direction: "CREDIT",
-          amount: payoutToOwner60,
-        },
-        {
-          accountType: "PLATFORM_REVENUE_REALIZED",
-          direction: "CREDIT",
-          amount: platformFeeRealized60,
-        },
-      ],
     });
 
     return {
@@ -549,6 +439,7 @@ export const settleVehicleReturn = mutation({
   args: {
     escrowOrderId: v.id("escrow_orders"),
     damageDeductionCost: v.optional(v.number()),
+    sessionToken: v.optional(v.string()),
   },
   returns: v.object({
     success: v.boolean(),
@@ -561,81 +452,80 @@ export const settleVehicleReturn = mutation({
     const order = await ctx.db.get(args.escrowOrderId);
     if (!order) throw new Error("Escrow order not found");
 
+    // The owner or an admin settles the return. The OWNER cannot pay themselves out of the renter's
+    // deposit: a damage claim (> 0) opens a dispute and an administrator decides the amount
+    // (adminResolveEscrowDispute damageAwardToOwner). A clean return settles at once.
+    const who = await requireParticipantOrAdmin(ctx, args.sessionToken, [order.ownerOrSellerId]);
+    if (args.damageDeductionCost !== undefined && (!(args.damageDeductionCost >= 0) || !Number.isFinite(args.damageDeductionCost))) {
+      throw new Error("Invalid damage deduction amount.");
+    }
+
+    if (order.orderType !== "VEHICLE_RENTAL") {
+      throw new Error("Return settlement only applies to rentals.");
+    }
     if (order.status !== "PARTIALLY_RELEASED" && order.status !== "POST_INSPECTION_PENDING") {
       throw new Error(`Order cannot be settled in status ${order.status}`);
     }
 
     const now = Date.now();
 
-    // 40% Calculations
-    const payoutToOwner40 = parseFloat((order.netMerchantExpected * 0.4).toFixed(2));
-    const platformFeeRealized40 = parseFloat((order.platformFeeAmount * 0.4).toFixed(2));
-    const baseRemainingEscrow = payoutToOwner40 + platformFeeRealized40;
+    // Remaining base = what the 60% release has not already paid (so rounding never leaks).
+    const fee60 = order.split60ReleasedAmount > 0 ? round2(order.platformFeeAmount * 0.6) : 0;
+    const payoutToOwner40 = round2(order.netMerchantExpected - order.split60ReleasedAmount);
+    const platformFeeRealized40 = round2(order.platformFeeAmount - fee60);
 
-    // Damage vs Refund Calculations
     const requestedDamage = args.damageDeductionCost ?? 0;
-    const actualDamageDeduction = Math.min(requestedDamage, order.refundableDepositAmount);
-    const depositRefundToRenter = parseFloat(
-      (order.refundableDepositAmount - actualDamageDeduction).toFixed(2)
-    );
+    if (!who.isAdmin && requestedDamage > 0) {
+      await ctx.db.insert("escrow_disputes", {
+        escrowOrderId: order._id,
+        openedByUserId: who.userId,
+        reason: "Damage claim on vehicle return (owner).",
+        claimedRepairCost: round2(Math.min(requestedDamage, order.refundableDepositAmount)),
+        evidenceMediaUrls: [],
+        status: "OPENED",
+        openedAt: now,
+      });
+      await ctx.db.patch(order._id, { status: "DISPUTED", updatedAt: now });
+      await ctx.db.insert("user_notifications", {
+        userId: order.renterOrBuyerId as string,
+        targetType: "single_user",
+        title: "Damage claim opened",
+        body: `The owner claimed damage on ${order.orderCode}. Your deposit stays protected until Vektolux decides.`,
+        read: false,
+        createdAt: now,
+      });
+      return { success: true, status: "DISPUTED", payoutToOwner40: 0, damageDeducted: 0, depositRefundedToRenter: 0 };
+    }
+    const actualDamageDeduction = round2(Math.min(requestedDamage, order.refundableDepositAmount));
+    const depositRefundToRenter = round2(order.refundableDepositAmount - actualDamageDeduction);
 
-    const totalEscrowToClear = baseRemainingEscrow + order.refundableDepositAmount;
-
-    // 1. Clear Renter Escrow and refund net deposit to available balance
-    const renterWallet = await getOrCreateWallet(ctx, order.renterOrBuyerId);
-    await ctx.db.patch(renterWallet._id, {
-      escrowBalance: Math.max(0, (renterWallet.escrowBalance ?? 0) - totalEscrowToClear),
-      availableBalance: renterWallet.availableBalance + depositRefundToRenter,
-      updatedAt: now,
+    // Owner: remaining 40% + awarded damage compensation. Platform: its remaining fee.
+    await releaseHeldFunds(ctx, {
+      buyerId: order.renterOrBuyerId,
+      recipientId: order.ownerOrSellerId,
+      amount: round2(payoutToOwner40 + platformFeeRealized40 + actualDamageDeduction),
+      platformFee: platformFeeRealized40,
+      referenceType: REF,
+      referenceId: order._id,
+      idempotencyKey: `vesc:${order._id}:settle`,
     });
+    // Renter: the rest of the deposit goes back to AVAILABLE funds.
+    if (depositRefundToRenter > 0) {
+      await refundHeldFunds(ctx, {
+        userId: order.renterOrBuyerId,
+        amount: depositRefundToRenter,
+        referenceType: REF,
+        referenceId: order._id,
+        idempotencyKey: `vesc:${order._id}:deposit`,
+      });
+    }
 
-    // 2. Credit Owner Available Balance: 40% balance + awarded damage compensation
-    const totalOwnerCredit = payoutToOwner40 + actualDamageDeduction;
-    const ownerWallet = await getOrCreateWallet(ctx, order.ownerOrSellerId);
-    await ctx.db.patch(ownerWallet._id, {
-      availableBalance: ownerWallet.availableBalance + totalOwnerCredit,
-      updatedAt: now,
-    });
-
-    // 3. Mark Order Settled
     await ctx.db.patch(order._id, {
       status: "SETTLED",
       split40ReleasedAmount: payoutToOwner40,
       depositRefundedAmount: depositRefundToRenter,
       depositDamageDeductedAmount: actualDamageDeduction,
       updatedAt: now,
-    });
-
-    // 4. Double-Entry Balanced Ledger
-    await postLedgerTransaction(ctx, {
-      code: `TX-SETTLE-${order.orderCode}`,
-      orderId: order._id,
-      description: `Final return settlement for ${order.orderCode} (Deducted damage: SLE ${actualDamageDeduction})`,
-      entries: [
-        {
-          accountType: "CLIENT_ESCROW_LOCKED",
-          userId: order.renterOrBuyerId,
-          direction: "DEBIT",
-          amount: totalEscrowToClear,
-        },
-        {
-          accountType: "OWNER_AVAILABLE",
-          userId: order.ownerOrSellerId,
-          direction: "CREDIT",
-          amount: totalOwnerCredit,
-        },
-        {
-          accountType: "CLIENT_AVAILABLE",
-          userId: order.renterOrBuyerId,
-          direction: "CREDIT",
-          amount: depositRefundToRenter,
-        },
-        {
-          accountType: "PLATFORM_REVENUE_REALIZED",
-          direction: "CREDIT",
-          amount: platformFeeRealized40,
-        },
-      ],
     });
 
     return {
@@ -661,11 +551,13 @@ export const uploadSlrsaDocuments = mutation({
     slrsaFormCUrl: v.string(),
     buyerNationalIdUrl: v.string(),
     sellerNationalIdUrl: v.string(),
+    sessionToken: v.optional(v.string()),
   },
   returns: v.string(),
   handler: async (ctx, args) => {
     const order = await ctx.db.get(args.escrowOrderId);
     if (!order) throw new Error("Escrow order not found");
+    await requireParticipantOrAdmin(ctx, args.sessionToken, [order.renterOrBuyerId, order.ownerOrSellerId]);
 
     const now = Date.now();
     const recordId = await ctx.db.insert("slrsa_transfer_records", {
@@ -697,13 +589,25 @@ export const confirmSlrsaTransfer = mutation({
   args: {
     escrowOrderId: v.id("escrow_orders"),
     verificationNotes: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
+    // 0. Verify admin authorization
+    const callerId = await resolveCallerUser(ctx, undefined, args.sessionToken);
+    const caller = await ctx.db.get(callerId);
+    if (!caller || caller.role !== "admin") {
+      throw new Error("Unauthorized: Only platform administrators can confirm SLRSA vehicle transfers.");
+    }
+
     const order = await ctx.db.get(args.escrowOrderId);
     if (!order) throw new Error("Escrow order not found");
     if (order.orderType !== "VEHICLE_PURCHASE") {
       throw new Error("SLRSA transfer verification only applies to Vehicle Purchases");
+    }
+
+    if (order.status !== "HELD_IN_ESCROW" && order.status !== "ESCROW_LOCKED") {
+      throw new Error(`Sale proceeds cannot be released for an order in status ${order.status}.`);
     }
 
     const slrsaRecord = await ctx.db
@@ -714,60 +618,24 @@ export const confirmSlrsaTransfer = mutation({
     if (!slrsaRecord) throw new Error("No SLRSA records submitted for this order");
 
     const now = Date.now();
-
-    // 1. Mark record verified
     await ctx.db.patch(slrsaRecord._id, {
       isVerified: true,
       verificationNotes: args.verificationNotes,
       verifiedAt: now,
     });
 
-    // 2. Clear Buyer Escrow and Credit Seller Available Balance
-    const buyerWallet = await getOrCreateWallet(ctx, order.renterOrBuyerId);
-    await ctx.db.patch(buyerWallet._id, {
-      escrowBalance: Math.max(0, (buyerWallet.escrowBalance ?? 0) - order.grossEscrowAmount),
-      updatedAt: now,
+    // Buyer escrow -> seller (net) + platform fee. Idempotent: the same sale can never pay twice.
+    await releaseHeldFunds(ctx, {
+      buyerId: order.renterOrBuyerId,
+      recipientId: order.ownerOrSellerId,
+      amount: order.grossEscrowAmount,
+      platformFee: order.platformFeeAmount,
+      referenceType: REF,
+      referenceId: order._id,
+      idempotencyKey: `vesc:${order._id}:sale`,
     });
 
-    const sellerWallet = await getOrCreateWallet(ctx, order.ownerOrSellerId);
-    await ctx.db.patch(sellerWallet._id, {
-      availableBalance: sellerWallet.availableBalance + order.netMerchantExpected,
-      updatedAt: now,
-    });
-
-    // 3. Mark Order Settled
-    await ctx.db.patch(order._id, {
-      status: "SETTLED",
-      purchaseStage: "SETTLED",
-      updatedAt: now,
-    });
-
-    // 4. Double-Entry Balanced Ledger
-    await postLedgerTransaction(ctx, {
-      code: `TX-SALE-SETTLE-${order.orderCode}`,
-      orderId: order._id,
-      description: `SLRSA Title Transfer Verified. Sale settled for ${order.orderCode}`,
-      entries: [
-        {
-          accountType: "CLIENT_ESCROW_LOCKED",
-          userId: order.renterOrBuyerId,
-          direction: "DEBIT",
-          amount: order.grossEscrowAmount,
-        },
-        {
-          accountType: "OWNER_AVAILABLE",
-          userId: order.ownerOrSellerId,
-          direction: "CREDIT",
-          amount: order.netMerchantExpected,
-        },
-        {
-          accountType: "PLATFORM_REVENUE_REALIZED",
-          direction: "CREDIT",
-          amount: order.platformFeeAmount,
-        },
-      ],
-    });
-
+    await ctx.db.patch(order._id, { status: "SETTLED", purchaseStage: "SETTLED", updatedAt: now });
     return true;
   },
 });
@@ -780,6 +648,7 @@ export const releaseDealEscrowFunds = mutation({
     escrowOrderId: v.id("escrow_orders"),
     buyerPinOrConfirmation: v.optional(v.string()),
     notes: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
   },
   returns: v.object({
     success: v.boolean(),
@@ -789,7 +658,7 @@ export const releaseDealEscrowFunds = mutation({
     message: v.string(),
   }),
   handler: async (ctx, args) => {
-    const currentUserId = await resolveCallerUser(ctx);
+    const currentUserId = await resolveCallerUser(ctx, undefined, args.sessionToken);
     const order = await ctx.db.get(args.escrowOrderId);
     if (!order) throw new Error("Escrow order not found");
 
@@ -801,32 +670,28 @@ export const releaseDealEscrowFunds = mutation({
       }
     }
 
-    if (
-      order.status !== "HELD_IN_ESCROW" &&
-      order.status !== "ESCROW_LOCKED" &&
-      order.status !== "PARTIALLY_RELEASED"
-    ) {
+    // Vehicle PURCHASES only. (Rentals pay out in two stages — handoff and return — and releasing
+    // a rental here after the 60% payout would have paid the owner twice.)
+    if (order.orderType !== "VEHICLE_PURCHASE") {
+      throw new Error("This release applies to vehicle purchases. Rentals are released at handoff and return.");
+    }
+    if (order.status !== "HELD_IN_ESCROW" && order.status !== "ESCROW_LOCKED") {
       throw new Error(`Cannot release funds for order currently in status: ${order.status}`);
     }
 
     const now = Date.now();
     const releaseAmount = order.netMerchantExpected;
 
-    // Credit seller available balance
-    const sellerWallet = await getOrCreateWallet(ctx, order.ownerOrSellerId);
-    await ctx.db.patch(sellerWallet._id, {
-      availableBalance: (sellerWallet.availableBalance ?? 0) + releaseAmount,
-      updatedAt: now,
+    await releaseHeldFunds(ctx, {
+      buyerId: order.renterOrBuyerId,
+      recipientId: order.ownerOrSellerId,
+      amount: order.grossEscrowAmount,
+      platformFee: order.platformFeeAmount,
+      referenceType: REF,
+      referenceId: order._id,
+      idempotencyKey: `vesc:${order._id}:sale`,
     });
 
-    // Debit buyer escrow balance
-    const buyerWallet = await getOrCreateWallet(ctx, order.renterOrBuyerId);
-    await ctx.db.patch(buyerWallet._id, {
-      escrowBalance: Math.max(0, (buyerWallet.escrowBalance ?? 0) - order.grossEscrowAmount),
-      updatedAt: now,
-    });
-
-    // Mark order settled
     await ctx.db.patch(order._id, {
       status: "SETTLED",
       purchaseStage: "SETTLED",
@@ -834,58 +699,22 @@ export const releaseDealEscrowFunds = mutation({
       updatedAt: now,
     });
 
-    // Post double-entry ledger transaction
-    try {
-      await postLedgerTransaction(ctx, {
-        code: `TX-DEAL-RELEASE-${order.orderCode}`,
-        orderId: order._id,
-        description: `Buyer approved inspection and released deal funds for ${order.orderCode}`,
-        entries: [
-          {
-            accountType: "CLIENT_ESCROW_LOCKED",
-            userId: order.renterOrBuyerId,
-            direction: "DEBIT",
-            amount: order.grossEscrowAmount,
-          },
-          {
-            accountType: "OWNER_AVAILABLE",
-            userId: order.ownerOrSellerId,
-            direction: "CREDIT",
-            amount: releaseAmount,
-          },
-          {
-            accountType: "PLATFORM_REVENUE_REALIZED",
-            direction: "CREDIT",
-            amount: order.platformFeeAmount,
-          },
-        ],
-      });
-    } catch (e) {
-      console.warn("Non-fatal double-entry ledger posting failure:", e);
-    }
-
-    // In-app notifications
-    try {
-      await ctx.db.insert("user_notifications", {
-        userId: order.ownerOrSellerId as string,
-        targetType: "single_user",
-        title: "Escrow Payment Released! 💰",
-        body: `Buyer has approved inspection for ${order.orderCode}. SLE ${releaseAmount.toFixed(2)} has been credited to your available balance.`,
-        read: false,
-        createdAt: now,
-      });
-
-      await ctx.db.insert("user_notifications", {
-        userId: order.renterOrBuyerId as string,
-        targetType: "single_user",
-        title: "Escrow Settled Successfully 🎉",
-        body: `You approved inspection and released payment for ${order.orderCode}. Thank you for using Vektolux Escrow.`,
-        read: false,
-        createdAt: now,
-      });
-    } catch {
-      // non-fatal
-    }
+    await ctx.db.insert("user_notifications", {
+      userId: order.ownerOrSellerId as string,
+      targetType: "single_user",
+      title: "Escrow payment released",
+      body: `The buyer approved ${order.orderCode}. SLE ${releaseAmount.toFixed(2)} was credited to your available balance.`,
+      read: false,
+      createdAt: now,
+    });
+    await ctx.db.insert("user_notifications", {
+      userId: order.renterOrBuyerId as string,
+      targetType: "single_user",
+      title: "Escrow settled",
+      body: `You approved and released payment for ${order.orderCode}.`,
+      read: false,
+      createdAt: now,
+    });
 
     return {
       success: true,
@@ -902,6 +731,7 @@ export const releaseDealEscrowFunds = mutation({
 // ═══════════════════════════════════════════════════════════════════════
 export const raiseEscrowDispute = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     escrowOrderId: v.id("escrow_orders"),
     reason: v.string(),
     claimedRepairCost: v.number(),
@@ -909,10 +739,16 @@ export const raiseEscrowDispute = mutation({
   },
   returns: v.string(),
   handler: async (ctx, args) => {
-    const currentUserId = await resolveCallerUser(ctx);
+    const currentUserId = await resolveCallerUser(ctx, undefined, args.sessionToken);
 
     const order = await ctx.db.get(args.escrowOrderId);
     if (!order) throw new Error("Escrow order not found");
+    if (order.renterOrBuyerId !== currentUserId && order.ownerOrSellerId !== currentUserId) {
+      throw new Error("Unauthorized: You are not a party to this order.");
+    }
+    if (order.status !== "HELD_IN_ESCROW" && order.status !== "ESCROW_LOCKED" && order.status !== "PARTIALLY_RELEASED") {
+      throw new Error(`A dispute cannot be opened for an order in status ${order.status}.`);
+    }
 
     const now = Date.now();
     const disputeId = await ctx.db.insert("escrow_disputes", {
@@ -935,14 +771,119 @@ export const raiseEscrowDispute = mutation({
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// 8B. ADMIN DISPUTE RESOLUTION (refund buyer / release seller) — audited
+// ═══════════════════════════════════════════════════════════════════════
+export const adminResolveEscrowDispute = mutation({
+  args: {
+    sessionToken: v.optional(v.string()),
+    escrowOrderId: v.id("escrow_orders"),
+    resolution: v.union(v.literal("refund_buyer"), v.literal("release_seller")),
+    notes: v.string(),
+    // Rentals, release_seller only: part of the refundable deposit awarded to the owner for damage
+    // (capped at the deposit; the rest of the deposit goes back to the renter).
+    damageAwardToOwner: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const { userId: adminId } = await requireAdminSession(ctx, args.sessionToken);
+    if (args.notes.trim().length < 5) throw new Error("Resolution notes are required.");
+    if (args.damageAwardToOwner !== undefined && !(Number.isFinite(args.damageAwardToOwner) && args.damageAwardToOwner >= 0)) {
+      throw new Error("Invalid damage award.");
+    }
+    const order = await ctx.db.get(args.escrowOrderId);
+    if (!order) throw new Error("Escrow order not found");
+    if (order.status !== "DISPUTED") throw new Error("Only a disputed order can be resolved here.");
+
+    // What is still held for this order: gross minus whatever the 60% handoff already paid out.
+    const paid60 = order.split60ReleasedAmount > 0
+      ? round2(order.split60ReleasedAmount + order.platformFeeAmount * 0.6)
+      : 0;
+    const remaining = round2(order.grossEscrowAmount - (order.orderType === "VEHICLE_RENTAL" ? paid60 : 0));
+    if (!(remaining > 0)) throw new Error("Nothing is held for this order.");
+    const now = Date.now();
+    const deposit = order.orderType === "VEHICLE_RENTAL" ? order.refundableDepositAmount : 0;
+    if ((args.damageAwardToOwner ?? 0) > 0 && (args.resolution !== "release_seller" || deposit <= 0)) {
+      throw new Error("A damage award applies only when releasing a rental to the owner.");
+    }
+    const award = round2(Math.min(args.damageAwardToOwner ?? 0, deposit));
+
+    if (args.resolution === "refund_buyer") {
+      await refundHeldFunds(ctx, {
+        userId: order.renterOrBuyerId,
+        amount: remaining,
+        referenceType: REF,
+        referenceId: order._id,
+        idempotencyKey: `vesc:${order._id}:dispute-refund`,
+      });
+    } else {
+      const baseRemaining = round2(remaining - deposit);
+      const fee = order.orderType === "VEHICLE_RENTAL"
+        ? round2(order.platformFeeAmount - (paid60 > 0 ? round2(order.platformFeeAmount * 0.6) : 0))
+        : order.platformFeeAmount;
+      if (round2(baseRemaining + award) > 0) {
+        await releaseHeldFunds(ctx, {
+          buyerId: order.renterOrBuyerId,
+          recipientId: order.ownerOrSellerId,
+          amount: round2(baseRemaining + award),
+          platformFee: Math.min(fee, Math.max(0, baseRemaining)),
+          referenceType: REF,
+          referenceId: order._id,
+          idempotencyKey: `vesc:${order._id}:dispute-release`,
+        });
+      }
+      if (round2(deposit - award) > 0) {
+        await refundHeldFunds(ctx, {
+          userId: order.renterOrBuyerId,
+          amount: round2(deposit - award),
+          referenceType: REF,
+          referenceId: order._id,
+          idempotencyKey: `vesc:${order._id}:dispute-deposit`,
+        });
+      }
+    }
+
+    await ctx.db.patch(order._id, {
+      status: args.resolution === "refund_buyer" ? "REFUNDED" : "SETTLED",
+      updatedAt: now,
+    });
+    const disputes = await ctx.db
+      .query("escrow_disputes")
+      .withIndex("by_order", (q: any) => q.eq("escrowOrderId", order._id))
+      .collect();
+    for (const d of disputes) {
+      if (d.status === "OPENED" || d.status === "UNDER_REVIEW") {
+        await ctx.db.patch(d._id, {
+          status: "RESOLVED_ADJUDICATED",
+          approvedRepairCost: award,
+          adjudicatedByAdminId: adminId,
+          adjudicationNotes: args.notes.trim().slice(0, 1000),
+          resolvedAt: now,
+        });
+      }
+    }
+    for (const uid of [order.renterOrBuyerId, order.ownerOrSellerId]) {
+      await ctx.db.insert("user_notifications", {
+        userId: uid as string,
+        targetType: "single_user",
+        title: "Dispute resolved",
+        body: `The dispute on ${order.orderCode} was resolved by an administrator (${args.resolution === "refund_buyer" ? "buyer refunded" : "released to seller"}).`,
+        read: false,
+        createdAt: now,
+      });
+    }
+    return { success: true, status: args.resolution === "refund_buyer" ? "REFUNDED" : "SETTLED", amount: remaining };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // 9. QUERIES: REAL-TIME ESCROW ORDER TRACKING & ADMIN OVERSIGHT
 // ═══════════════════════════════════════════════════════════════════════
 export const getMyEscrowOrders = query({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = await resolveCallerUser(ctx, args.userId);
+    const userId = await resolveCallerUser(ctx, args.userId, args.sessionToken);
 
     // Orders where user is renter/buyer or owner/seller
     const asRenter = await ctx.db
@@ -979,10 +920,11 @@ export const getMyEscrowOrders = query({
 });
 
 export const getEscrowOrderById = query({
-  args: { escrowOrderId: v.id("escrow_orders") },
+  args: { escrowOrderId: v.id("escrow_orders"), sessionToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const order = await ctx.db.get(args.escrowOrderId);
     if (!order) return null;
+    await requireParticipantOrAdmin(ctx, args.sessionToken, [order.renterOrBuyerId, order.ownerOrSellerId]);
 
     const vehicle: any = await ctx.db.get(order.vehicleListingId);
     const renter = await ctx.db.get(order.renterOrBuyerId);
@@ -1024,8 +966,9 @@ export const getEscrowOrderById = query({
 });
 
 export const getAdminEscrowSummary = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { sessionToken: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
     const allOrders = await ctx.db.query("escrow_orders").collect();
 
     let totalInEscrow = 0;
@@ -1054,6 +997,8 @@ export const getAdminEscrowSummary = query({
       activeRentalCount,
       pendingInspectionCount,
       disputedCount,
+      // Admin-only (this query requires an admin session): most recent orders for the dashboard.
+      recentOrders: allOrders.slice(-50).reverse(),
     };
   },
 });

@@ -45,6 +45,7 @@ enum BookingStatus {
   inProgress,
   completed,
   cancelled,
+  disputed,
 }
 
 extension BookingStatusX on BookingStatus {
@@ -54,6 +55,7 @@ extension BookingStatusX on BookingStatus {
         BookingStatus.inProgress => 'in_progress',
         BookingStatus.completed => 'completed',
         BookingStatus.cancelled => 'cancelled',
+        BookingStatus.disputed => 'disputed',
       };
 
   String get displayName => switch (this) {
@@ -62,6 +64,7 @@ extension BookingStatusX on BookingStatus {
         BookingStatus.inProgress => 'In Progress',
         BookingStatus.completed => 'Completed',
         BookingStatus.cancelled => 'Cancelled',
+        BookingStatus.disputed => 'Under Review',
       };
 
   static BookingStatus fromString(String value) {
@@ -71,6 +74,7 @@ extension BookingStatusX on BookingStatus {
       'in_progress' => BookingStatus.inProgress,
       'completed' => BookingStatus.completed,
       'cancelled' => BookingStatus.cancelled,
+      'disputed' => BookingStatus.disputed,
       _ => BookingStatus.pendingPayment,
     };
   }
@@ -102,6 +106,12 @@ class BookingEntity extends Equatable {
   final String? notes;
   final int updatedAt;
 
+  /// Server-driven escrow settlement: 'held' | 'disputed' | 'released' | 'refunded' (null if unpaid).
+  final String? settlementStatus;
+
+  /// When the escrow is released automatically if nobody disputes (end time + 24h).
+  final int? releaseEligibleAt;
+
   const BookingEntity({
     required this.id,
     required this.listingId,
@@ -127,7 +137,18 @@ class BookingEntity extends Equatable {
     this.flwRef,
     this.notes,
     required this.updatedAt,
+    this.settlementStatus,
+    this.releaseEligibleAt,
   });
+
+  /// Paid and held in escrow (also bookings paid before settlement tracking existed).
+  bool get isEscrowHeld =>
+      settlementStatus == 'held' ||
+      (settlementStatus == null &&
+          paymentStatus == 'completed' &&
+          status != BookingStatus.completed &&
+          status != BookingStatus.cancelled &&
+          status != BookingStatus.disputed);
 
   factory BookingEntity.fromJson(Map<String, dynamic> json) {
     return BookingEntity(
@@ -157,6 +178,8 @@ class BookingEntity extends Equatable {
       updatedAt: (json['updatedAt'] as num?)?.toInt() ??
           (json['_creationTime'] as num?)?.toInt() ??
           DateTime.now().millisecondsSinceEpoch,
+      settlementStatus: json['settlementStatus'] as String?,
+      releaseEligibleAt: (json['releaseEligibleAt'] as num?)?.toInt(),
     );
   }
 
@@ -186,5 +209,7 @@ class BookingEntity extends Equatable {
         flwRef,
         notes,
         updatedAt,
+        settlementStatus,
+        releaseEligibleAt,
       ];
 }

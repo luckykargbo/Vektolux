@@ -11,9 +11,7 @@ abstract final class ApiConstants {
     defaultValue: 'https://ideal-poodle-813.convex.cloud',
   );
 
-  /// Payment gateway base URLs.
-  static const String flutterwaveBaseUrl = 'https://api.flutterwave.com/v3';
-  static const String paystackBaseUrl = 'https://api.paystack.co';
+  // (No Paystack/Flutterwave: payments go through Monime / the Vektolux wallet on the server.)
 
   /// Blockchain RPC endpoints.
   static const String polygonRpc = 'https://polygon-rpc.com';
@@ -98,3 +96,27 @@ abstract final class FinancialConstants {
     'vehicle_sale': 300,
   };
 }
+
+/// Authentication & Google OAuth constants.
+abstract final class AuthConstants {
+  /// Google OAuth 2.0 Web Client ID (Vektolux Google Cloud Project).
+  static const String googleWebClientId = String.fromEnvironment(
+    'GOOGLE_WEB_CLIENT_ID',
+    defaultValue:
+        '489916570762-vfc729r27jha8q4s0o55piskj5a67bv3.apps.googleusercontent.com',
+  );
+
+  /// Google OAuth 2.0 iOS Client ID (bundle com.vektolux.app). Public identifier, not a secret.
+  static const String googleIosClientId = String.fromEnvironment(
+    'GOOGLE_IOS_CLIENT_ID',
+    defaultValue:
+        '489916570762-evp88rv2n0dqk1v41lhfl8aj7obl3gvi.apps.googleusercontent.com',
+  );
+
+  /// Google Cloud Project ID.
+  static const String googleProjectId = 'vektolux';
+
+  /// Google Cloud Project Number.
+  static const String googleProjectNumber = '489916570762';
+}
+

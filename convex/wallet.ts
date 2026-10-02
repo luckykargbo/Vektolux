@@ -5,6 +5,7 @@
 
 import { query } from "./_generated/server";
 import { v } from "convex/values";
+import { requireSelf } from "./lib/auth";
 
 /**
  * Reactive query for user's wallet balance.
@@ -14,40 +15,22 @@ export const getUserBalance = query({
   args: {
     userId: v.optional(v.string()),
     currency: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
   },
+  returns: v.object({
+    walletId: v.optional(v.id("walletBalances")),
+    availableBalance: v.number(),
+    pendingBalance: v.number(),
+    escrowBalance: v.number(),
+    currency: v.string(),
+    exists: v.boolean(),
+    updatedAt: v.number(),
+  }),
   handler: async (ctx, args) => {
     const currency = args.currency ?? "SLE";
-    let userConvexId = null;
-
-    // 1. Try deriving from authenticated session identity
-    const identity = await ctx.auth.getUserIdentity();
-    if (identity) {
-      const userDoc = await ctx.db
-        .query("users")
-        .withIndex("by_external_auth", (q) =>
-          q.eq("authProvider", "convex").eq("externalAuthId", identity.tokenIdentifier)
-        )
-        .first();
-      if (userDoc) {
-        userConvexId = userDoc._id;
-      }
-    }
-
-    // 2. Fall back to explicit userId passed by client
-    if (!userConvexId && args.userId) {
-      userConvexId = ctx.db.normalizeId("users", args.userId);
-    }
-
-    if (!userConvexId) {
-      return {
-        availableBalance: 0,
-        pendingBalance: 0,
-        escrowBalance: 0,
-        currency,
-        exists: false,
-        updatedAt: Date.now(),
-      };
-    }
+    // Identity comes ONLY from the authenticated session. A supplied userId
+    // must match it; there is no fallback to a client-claimed user.
+    const { userId: userConvexId } = await requireSelf(ctx, args.sessionToken, args.userId);
 
     const wallet = await ctx.db
       .query("walletBalances")
@@ -80,36 +63,28 @@ export const getUserBalance = query({
 });
 
 /**
- * Get wallet balance strictly filtered by the authenticated user's ID.
- * If no wallet record exists, returns { availableBalance: 0.0, escrowLockedBalance: 0.0 }.
+ * Get wallet balance strictly filtered by the user's ID.
+ * If no wallet record exists, returns 0 balances.
  */
 export const getWalletBalance = query({
   args: {
     userId: v.string(),
     currency: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
   },
+  returns: v.object({
+    walletId: v.optional(v.id("walletBalances")),
+    availableBalance: v.number(),
+    pendingBalance: v.number(),
+    escrowLockedBalance: v.number(),
+    escrowBalance: v.number(),
+    currency: v.string(),
+    exists: v.boolean(),
+    updatedAt: v.optional(v.number()),
+  }),
   handler: async (ctx, args) => {
     const currency = args.currency ?? "SLE";
-    let userConvexId = ctx.db.normalizeId("users", args.userId);
-
-    if (!userConvexId) {
-      const u = await ctx.db
-        .query("users")
-        .withIndex("by_email", (q) => q.eq("email", args.userId))
-        .first();
-      if (u) userConvexId = u._id;
-    }
-
-    if (!userConvexId) {
-      return {
-        availableBalance: 0.0,
-        pendingBalance: 0.0,
-        escrowLockedBalance: 0.0,
-        escrowBalance: 0.0,
-        currency,
-        exists: false,
-      };
-    }
+    const { userId: userConvexId } = await requireSelf(ctx, args.sessionToken, args.userId);
 
     const wallet = await ctx.db
       .query("walletBalances")
@@ -139,4 +114,3 @@ export const getWalletBalance = query({
     };
   },
 });
-

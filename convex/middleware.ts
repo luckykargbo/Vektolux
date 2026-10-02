@@ -6,6 +6,8 @@
 
 import { MutationCtx, QueryCtx } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
+import { requireSelf } from "./lib/auth";
+import { postingPermission, PostingKind } from "./lib/permissions";
 
 export class SellerNotVerifiedException extends Error {
   readonly code = "SELLER_NOT_VERIFIED";
@@ -21,65 +23,30 @@ export class SellerNotVerifiedException extends Error {
 }
 
 /**
- * Gatekeeper guard for listing creation endpoints.
- * Throws a typed 403 error if the user is not verified.
+ * Gatekeeper for listing creation. The caller is the authenticated user (session), and the
+ * decision comes from lib/permissions.ts: approved business role + (for agents / hotel owners)
+ * an active, unexpired subscription. Selecting a role at signup grants nothing.
  */
 export async function requireVerifiedSeller(
   ctx: MutationCtx | QueryCtx,
   ownerId: string,
-  sessionToken?: string
+  sessionToken: string | undefined,
+  kind: PostingKind
 ): Promise<{
   id: Id<"users">;
   name: string;
   email: string;
   isVerified: boolean;
 }> {
-  // 1. Resolve normalized user ID
-  const userId = ctx.db.normalizeId("users", ownerId);
-  if (!userId) {
-    throw new Error("Invalid owner credentials: Account not found.");
-  }
-
-  // 2. Fetch user record
-  const user = await ctx.db.get(userId);
-  if (!user || !user.isActive) {
+  const { user } = await requireSelf(ctx, sessionToken, ownerId);
+  if (!user.isActive) {
     throw new Error("User account is inactive, suspended, or does not exist.");
   }
-
-  // 3. Validate session integrity if provided
-  if (sessionToken && user.sessionToken && user.sessionToken !== sessionToken) {
-    throw new Error("Session expired or invalid. Please authenticate again.");
+  const permission = await postingPermission(ctx, user, kind);
+  if (!permission.allowed) {
+    const e = new SellerNotVerifiedException(user.verificationStatus ?? "unverified_seller");
+    e.message = permission.reason;
+    throw e;
   }
-
-  // 4. Role & Seller Verification Check:
-  // Standard clients/buyers must NOT publish listings unless approved as a verified seller/dealer.
-  const isSellerRole =
-    user.role === "agent" ||
-    user.role === "merchant" ||
-    user.role === "seller" ||
-    user.role === "dealer" ||
-    user.role === "admin";
-
-  const isVerifiedSeller = Boolean(
-    user.isVerifiedSeller === true ||
-    user.isVerifiedAgent === true ||
-    user.isVerifiedMerchant === true ||
-    (isSellerRole &&
-      (user.isVerified === true ||
-        user.verificationStatus === "verified" ||
-        user.verificationStatus === "approved"))
-  );
-
-  if (!isVerifiedSeller && user.role !== "admin") {
-    throw new SellerNotVerifiedException(
-      user.verificationStatus ?? "unverified_seller"
-    );
-  }
-
-  return {
-    id: user._id,
-    name: user.name,
-    email: user.email,
-    isVerified: true,
-  };
+  return { id: user._id, name: user.name, email: user.email, isVerified: true };
 }

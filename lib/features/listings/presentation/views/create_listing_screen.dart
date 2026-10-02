@@ -14,6 +14,7 @@ import '../../../../core/theme/components/verified_badge.dart';
 import '../../../auth/domain/entities/user_entity.dart';
 import '../../../verification/presentation/views/identity_verification_screen.dart';
 import '../../../verification/presentation/widgets/verification_gate_banner.dart';
+import '../../../../core/widgets/sl_location_picker.dart';
 
 enum ListingType { property, vehicle }
 
@@ -44,15 +45,17 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   final _propDescController = TextEditingController();
   final _propPriceController = TextEditingController();
   final _propHourlyRateController = TextEditingController();
-  final _propAddressController =
-      TextEditingController(text: '15 Wilkinson Road');
-  final _propCityController = TextEditingController(text: 'Freetown');
-  final _propBedroomsController = TextEditingController(text: '3');
-  final _propBathroomsController = TextEditingController(text: '2');
+  // No invented defaults: every value is entered by the owner.
+  final _propAddressController = TextEditingController();
+  final _propBedroomsController = TextEditingController();
+  final _propBathroomsController = TextEditingController();
+  // Broad public location (Sierra Leone allow-list). The street address above stays private.
+  String? _propDistrict;
+  String? _propTown;
+  String? _vehDistrict;
+  String? _vehTown;
   final _contactPhoneController = TextEditingController();
   String _propCategory = 'sale';
-  final double _propLat = 8.4840;
-  final double _propLng = -13.2344;
 
   // ── Vehicle Form Controllers ──────────────────────────────────────
   final _vehMakeController = TextEditingController();
@@ -65,9 +68,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   final _vehSalePriceController = TextEditingController();
   String _vehType = 'car_sale';
   String _vehIntent = 'sale';
-  final _vehCapacityController = TextEditingController(text: '5 Seats');
-  final double _vehLat = 8.4840;
-  final double _vehLng = -13.2344;
+  final _vehCapacityController = TextEditingController();
 
   // ── Uploaded Images ───────────────────────────────────────────────
   final List<StagedMediaItem> _stagedImages = [];
@@ -164,13 +165,11 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
           currentUser: widget.currentUser,
           onVerificationComplete: () {
             Navigator.of(ctx).pop();
-            setState(() {
-              _isUserVerified = true;
-              _verificationStatus = 'verified';
-            });
+            // A submission is NOT a verification: re-read the authoritative state from the backend.
+            _checkLiveVerificationStatus();
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Identity verified! Green Tick trust badge activated. You can now publish listings.'),
+                content: Text('Identity submitted. It is pending review; you will be notified once it is verified.'),
                 backgroundColor: AppColors.emerald,
                 behavior: SnackBarBehavior.floating,
               ),
@@ -189,7 +188,6 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
     _propPriceController.dispose();
     _propHourlyRateController.dispose();
     _propAddressController.dispose();
-    _propCityController.dispose();
     _vehMakeController.dispose();
     _vehModelController.dispose();
     _vehYearController.dispose();
@@ -372,14 +370,16 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             'price': price,
             if (hourlyRate != null) 'hourlyRate': hourlyRate,
             'currency': 'SLE',
-            'address': _propAddressController.text.trim(),
-            'city': _propCityController.text.trim(),
+            // Private (owner/admin only) street address — never shown publicly.
+            if (_propAddressController.text.trim().isNotEmpty) 'address': _propAddressController.text.trim(),
+            'city': _propTown ?? _propDistrict ?? '',
+            if (_propDistrict != null) 'district': _propDistrict,
             'country': 'Sierra Leone',
-            'latitude': _propLat,
-            'longitude': _propLng,
             'imageStorageIds': _imageStorageIds,
-            'bedrooms': int.tryParse(_propBedroomsController.text.trim()) ?? 3,
-            'bathrooms': int.tryParse(_propBathroomsController.text.trim()) ?? 2,
+            if (int.tryParse(_propBedroomsController.text.trim()) != null)
+              'bedrooms': int.parse(_propBedroomsController.text.trim()),
+            if (int.tryParse(_propBathroomsController.text.trim()) != null)
+              'bathrooms': int.parse(_propBathroomsController.text.trim()),
             if (_contactPhoneController.text.trim().isNotEmpty)
               'privateContactPhone': _contactPhoneController.text.trim(),
           },
@@ -396,7 +396,10 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             double.tryParse(_vehPricePerDayController.text.trim());
         final salePrice =
             double.tryParse(_vehSalePriceController.text.trim());
-        final year = int.tryParse(_vehYearController.text.trim()) ?? 2022;
+        final year = int.tryParse(_vehYearController.text.trim());
+        if (year == null) {
+          throw Exception('Please enter the vehicle year.');
+        }
         final title = '$year ${_vehMakeController.text.trim()} ${_vehModelController.text.trim()}';
 
         // 1. Convex Mutation
@@ -409,7 +412,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             'category': _vehType,
             'title': title,
             'capacity': _vehCapacityController.text.trim(),
-            'location': 'Freetown, Sierra Leone',
+            'location': _vehTown ?? _vehDistrict ?? 'Sierra Leone',
             'vehicleType': _vehType,
             'listingIntent': _vehIntent,
             'make': _vehMakeController.text.trim(),
@@ -421,8 +424,6 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             if (pricePerDay != null) 'pricePerDay': pricePerDay,
             if (salePrice != null) 'salePrice': salePrice,
             'currency': 'SLE',
-            'latitude': _vehLat,
-            'longitude': _vehLng,
             'imageStorageIds': _imageStorageIds,
             if (_contactPhoneController.text.trim().isNotEmpty)
               'privateContactPhone': _contactPhoneController.text.trim(),
@@ -698,22 +699,65 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                 const SizedBox(height: 16),
               ],
 
-              // Address & City
+              // General Property Location (Privacy-First)
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.emeraldSurface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.emerald.withValues(alpha: 0.3)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.shield_outlined, size: 20, color: AppColors.emeraldDark),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Location Privacy Guaranteed: Only the general city or district is shown to normal users. Exact street addresses and GPS maps are never displayed.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.emeraldDark,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Country (Fixed)
+              TextFormField(
+                initialValue: 'Sierra Leone',
+                enabled: false,
+                decoration: const InputDecoration(
+                  labelText: 'Country',
+                  prefixIcon: Icon(Icons.public_rounded),
+                  suffixIcon: Icon(Icons.lock_outline, size: 16),
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // General location (district → town). Only this broad location is ever public.
+              SierraLeoneLocationPicker(
+                requireDistrict: true,
+                initialDistrict: _propDistrict,
+                initialTown: _propTown,
+                onChanged: (district, town) => setState(() {
+                  _propDistrict = district;
+                  _propTown = town;
+                }),
+              ),
+              const SizedBox(height: 14),
+
+              // Private Physical Address (Internal Only)
               TextFormField(
                 controller: _propAddressController,
                 decoration: const InputDecoration(
-                  labelText: 'Street Address',
-                  hintText: 'e.g. 15 Wilkinson Road',
-                  prefixIcon: Icon(Icons.location_on_outlined),
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _propCityController,
-                decoration: const InputDecoration(
-                  labelText: 'City / District',
-                  hintText: 'e.g. Freetown',
-                  prefixIcon: Icon(Icons.map_outlined),
+                  labelText: 'Private Verification Address (Optional)',
+                  hintText: 'Strictly internal for escrow — NEVER shown publicly',
+                  prefixIcon: Icon(Icons.lock_person_outlined),
                 ),
               ),
               const SizedBox(height: 16),
@@ -840,6 +884,18 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                 },
               ),
               const SizedBox(height: 16),
+
+              // General location of the vehicle (broad, public-safe)
+              SierraLeoneLocationPicker(
+                requireDistrict: true,
+                initialDistrict: _vehDistrict,
+                initialTown: _vehTown,
+                onChanged: (district, town) => setState(() {
+                  _vehDistrict = district;
+                  _vehTown = town;
+                }),
+              ),
+              const SizedBox(height: 14),
 
               // Payload / Haulage Capacity
               TextFormField(

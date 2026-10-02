@@ -5,17 +5,23 @@ import { ConvexHttpClient } from "convex/browser";
 
 export const dynamic = "force-dynamic";
 
+import { isAuthError, sessionFromRequest } from "@/lib/apiAuth";
 import { CONVEX_URL } from "@/lib/convex";
 
 function getClient() {
   return new ConvexHttpClient(CONVEX_URL);
 }
 
+/** Never send internal error text to the browser. */
+function publicMessage(err: unknown, fallback: string): string {
+  return isAuthError(err) ? "Administrator access required. Please sign in again." : fallback;
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const adminId = searchParams.get("adminId");
-    const sessionToken = searchParams.get("sessionToken") ?? undefined;
+    const sessionToken = sessionFromRequest(request);
     const userId = searchParams.get("userId");
 
     if (!adminId || !userId) {
@@ -38,9 +44,9 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ success: true, data: result });
   } catch (err: any) {
-    console.error("[user details GET] error:", err);
+    console.error("[user details GET] request failed");
     return NextResponse.json(
-      { success: false, error: err?.message ?? "Failed to fetch user details." },
+      { success: false, error: publicMessage(err, "Failed to fetch user details.") },
       { status: 500 }
     );
   }

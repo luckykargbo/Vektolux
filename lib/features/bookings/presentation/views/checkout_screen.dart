@@ -1,7 +1,7 @@
 // lib/features/bookings/presentation/views/checkout_screen.dart
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Checkout & Fiat Payment View
-// Flutterwave / Mobile Money (Orange & Africell) + Card Payment Screen
+// Pays a booking from the Vektolux wallet into escrow (amount and split decided by the server)
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
@@ -113,7 +113,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             },
           );
           if (pinCheck.success && pinCheck.value is Map) {
-            final valid = pinCheck.value['valid'] as bool? ?? true;
+            final valid = pinCheck.value['valid'] as bool? ?? false;
             final hasPin = pinCheck.value['hasPin'] as bool? ?? false;
             if (hasPin && !valid) {
               throw Exception('Invalid 4-digit Wallet Security PIN. Please verify and retry.');
@@ -169,53 +169,33 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         },
       );
 
-      // 4. Confirm Payment
-      await widget.convexClient.mutation(
-        'payments:confirmPayment',
+      // 4. Pay the booking from the wallet into escrow. The amount and the vendor/platform
+      // split are decided by the SERVER from the booking; nothing here is trusted.
+      final serverTotal = (bookingData['totalAmount'] as num?)?.toDouble() ?? widget.totalAmount;
+      final escrowResult = await widget.convexClient.mutation(
+        'payments:createEscrowPayment',
         args: {
-          'bookingId': bookingId,
-          'txRef': txRef,
-          'gatewayReference': _agentNumberController.text.trim().isNotEmpty
-              ? 'AGENT_${_agentNumberController.text.trim()}'
-              : 'MOMO_${DateTime.now().millisecondsSinceEpoch}',
+          'buyerId': widget.currentUser.id,
+          'vendorId': bookingData['vendorId']?.toString() ?? widget.vendorId,
+          'amount': serverTotal,
+          'currency': 'SLE',
+          'referenceId': bookingId,
+          'momoProvider': _momoProvider,
         },
       );
-
-      // 5. Lock in Vektolux Escrow with 60/40 Partner Split on immutable ledger
-      String? blockchainTxHash;
-      double partnerAmount = widget.totalAmount * 0.6;
-      try {
-        final escrowResult = await widget.convexClient.mutation(
-          'payments:createEscrowPayment',
-          args: {
-            'buyerId': widget.currentUser.id,
-            'vendorId': widget.vendorId,
-            'amount': widget.totalAmount,
-            'currency': 'SLE',
-            'referenceType': widget.listingType == 'property'
-                ? (widget.bookingType == 'hourly' ? 'hourly_guesthouse' : 'property_booking')
-                : (widget.bookingType == 'rental' ? 'vehicle_rental' : 'vehicle_sale'),
-            'referenceId': bookingId,
-            'partnerSplitPercent': 60,
-            if (_agentNumberController.text.trim().isNotEmpty)
-              'agentNumber': _agentNumberController.text.trim(),
-            'momoProvider': _momoProvider,
-          },
+      final ed = escrowResult.value;
+      if (!escrowResult.success || ed is! Map || ed['success'] != true) {
+        // No fake success: the booking exists but is NOT paid.
+        throw Exception(
+          'Your booking is reserved but not paid: ${escrowResult.errorMessage ?? 'payment could not be completed'}. '
+          'Top up your wallet or pay with Mobile Money to confirm it.',
         );
-
-        if (escrowResult.success && escrowResult.value is Map) {
-          final ed = escrowResult.value as Map<String, dynamic>;
-          blockchainTxHash = ed['blockchainTxHash'] as String?;
-          if (ed['partnerAmount'] != null) {
-            partnerAmount = (ed['partnerAmount'] as num).toDouble();
-          }
-        }
-      } catch (_) {
-        blockchainTxHash = '0x${DateTime.now().millisecondsSinceEpoch.toRadixString(16)}';
       }
+      final partnerAmount = (ed['partnerAmount'] as num?)?.toDouble() ?? 0;
+      final platformFee = (ed['platformFeeAmount'] as num?)?.toDouble() ?? 0;
 
       if (mounted) {
-        _showSuccessDialog(bookingId, blockchainTxHash, partnerAmount);
+        _showSuccessDialog(bookingId, null, partnerAmount, platformFee);
       }
     } catch (e) {
       if (mounted) {
@@ -232,7 +212,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
   }
 
-  void _showSuccessDialog(String bookingId, String? txHash, double partnerAmount) {
+  void _showSuccessDialog(String bookingId, String? txHash, double partnerAmount, double platformFee) {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -315,7 +295,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          'Partner Split (60%):',
+                          'Vendor receives (on completion):',
                           style: TextStyle(
                             fontSize: 11,
                             color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
@@ -336,14 +316,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          'Platform Fee (40%):',
+                          'Vektolux service commission:',
                           style: TextStyle(
                             fontSize: 11,
                             color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
                           ),
                         ),
                         Text(
-                          'SLE ${_currencyFormat.format(widget.totalAmount - partnerAmount)}',
+                          'SLE ${_currencyFormat.format(platformFee)}',
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
@@ -942,7 +922,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         ),
                         SizedBox(height: 4),
                         Text(
-                          '60% partner disbursement is locked in escrow until property or vehicle handover inspection is verified. 40% platform service fee & tax reserve.',
+                          'Your payment is held in escrow and released to the vendor only after the booking is completed, minus the Vektolux service commission.',
                           style: TextStyle(
                             fontSize: 11,
                             color: Color(0xFF065F46),
@@ -987,7 +967,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           const Icon(Icons.lock_outline_rounded, size: 18),
                           const SizedBox(width: 8),
                           Text(
-                            'Pay SLE ${_currencyFormat.format(widget.totalAmount)} with Flutterwave',
+                            'Pay SLE ${_currencyFormat.format(widget.totalAmount)} from wallet',
                             style: const TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w700,

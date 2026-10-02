@@ -13,6 +13,8 @@ import { useEffect, useState, useMemo } from "react";
 import dynamic from "next/dynamic";
 import type { AdminSession } from "@/lib/types";
 import styles from "./overview.module.css";
+import type { AnalyticsData } from "@/components/dashboard/AnalyticsCharts";
+import { adminFetch } from "@/lib/adminSession";
 
 const AnalyticsCharts = dynamic(
   () => import("@/components/dashboard/AnalyticsCharts"),
@@ -25,50 +27,6 @@ const AnalyticsCharts = dynamic(
     ),
   }
 );
-
-interface DailyVolumePoint {
-  date: string;
-  day: string;
-  label: string;
-  volume: number;
-  transactions: number;
-}
-
-interface GenderPoint {
-  name: string;
-  value: number;
-  percentage: number;
-  color: string;
-}
-
-interface RolePoint {
-  name: string;
-  group: string;
-  value: number;
-  percentage: number;
-  color: string;
-}
-
-interface AnalyticsData {
-  financialVolume: {
-    currency: string;
-    grossVolume: number;
-    totalTransactions: number;
-    completedCount: number;
-    pendingCount: number;
-    failedCount: number;
-    volumeTimeline: DailyVolumePoint[];
-  };
-  userDemographics: {
-    totalUsers: number;
-    activeUsers: number;
-    verifiedUsers: number;
-    genderDemographics: GenderPoint[];
-    roleDistribution: RolePoint[];
-    rawRoleCounts: Record<string, number>;
-  };
-  timestamp: number;
-}
 
 export default function DashboardPage() {
   const [session, setSession] = useState<AdminSession | null>(null);
@@ -95,16 +53,15 @@ export default function DashboardPage() {
     if (isManualRefresh) setRefreshing(true);
     try {
       const adminId = session?.user?.id || "";
-      const sessionToken = session?.user?.sessionToken || "";
 
       const queryParams = adminId
-        ? `?adminId=${encodeURIComponent(adminId)}&sessionToken=${encodeURIComponent(sessionToken)}`
+        ? `?adminId=${encodeURIComponent(adminId)}`
         : "";
 
       const [analyticsRes, vRes, lRes] = await Promise.all([
-        fetch(`/api/analytics${queryParams}`),
-        fetch(`/api/verifications${queryParams ? queryParams + "&status=pending" : "?status=pending"}`),
-        fetch("/api/listings"),
+        adminFetch(`/api/analytics${queryParams}`),
+        adminFetch(`/api/verifications${queryParams ? queryParams + "&status=pending" : "?status=pending"}`),
+        adminFetch("/api/listings"),
       ]);
 
       const analyticsJson = await analyticsRes.json();
@@ -269,7 +226,7 @@ export default function DashboardPage() {
             <code>gender</code> column (categorized under Male, Female, or Unspecified / Not Disclosed).
           </li>
           <li>
-            Financial curves update reactively as transactions are settled through Orange Money, Afrimoney, or Moneroo.
+            Financial curves update reactively as transactions are settled through Orange Money, Afrimoney, or Monime.
           </li>
         </ul>
       </div>

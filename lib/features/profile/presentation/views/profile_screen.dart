@@ -31,6 +31,9 @@ import '../../../social/presentation/views/public_profile_screen.dart';
 import '../../../mobility/presentation/views/my_escrow_orders_screen.dart';
 import '../../../real_estate/presentation/views/my_real_estate_escrows_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../wallet_payments/presentation/widgets/qr_pay_sheet.dart';
+import '../../../wallet_payments/presentation/widgets/receive_payment_sheet.dart';
+import '../../../wallet_payments/presentation/widgets/withdraw_sheet.dart';
 import '../../../../core/services/payment_methods_service.dart';
 import '../../../../core/services/carrier_detection_service.dart';
 import '../../../../core/widgets/universal_phone_input.dart';
@@ -39,11 +42,8 @@ import 'widgets/ussd_payment_sheet.dart';
 import 'widgets/camera_qr_scanner_view.dart';
 import 'widgets/verified_ledger_transfer_sheet.dart';
 import 'widgets/web_checkout_modal.dart';
+import '../../../subscriptions/presentation/views/professional_subscription_screen.dart';
 import 'dart:async';
-import 'dart:io';
-import 'dart:ui' as ui;
-import 'package:flutter/rendering.dart';
-import 'package:share_plus/share_plus.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? currentUserId;
@@ -64,14 +64,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _pushNotifications = true;
   bool _smsAlerts = true;
 
-  // ── Escrow wallet display state ───────────────────────────────────
-  bool _isBalanceVisible = true;
   bool _escrowBiometricEnabled = true;
 
   // ── Live Convex wallet data (replaces hardcoded _escrowBalance) ───
-  double _walletBalance = 0.0;
+  double? _walletBalance; // used only to gate Withdraw; NOT displayed on this screen
   int _activeEscrowDeals = 0;
-  bool _isLoadingBalance = true;
 
 
   // ── Live Convex payment accounts (replaces local _savedPaymentMethods) ──
@@ -81,9 +78,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // ── Vendor listing count (replaces hardcoded '6 Items') ───────────
   int _vendorListingCount = 0;
 
-  // ── Live Convex reactive subscription for real-time wallet crediting ──
-  StreamSubscription<dynamic>? _walletSubscription;
-
   @override
   void initState() {
     super.initState();
@@ -91,40 +85,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
       context.read<AuthBloc>().add(const RefreshUserSessionEvent());
       _fetchWalletData();
       _fetchUserPaymentAccounts();
-      _subscribeToLiveWalletBalance();
     });
   }
 
   @override
   void dispose() {
-    _walletSubscription?.cancel();
     super.dispose();
-  }
-
-  /// Subscribe in real time to convex/wallet:getUserBalance
-  /// Any incoming webhook credit reactively updates the UI without manual reload.
-  void _subscribeToLiveWalletBalance() {
-    final userId = context.read<AuthBloc>().state.user?.id;
-    if (userId == null) return;
-    final client = context.read<ConvexClientWrapper>();
-
-    _walletSubscription?.cancel();
-    _walletSubscription = client.subscribe(
-      'wallet:getUserBalance',
-      args: {'userId': userId},
-      interval: const Duration(seconds: 2),
-    ).listen((data) {
-      if (!mounted) return;
-      if (data is Map && data.containsKey('availableBalance')) {
-        final available = (data['availableBalance'] as num?)?.toDouble();
-        if (available != null) {
-          setState(() {
-            _walletBalance = available;
-            _isLoadingBalance = false;
-          });
-        }
-      }
-    });
   }
 
   /// Fetch live wallet balance, escrow status, and dynamic profile from Convex.
@@ -132,7 +98,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (!mounted) return;
     final userId = context.read<AuthBloc>().state.user?.id;
     if (userId == null) {
-      setState(() => _isLoadingBalance = false);
       return;
     }
     final client = context.read<ConvexClientWrapper>();
@@ -140,7 +105,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       // 1. Try unified getWalletProfile
       final profileRes = await client.query(
         'users:getWalletProfile',
-        args: {'userId': userId},
+        args: {
+          'userId': userId,
+        },
       );
       if (profileRes.success && profileRes.value is Map) {
         final data = profileRes.value as Map;
@@ -155,7 +122,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           final listings =
               propRes.value is List ? propRes.value as List : <dynamic>[];
           _vendorListingCount = listings.length;
-          _isLoadingBalance = false;
         });
         return;
       }
@@ -163,7 +129,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       // 2. Resilient fallback to individual queries
       final walletRes = await client.query(
         'payments:getWalletBalance',
-        args: {'userId': userId},
+        args: {
+          'userId': userId,
+        },
       );
       final ordersRes = await client.query(
         'escrow:getMyEscrowOrders',
@@ -188,56 +156,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final listings =
             propRes.value is List ? propRes.value as List : <dynamic>[];
         _vendorListingCount = listings.length;
-        _isLoadingBalance = false;
       });
     } catch (_) {
-      if (mounted) setState(() => _isLoadingBalance = false);
-    }
-  }
-
-  /// Verify on-demand MoniMe payment status and refresh wallet balance.
-  Future<void> _verifyAndRefreshWallet() async {
-    if (!mounted) return;
-    setState(() => _isLoadingBalance = true);
-    final userId = context.read<AuthBloc>().state.user?.id;
-    final client = context.read<ConvexClientWrapper>();
-
-    try {
-      if (userId != null) {
-        // Trigger status reconciliation action on Convex backend
-        await client.action(
-          'payments:verifyMoniMeStatus',
-          args: {'userId': userId},
-        );
-      }
-    } catch (_) {
-      // Non-fatal, proceed with balance fetch
-    }
-
-    await _fetchWalletData();
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Wallet Synced • Available: SLE ${_walletBalance.toStringAsFixed(2)}',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-
-              ),
-            ],
-          ),
-          backgroundColor: AppColors.emeraldDark,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          duration: const Duration(seconds: 2),
-        ),
-      );
     }
   }
 
@@ -1733,13 +1653,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: 18),
                 ],
 
-                // ── 1B. Dual-Role Mode Switcher (Only if driver verified/registered) ──
-                if (user?.canSwitchToDriver == true) ...[
-                  _buildSectionHeader('WORKSPACE & ACCOUNT MODE'),
-                  _buildModeSwitcherCard(context, user),
-                  const SizedBox(height: 18),
-                ],
-
                 // ── 1C. My Posts & Marketplace Listings (Verified Sellers Only) ──
                 if (hasSellerStorefront) ...[
                   _buildSectionHeader('MY POSTS & MARKETPLACE LISTINGS'),
@@ -2081,6 +1994,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   isEnrolled: role == UserRole.merchant,
                   onTap: () => _showDealerApplicationDialog(context, user),
                 ),
+                const SizedBox(height: 10),
+                _buildPartnerCard(
+                  icon: Icons.home_work_rounded,
+                  title: 'List Your Own Property as Owner',
+                  subtitle: 'Owners post their own properties after admin approval',
+                  actionLabel: 'Apply as Owner',
+                  badgeText: 'APPLY',
+                  isEnrolled: false,
+                  onTap: () => _showRoleApplicationDialog(
+                      context, user, 'property_owner', 'Real Estate Owner'),
+                ),
+                const SizedBox(height: 10),
+                _buildPartnerCard(
+                  icon: Icons.hotel_rounded,
+                  title: 'Hotel / Guest House Owner',
+                  subtitle: 'Subscription-based listing for hotels and guest houses',
+                  actionLabel: 'Apply as Hotel Owner',
+                  badgeText: 'APPLY',
+                  isEnrolled: false,
+                  onTap: () => _showRoleApplicationDialog(
+                      context, user, 'hotel_operator', 'Hotel / Guest House Owner'),
+                ),
+                const SizedBox(height: 10),
+                _buildPartnerCard(
+                  icon: Icons.workspace_premium_rounded,
+                  title: 'Professional Subscription',
+                  subtitle: 'Status, plans and renewal for agents and hotel owners',
+                  actionLabel: 'Open',
+                  badgeText: 'VIEW',
+                  isEnrolled: false,
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => const ProfessionalSubscriptionScreen())),
+                ),
                 const SizedBox(height: 18),
 
                 // ── 4. Vendor / Merchant Hub (If vendor role) ────────
@@ -2106,11 +2052,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                             const SizedBox(width: 10),
                             _buildVendorStatCard(
-                              icon: Icons.account_balance_wallet_outlined,
-                              label: 'Escrow Balance',
-                              value: 'SLE ${_walletBalance.toStringAsFixed(2)}',
+                              icon: Icons.handshake_outlined,
+                              label: 'Active Deals',
+                              value: '$_activeEscrowDeals',
                               color: AppColors.emeraldDark,
-
                             ),
                           ],
                         ),
@@ -2228,8 +2173,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 const SizedBox(height: 18),
 
                 // ── 4. Escrow Wallet Hero Card ───────────────────────
-                _buildSectionHeader('ESCROW WALLET & BALANCES'),
-                _buildEscrowWalletHeroCard(context, user),
+                _buildSectionHeader('PAYMENTS'),
+                _buildPaymentsActionsCard(context, user),
 
                 const SizedBox(height: 18),
 
@@ -2369,13 +2314,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       _buildSettingsTile(
                         icon: Icons.qr_code_2_rounded,
                         title: 'Receive Payment QR',
-                        subtitle: 'Display personal QR code to receive payments & transfers',
+                        subtitle: 'Create a secure QR code to get paid',
                         trailing: const Icon(
                           Icons.arrow_forward_ios_rounded,
                           size: 14,
                           color: AppColors.gray400,
                         ),
-                        onTap: () => _showMyQrCodeModal(context, user),
+                        onTap: () => ReceivePaymentSheet.show(context),
                       ),
                     ],
                   ),
@@ -2707,249 +2652,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildModeSwitcherCard(BuildContext context, UserEntity? user) {
-    final isDriverMode = user?.isDriverMode ?? false;
-    final canDrive = user?.canSwitchToDriver ?? false;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: isDriverMode ? AppColors.emerald : AppColors.border,
-          width: isDriverMode ? 1.8 : 1.0,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: isDriverMode
-                ? AppColors.emerald.withValues(alpha: 0.12)
-                : Colors.black.withValues(alpha: 0.03),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: isDriverMode
-                      ? AppColors.emeraldSurface
-                      : AppColors.obsidian.withValues(alpha: 0.08),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  isDriverMode ? Icons.local_shipping_rounded : Icons.person_rounded,
-                  color: isDriverMode ? AppColors.emeraldDark : AppColors.obsidian,
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      isDriverMode ? 'Fleet Operator Mode Active' : 'Client Mode Active',
-                      style: const TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.obsidian,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      isDriverMode
-                          ? 'Managing commercial fleet, vans & heavy haulage'
-                          : 'Browsing properties, showroom vehicles & logistics',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.textSecondary,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: isDriverMode ? AppColors.emerald : AppColors.obsidian,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  isDriverMode ? 'FLEET' : 'CLIENT',
-                  style: const TextStyle(
-                    color: AppColors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-
-          if (canDrive) ...[
-            Container(
-              decoration: BoxDecoration(
-                color: AppColors.gray100,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              padding: const EdgeInsets.all(4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap: () {
-                        if (isDriverMode) {
-                          context.read<AuthBloc>().add(const SwitchUserModeEvent('passenger'));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Switched to Client Mode'),
-                              backgroundColor: AppColors.obsidian,
-                              behavior: SnackBarBehavior.floating,
-                              duration: Duration(seconds: 2),
-                            ),
-                          );
-                        }
-                      },
-                      borderRadius: BorderRadius.circular(10),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        decoration: BoxDecoration(
-                          color: !isDriverMode ? AppColors.white : Colors.transparent,
-                          borderRadius: BorderRadius.circular(10),
-                          boxShadow: !isDriverMode
-                              ? [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.08),
-                                    blurRadius: 4,
-                                    offset: const Offset(0, 1),
-                                  ),
-                                ]
-                              : null,
-                        ),
-                        child: Center(
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.person_rounded,
-                                size: 16,
-                                color: !isDriverMode ? AppColors.obsidian : AppColors.gray500,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                'Client Mode',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: !isDriverMode ? FontWeight.w800 : FontWeight.w600,
-                                  color: !isDriverMode ? AppColors.obsidian : AppColors.gray500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: InkWell(
-                      onTap: () {
-                        if (!isDriverMode) {
-                          context.read<AuthBloc>().add(const SwitchUserModeEvent('driver'));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Switched to Fleet Operator Mode'),
-                              backgroundColor: AppColors.emerald,
-                              behavior: SnackBarBehavior.floating,
-                              duration: Duration(seconds: 2),
-                            ),
-                          );
-                        }
-                      },
-                      borderRadius: BorderRadius.circular(10),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        decoration: BoxDecoration(
-                          color: isDriverMode ? AppColors.emerald : Colors.transparent,
-                          borderRadius: BorderRadius.circular(10),
-                          boxShadow: isDriverMode
-                              ? [
-                                  BoxShadow(
-                                    color: AppColors.emerald.withValues(alpha: 0.3),
-                                    blurRadius: 6,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ]
-                              : null,
-                        ),
-                        child: Center(
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.local_shipping_rounded,
-                                size: 16,
-                                color: isDriverMode ? AppColors.white : AppColors.gray500,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                'Fleet Operator',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: isDriverMode ? FontWeight.w800 : FontWeight.w600,
-                                  color: isDriverMode ? AppColors.white : AppColors.gray500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ] else ...[
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.gray100,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.info_outline_rounded, size: 16, color: AppColors.gray500),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Fleet Operator access requires verified operator status. Apply as a Dealer below to unlock this mode.',
-                      style: TextStyle(fontSize: 12, color: AppColors.gray600),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
   Widget _buildSectionHeader(String title) {
     return Padding(
       padding: const EdgeInsets.only(left: 4, bottom: 8),
@@ -3166,7 +2868,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _showAgentApplicationDialog(BuildContext context, UserEntity? user) {
     if (user == null) return;
     final agencyCtrl =
-        TextEditingController(text: '${user.name} Real Estate Agency');
+        TextEditingController();
     final tinCtrl = TextEditingController();
 
     showModalBottomSheet(
@@ -3267,7 +2969,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     return;
                   }
                   final client = context.read<ConvexClientWrapper>();
-                  await client.mutation(
+                  final res = await client.mutation(
                     'users:applyRoleUpgrade',
                     args: {
                       'userId': user.id,
@@ -3278,10 +2980,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   );
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                            'Application submitted! You will be notified once verified.'),
-                        backgroundColor: AppColors.emeraldDark,
+                      SnackBar(
+                        content: Text(res.success
+                            ? 'Application submitted. You will be notified after an administrator reviews it.'
+                            : (res.errorMessage ?? 'Could not submit the application.')),
+                        backgroundColor: res.success ? AppColors.emeraldDark : AppColors.error,
                         behavior: SnackBarBehavior.floating,
                       ),
                     );
@@ -3300,10 +3003,68 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  /// Generic business-role application. The server records it as PENDING; only an administrator
+  /// can approve it. Nothing changes locally.
+  void _showRoleApplicationDialog(
+      BuildContext context, UserEntity? user, String targetRole, String label) {
+    if (user == null) return;
+    final nameCtrl = TextEditingController();
+    final licenceCtrl = TextEditingController();
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Apply as $label'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(labelText: 'Business / property name (optional)'),
+            ),
+            TextField(
+              controller: licenceCtrl,
+              decoration: const InputDecoration(labelText: 'Licence or registration number (optional)'),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'An administrator reviews every application. You will be notified of the decision.',
+              style: TextStyle(fontSize: 12, color: AppColors.gray500),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () async {
+              final client = context.read<ConvexClientWrapper>();
+              final res = await client.mutation('users:applyRoleUpgrade', args: {
+                'userId': user.id,
+                'targetRole': targetRole,
+                if (nameCtrl.text.trim().isNotEmpty) 'businessName': nameCtrl.text.trim(),
+                if (licenceCtrl.text.trim().isNotEmpty) 'licenseNumber': licenceCtrl.text.trim(),
+              });
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(res.success
+                      ? 'Application submitted. You will be notified after review.'
+                      : (res.errorMessage ?? 'Could not submit the application.')),
+                  backgroundColor: res.success ? AppColors.emeraldDark : AppColors.error,
+                  behavior: SnackBarBehavior.floating,
+                ));
+              }
+            },
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showDealerApplicationDialog(BuildContext context, UserEntity? user) {
     if (user == null) return;
     final dealerCtrl =
-        TextEditingController(text: '${user.name} Motors & Fleet');
+        TextEditingController();
     final tinCtrl = TextEditingController();
 
     showModalBottomSheet(
@@ -3404,7 +3165,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     return;
                   }
                   final client = context.read<ConvexClientWrapper>();
-                  await client.mutation(
+                  final res = await client.mutation(
                     'users:applyRoleUpgrade',
                     args: {
                       'userId': user.id,
@@ -3415,10 +3176,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   );
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                            'Dealership application submitted! You will be notified once verified.'),
-                        backgroundColor: Color(0xFF92400E),
+                      SnackBar(
+                        content: Text(res.success
+                            ? 'Application submitted. You will be notified after an administrator reviews it.'
+                            : (res.errorMessage ?? 'Could not submit the application.')),
+                        backgroundColor: res.success ? Color(0xFF92400E) : AppColors.error,
                         behavior: SnackBarBehavior.floating,
                       ),
                     );
@@ -3437,285 +3199,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _showMyQrCodeModal(BuildContext context, UserEntity? user) {
-    final qrCardKey = GlobalKey();
-    final qrData =
-        'vektolux://pay?userId=${user?.id ?? "guest"}&phone=${user?.phone ?? ""}&name=${Uri.encodeComponent(user?.name ?? "User")}';
-    final verificationBadgeText = (user != null &&
-            user.verificationBadge.isNotEmpty &&
-            user.verificationBadge != 'NONE')
-        ? user.verificationBadge
-        : (user?.isVerified == true
-            ? 'VERIFIED CITIZEN ID • ESCROW ENABLED'
-            : 'CITIZEN ID • ESCROW ENABLED');
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.gray300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'My Vektolux Account QR',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: AppColors.obsidian,
-              ),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'Scan to send money or verify credentials in Sierra Leone',
-              style: TextStyle(fontSize: 12, color: AppColors.gray500),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-
-            // QR Container Card with RepaintBoundary for high-res PNG capture
-            RepaintBoundary(
-              key: qrCardKey,
-              child: Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.border),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.06),
-                      blurRadius: 16,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    SizedBox(
-                      width: 190,
-                      height: 190,
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          CustomPaint(
-                            size: const Size(190, 190),
-                            painter: _VektoluxQrPainter(
-                              data: qrData,
-                              foregroundColor: const Color(0xFF0F172A),
-                            ),
-                          ),
-                          Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: AppColors.emerald,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 3),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.15),
-                                  blurRadius: 6,
-                                ),
-                              ],
-                            ),
-                            child: const Center(
-                              child: Text(
-                                'V',
-                                style: TextStyle(
-                                  fontFamily: 'Poppins',
-                                  fontWeight: FontWeight.w900,
-                                  color: Colors.white,
-                                  fontSize: 19,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      user?.name ?? 'Vektolux User',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.obsidian,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      user != null && user.phone.isNotEmpty
-                          ? user.phone
-                          : '+232 ...',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: AppColors.gray500,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: AppColors.emeraldSurface,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        verificationBadgeText,
-                        style: const TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.emeraldDark,
-                          letterSpacing: 0.4,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      side: const BorderSide(color: AppColors.border),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                    icon: const Icon(Icons.copy_rounded,
-                        size: 18, color: AppColors.obsidian),
-                    label: const Text('Copy ID',
-                        style: TextStyle(
-                            color: AppColors.obsidian,
-                            fontWeight: FontWeight.w600)),
-                    onPressed: () async {
-                      final idToCopy = (user?.id != null && user!.id.isNotEmpty)
-                          ? user.id
-                          : 'VLX-SL-232';
-                      await Clipboard.setData(ClipboardData(text: idToCopy));
-                      // Native OS clipboard confirmation verification
-                      final clipCheck = await Clipboard.getData(Clipboard.kTextPlain);
-                      final isConfirmed = clipCheck?.text == idToCopy;
-
-                      if (ctx.mounted) Navigator.pop(ctx);
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Row(
-                              children: [
-                                const Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    isConfirmed
-                                        ? 'Account ID ($idToCopy) copied to clipboard!'
-                                        : 'Account ID copied to clipboard!',
-                                    style: const TextStyle(fontWeight: FontWeight.w600),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            backgroundColor: AppColors.emeraldDark,
-                            behavior: SnackBarBehavior.floating,
-                          ),
-                        );
-                      }
-                    },
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.emerald,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                    icon: const Icon(Icons.share_rounded, size: 18),
-                    label: const Text('Share QR',
-                        style: TextStyle(fontWeight: FontWeight.w700)),
-                    onPressed: () async {
-                      final userId = user?.id ?? "guest";
-                      final userName = user?.name ?? "Vektolux User";
-                      final userPhone = user?.phone ?? "";
-                      final shareLink = 'https://app.vektolux.com/pay?userId=$userId&phone=$userPhone&name=${Uri.encodeComponent(userName)}';
-                      final shareText = 'Pay or verify with Vektolux Escrow:\n'
-                          'Name: $userName\n'
-                          'Account ID: $userId\n'
-                          'Link: $shareLink\n\n'
-                          'Sierra Leone Escrow Protection & Mobile Money.';
-
-                      final box = context.findRenderObject() as RenderBox?;
-                      final originRect = box != null
-                          ? box.localToGlobal(Offset.zero) & box.size
-                          : const Rect.fromLTWH(0, 0, 300, 300);
-
-                      try {
-                        final boundary = qrCardKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
-                        if (boundary != null) {
-                          final image = await boundary.toImage(pixelRatio: 2.5);
-                          final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-                          if (byteData != null) {
-                            final pngBytes = byteData.buffer.asUint8List();
-                            final tempDir = Directory.systemTemp;
-                            final filePath = '${tempDir.path}/vektolux_qr_${userId.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_')}.png';
-                            final file = File(filePath);
-                            await file.writeAsBytes(pngBytes, flush: true);
-
-                            if (ctx.mounted) Navigator.pop(ctx);
-                            await Share.shareXFiles(
-                              [XFile(filePath, mimeType: 'image/png', name: 'vektolux_qr.png')],
-                              text: shareText,
-                              subject: 'Vektolux Payment QR — $userName',
-                              sharePositionOrigin: originRect,
-                            );
-                            return;
-                          }
-                        }
-                      } catch (e) {
-                        debugPrint('[ProfileScreen] QR image render failed, falling back to text share: $e');
-                      }
-
-                      // Fallback to text & link share via native OS share sheet
-                      if (ctx.mounted) Navigator.pop(ctx);
-                      await Share.share(
-                        shareText,
-                        subject: 'Vektolux Payment QR — $userName',
-                        sharePositionOrigin: originRect,
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<void> _showScanQrModal(BuildContext context, UserEntity? user) async {
     if (user == null || user.id.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3728,23 +3211,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return;
     }
 
-    // 1. Launch live camera QR scanner view with viewfinder overlay
-    final scannedPayload = await CameraQrScannerView.show(context);
-    if (scannedPayload == null) return; // User closed camera
+    final scanned = await CameraQrScannerView.show(context);
+    if (scanned == null || !context.mounted) return;
 
-    if (!context.mounted) return;
+    if (scanned == '__MANUAL__') {
+      // Manual transfer by phone number / id (authenticated wallet transfer).
+      final bal = _walletBalance;
+      if (bal == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Your wallet is still loading. Please try again in a moment.')),
+        );
+        return;
+      }
+      await VerifiedLedgerTransferSheet.show(
+        context,
+        user: user,
+        currentBalance: bal,
+        initialQuery: null,
+        onTransferCompleted: () => _fetchWalletData(),
+      );
+      return;
+    }
 
-    // 2. Open Verified Ledger Transfer Sheet pre-filled with scanned data
-    final initialQuery = scannedPayload == '__MANUAL__' ? null : scannedPayload;
-    await VerifiedLedgerTransferSheet.show(
-      context,
-      user: user,
-      currentBalance: _walletBalance,
-      initialQuery: initialQuery,
-      onTransferCompleted: () {
-        _fetchWalletData();
-      },
-    );
+    if (!isVektoluxPaymentCode(scanned)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('That is not a Vektolux payment code.'),
+          backgroundColor: AppColors.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    // Scanning only PREPARES the payment; the server resolves recipient/amount and the
+    // user must confirm with their PIN before any money moves.
+    await QrPaySheet.show(context, payload: scanned, onPaid: () => _fetchWalletData());
   }
 
   void _showWalletPinModal(BuildContext context, UserEntity? user, {VoidCallback? onPinSet}) {
@@ -4041,231 +3543,57 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildEscrowWalletHeroCard(BuildContext context, UserEntity? user) {
-    final balanceText = _isBalanceVisible
-        ? 'SLE ${_walletBalance.toStringAsFixed(2)}'
-        : 'SLE ••••••';
-
+  Widget _buildPaymentsActionsCard(BuildContext context, UserEntity? user) {
+    Widget tile(IconData icon, String label, VoidCallback onTap) => Expanded(
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(14),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: const BoxDecoration(color: AppColors.emeraldSurface, shape: BoxShape.circle),
+                    child: Icon(icon, color: AppColors.emeraldDark, size: 20),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
 
     return Container(
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [
-            Color(0xFF0F172A),
-            Color(0xFF1E293B),
-            Color(0xFF064E3B),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF0F172A).withValues(alpha: 0.25),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-        border: Border.all(
-          color: AppColors.emerald.withValues(alpha: 0.35),
-          width: 1.2,
-        ),
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.border),
       ),
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Row(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: AppColors.emerald.withValues(alpha: 0.2),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.shield_rounded,
-                      size: 14,
-                      color: AppColors.emerald,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'VEKTOLUX ESCROW WALLET',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.0,
-                    ),
-                  ),
-                ],
-              ),
-              Row(
-                children: [
-                  IconButton(
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    icon: _isLoadingBalance
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white70,
-                            ),
-                          )
-                        : const Icon(
-                            Icons.refresh_rounded,
-                            color: Colors.white70,
-                            size: 20,
-                          ),
-                    tooltip: 'Verify & Refresh Balance',
-                    onPressed: _isLoadingBalance ? null : () => _verifyAndRefreshWallet(),
-                  ),
-                  const SizedBox(width: 10),
-                  IconButton(
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    icon: Icon(
-                      _isBalanceVisible
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined,
-                      color: Colors.white70,
-                      size: 20,
-                    ),
-                    tooltip: _isBalanceVisible ? 'Hide Balance' : 'Show Balance',
-                    onPressed: () => setState(() => _isBalanceVisible = !_isBalanceVisible),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          _isLoadingBalance
-              ? const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 4),
-                  child: SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2.5,
-                    ),
-                  ),
-                )
-              : Text(
-                  balanceText,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 30,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-          const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppColors.emerald.withValues(alpha: 0.18),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: AppColors.emerald.withValues(alpha: 0.4),
-                width: 1,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF34D399),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  'Escrow Protected • $_activeEscrowDeals Active Deal${_activeEscrowDeals == 1 ? '' : 's'}',
-                  style: const TextStyle(
-                    color: Color(0xFF6EE7B7),
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: _buildEscrowActionButton(
-                  icon: Icons.add_circle_outline_rounded,
-                  label: 'Deposit',
-                  onTap: () => _showTopUpEscrowSheet(context, user),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _buildEscrowActionButton(
-                  icon: Icons.arrow_circle_up_rounded,
-                  label: 'Withdraw',
-                  onTap: () => _showWithdrawEscrowSheet(context, user),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _buildEscrowActionButton(
-                  icon: Icons.qr_code_scanner_rounded,
-                  label: 'Scan QR',
-                  onTap: () => _showScanQrModal(context, user),
-                ),
-              ),
-            ],
-          ),
+          tile(Icons.add_rounded, 'Deposit', () => _showTopUpEscrowSheet(context, user)),
+          tile(Icons.arrow_upward_rounded, 'Withdraw', () {
+            final available = _walletBalance;
+            if (user == null || available == null) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Your wallet is still loading. Please try again in a moment.')),
+              );
+              return;
+            }
+            WithdrawSheet.show(context, availableBalance: available, onCompleted: () => _fetchWalletData());
+          }),
+          tile(Icons.qr_code_2_rounded, 'Receive', () => ReceivePaymentSheet.show(context)),
+          tile(Icons.qr_code_scanner_rounded, 'Scan & Pay', () => _showScanQrModal(context, user)),
         ],
-      ),
-    );
-  }
-
-  Widget _buildEscrowActionButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.15),
-            width: 1,
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: Colors.white, size: 16),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -4917,7 +4245,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     // Provider IDs mapped to Convex payment_settings providerIds
     const providerIds = {
-      'orange': 'moneroo_auto',
       'africell': 'afrimoney_manual',
       'qmoney': 'qmoney_manual',
     };
@@ -5715,550 +5042,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _showWithdrawEscrowSheet(BuildContext context, UserEntity? user) {
-    final amountCtrl = TextEditingController(text: '500');
-    bool isProcessing = false;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (modalCtx, setModalState) {
-            final activeMethod = _userPaymentAccounts.firstWhere(
-              (m) => m.isDefault,
-              orElse: () => _userPaymentAccounts.isNotEmpty
-                  ? _userPaymentAccounts.first
-                  : const PaymentAccount(
-                      id: '',
-                      providerCode: 'orange',
-                      providerName: 'Orange Money',
-                      accountNumber: '',
-                      maskedNumber: 'No linked account',
-                      isDefault: false,
-                      isActive: false,
-                    ),
-            );
-
-            return Padding(
-              padding: EdgeInsets.only(
-                left: 20,
-                right: 20,
-                top: 20,
-                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.gray300,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Row(
-                    children: [
-                      Icon(Icons.arrow_circle_up_rounded, color: AppColors.emeraldDark, size: 22),
-                      SizedBox(width: 8),
-                      Text(
-                        'Withdraw Escrow Funds',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.obsidian,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Available for payout: SLE ${_walletBalance.toStringAsFixed(2)}',
-                    style: const TextStyle(fontSize: 12.5, color: AppColors.gray600, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: amountCtrl,
-                    keyboardType: TextInputType.number,
-                    style: const TextStyle(
-                      color: Color(0xFF0F172A),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    cursorColor: const Color(0xFF10B981),
-                    decoration: const InputDecoration(
-                      labelText: 'Withdraw Amount (SLE)',
-                      labelStyle: TextStyle(color: Color(0xFF64748B)),
-                      hintText: '0.00',
-                      hintStyle: TextStyle(color: Color(0xFF94A3B8)),
-                      prefixText: 'SLE ',
-                      prefixStyle: TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  if (activeMethod.accountNumber.isNotEmpty || activeMethod.maskedNumber != 'No linked account') ...[
-                    const Text(
-                      'Destination Account',
-                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.obsidian),
-                    ),
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: AppColors.gray50,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppColors.border),
-                      ),
-                      child: Row(
-                        children: [
-                          _buildProviderIcon(activeMethod.providerCode),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(activeMethod.providerName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                                Text(activeMethod.maskedNumber, style: const TextStyle(color: AppColors.gray600, fontSize: 11.5)),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.emerald,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: isProcessing
-                          ? null
-                          : () async {
-                              if (user == null) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Please log in to withdraw funds.')),
-                                );
-                                return;
-                              }
-
-                              final amt = double.tryParse(amountCtrl.text.trim()) ?? 0;
-                              if (amt <= 0) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Please enter a valid payout amount.')),
-                                );
-                                return;
-                              }
-                              if (amt > _walletBalance) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Withdrawal amount exceeds available escrow balance.')),
-                                );
-                                return;
-                              }
-
-                              final destPhone = activeMethod.accountNumber.isNotEmpty
-                                  ? activeMethod.accountNumber
-                                  : user.phone;
-                              if (destPhone.trim().isEmpty) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Please link or enter a destination mobile money number.')),
-                                );
-                                return;
-                              }
-
-                              setModalState(() => isProcessing = true);
-                              try {
-                                final client = context.read<ConvexClientWrapper>();
-                                final pinStatusRes = await client.query(
-                                  'payments:getUserSecurityPinStatus',
-                                  args: {'userId': user.id},
-                                );
-                                setModalState(() => isProcessing = false);
-
-                                final bool hasPin = pinStatusRes.success &&
-                                    pinStatusRes.value is Map &&
-                                    (pinStatusRes.value['hasPin'] == true);
-
-                                if (!hasPin) {
-                                  if (modalCtx.mounted) {
-                                    Navigator.of(modalCtx).pop();
-                                  }
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('🛡️ Please configure your 4-Digit Escrow Security PIN before withdrawing funds.'),
-                                        backgroundColor: AppColors.obsidian,
-                                        behavior: SnackBarBehavior.floating,
-                                      ),
-                                    );
-                                    _showWalletPinModal(context, user, onPinSet: () {
-                                      _showWithdrawEscrowSheet(context, user);
-                                    });
-                                  }
-                                  return;
-                                }
-
-                                // User has PIN -> Close amount sheet and open PIN authorization sheet
-                                if (modalCtx.mounted) {
-                                  Navigator.of(modalCtx).pop();
-                                }
-                                if (context.mounted) {
-                                  _showWithdrawalPinConfirmationSheet(
-                                    context,
-                                    user: user,
-                                    amount: amt,
-                                    providerCode: activeMethod.providerCode,
-                                    providerName: activeMethod.providerName,
-                                    destinationPhone: destPhone,
-                                    onWithdrawalCompleted: () {
-                                      _fetchWalletData();
-                                    },
-                                  );
-                                }
-                              } catch (e) {
-                                setModalState(() => isProcessing = false);
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Withdrawal check error: $e'), backgroundColor: AppColors.error),
-                                  );
-                                }
-                              }
-                            },
-                      child: isProcessing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                            )
-                          : const Text('Authorize & Withdraw', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  void _showWithdrawalPinConfirmationSheet(
-    BuildContext context, {
-    required UserEntity user,
-    required double amount,
-    required String providerCode,
-    required String providerName,
-    required String destinationPhone,
-    required VoidCallback onWithdrawalCompleted,
-  }) {
-    final pinController = TextEditingController();
-    bool isProcessing = false;
-    String? pinError;
-    bool obscurePin = true;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (modalCtx, setModalState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                left: 24,
-                right: 24,
-                top: 20,
-                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.gray300,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppColors.emeraldSurface,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.shield_rounded,
-                            color: AppColors.emeraldDark, size: 24),
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Authorize Escrow Payout',
-                              style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.obsidian,
-                              ),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              'Enter your 4-digit PIN to release funds',
-                              style: TextStyle(
-                                  fontSize: 12, color: AppColors.gray500),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                    ),
-                    child: Column(
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              'Payout Amount:',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Color(0xFF64748B),
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            Text(
-                              'SLE ${amount.toStringAsFixed(2)}',
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                                color: AppColors.emeraldDark,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              'Destination:',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Color(0xFF64748B),
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            Text(
-                              '$providerName ($destinationPhone)',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.obsidian,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        const Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'Carrier Fee:',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Color(0xFF64748B),
-                              ),
-                            ),
-                            Text(
-                              'SLE 0.00 (Free)',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.emeraldDark,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  TextFormField(
-                    controller: pinController,
-                    keyboardType: TextInputType.number,
-                    obscureText: obscurePin,
-                    maxLength: 4,
-                    autofocus: true,
-                    style: const TextStyle(
-                      color: Color(0xFF0F172A),
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 12,
-                    ),
-                    cursorColor: const Color(0xFF10B981),
-                    onChanged: (val) {
-                      if (pinError != null) {
-                        setModalState(() => pinError = null);
-                      }
-                    },
-                    decoration: InputDecoration(
-                      labelText: '4-Digit Escrow Security PIN',
-                      labelStyle: const TextStyle(color: Color(0xFF64748B), letterSpacing: 0),
-                      hintText: '••••',
-                      hintStyle: const TextStyle(color: Color(0xFF94A3B8), letterSpacing: 0),
-                      prefixIcon: const Icon(Icons.lock_rounded, color: Color(0xFF64748B)),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          obscurePin ? Icons.visibility_off_rounded : Icons.visibility_rounded,
-                          color: const Color(0xFF64748B),
-                          size: 20,
-                        ),
-                        onPressed: () => setModalState(() => obscurePin = !obscurePin),
-                      ),
-                      counterText: '',
-                      filled: true,
-                      fillColor: Colors.grey.shade50,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: pinError != null ? AppColors.error : const Color(0xFFCBD5E1),
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (pinError != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      pinError!,
-                      style: const TextStyle(color: AppColors.error, fontSize: 12, fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.emerald,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                      ),
-                      onPressed: isProcessing
-                          ? null
-                          : () async {
-                              final pin = pinController.text.trim();
-                              if (pin.length != 4) {
-                                setModalState(() => pinError = 'Please enter your 4-digit PIN.');
-                                return;
-                              }
-
-                              setModalState(() {
-                                isProcessing = true;
-                                pinError = null;
-                              });
-
-                              try {
-                                final client = context.read<ConvexClientWrapper>();
-
-                                final res = await client.action(
-                                  'payments:requestWithdrawal',
-                                  args: {
-                                    'userId': user.id,
-                                    'amount': amount,
-                                    'destinationProviderCode': providerCode,
-                                    'destinationAccountNumber': destinationPhone,
-                                    'pin': pin,
-                                  },
-                                );
-
-                                if (res.success) {
-                                  if (modalCtx.mounted) {
-                                    Navigator.of(modalCtx).pop();
-                                  }
-                                  onWithdrawalCompleted();
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          '✓ Payout of SLE ${amount.toStringAsFixed(2)} disbursed to $providerName ($destinationPhone) successfully!',
-                                        ),
-                                        backgroundColor: AppColors.emeraldDark,
-                                        behavior: SnackBarBehavior.floating,
-                                        duration: const Duration(seconds: 4),
-                                      ),
-                                    );
-                                  }
-                                } else {
-                                  throw Exception(res.errorMessage ?? 'Withdrawal failed');
-                                }
-                              } catch (e) {
-                                final errStr = e.toString().replaceFirst('Exception: ', '');
-                                setModalState(() {
-                                  isProcessing = false;
-                                  pinError = errStr;
-                                });
-                              }
-                            },
-                      child: isProcessing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                            )
-                          : const Text(
-                              'Confirm & Disburse Payout',
-                              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-                            ),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
   Widget _buildVerificationBadge(UserEntity? user) {
     final bool isSellerVerified =
         user?.hasVerifiedSellerStorefront == true || user?.role == UserRole.admin;
@@ -6494,87 +5277,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
   }
-}
-
-/// Custom painter for crisp, zero-dependency QR code rendering on any screen
-class _VektoluxQrPainter extends CustomPainter {
-  final String data;
-  final Color foregroundColor;
-
-  _VektoluxQrPainter({
-    required this.data,
-    this.foregroundColor = const Color(0xFF0F172A),
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = foregroundColor
-      ..style = PaintingStyle.fill;
-
-    const matrixSize = 21;
-    final moduleSize = size.width / matrixSize;
-
-    void drawModule(int x, int y) {
-      canvas.drawRect(
-        Rect.fromLTWH(x * moduleSize, y * moduleSize, moduleSize, moduleSize),
-        paint,
-      );
-    }
-
-    void drawFinderPattern(int ox, int oy) {
-      for (int x = 0; x < 7; x++) {
-        for (int y = 0; y < 7; y++) {
-          final isBorder = x == 0 || x == 6 || y == 0 || y == 6;
-          final isCenter = x >= 2 && x <= 4 && y >= 2 && y <= 4;
-          if (isBorder || isCenter) {
-            drawModule(ox + x, oy + y);
-          }
-        }
-      }
-    }
-
-    // Draw 3 position detection patterns
-    drawFinderPattern(0, 0); // Top-Left
-    drawFinderPattern(matrixSize - 7, 0); // Top-Right
-    drawFinderPattern(0, matrixSize - 7); // Bottom-Left
-
-    // Draw timing patterns
-    for (int i = 8; i < matrixSize - 8; i += 2) {
-      drawModule(6, i);
-      drawModule(i, 6);
-    }
-
-    // Deterministic pseudo-random seed from data string
-    int seed = 0;
-    for (int i = 0; i < data.length; i++) {
-      seed = (seed * 31 + data.codeUnitAt(i)) & 0x7FFFFFFF;
-    }
-
-    // Draw data bits (excluding finder patterns and center logo area)
-    for (int x = 0; x < matrixSize; x++) {
-      for (int y = 0; y < matrixSize; y++) {
-        if (x <= 7 && y <= 7) continue; // Top-Left
-        if (x >= matrixSize - 8 && y <= 7) continue; // Top-Right
-        if (x <= 7 && y >= matrixSize - 8) continue; // Bottom-Left
-
-        // Skip center 5x5 logo reservation area
-        if (x >= 8 && x <= 12 && y >= 8 && y <= 12) continue;
-
-        // Skip timing pattern lines
-        if (x == 6 || y == 6) continue;
-
-        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
-        if ((seed % 100) < 52) {
-          drawModule(x, y);
-        }
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _VektoluxQrPainter oldDelegate) =>
-      oldDelegate.data != data || oldDelegate.foregroundColor != foregroundColor;
 }
 
 /// Tokenized, cleanly aligned status & error banner for payment sheets.

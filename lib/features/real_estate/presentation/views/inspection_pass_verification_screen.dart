@@ -13,7 +13,6 @@ import 'package:geolocator/geolocator.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
-import '../../../auth/presentation/bloc/auth_bloc.dart';
 
 class InspectionPassVerificationScreen extends StatefulWidget {
   final String? initialPassId;
@@ -70,7 +69,6 @@ class _InspectionPassVerificationScreenState
     }
 
     final client = context.read<ConvexClientWrapper>();
-    final user = context.read<AuthBloc>().state.user;
 
     setState(() {
       _isVerifying = true;
@@ -95,8 +93,8 @@ class _InspectionPassVerificationScreenState
         'realEstateEscrow:verifyInspectionPass',
         args: {
           'passId': passId,
-          'agentId': user?.id,
-          'otpOrQrHash': otp,
+          'enteredOtp': otp,
+          'scannedQrHash': otp,
           if (lat != null) 'agentGpsLat': lat,
           if (lng != null) 'agentGpsLng': lng,
         },
@@ -261,8 +259,10 @@ class _InspectionPassVerificationScreenState
 
   Widget _buildSuccessView() {
     final res = _verificationResult!;
-    final agentPayout = res['agentDisbursedAmount'] ?? 85.0;
-    final landlordContact = res['unmaskedContact'] as Map<String, dynamic>?;
+    // Only what the server confirmed: the net fee it credited and the broad public location.
+    final agentPayout = (res['agentNetPaid'] as num?)?.toDouble() ?? 0.0;
+    final publicLocation = res['publicLocation']?.toString();
+    final serverMessage = res['message']?.toString();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -321,58 +321,39 @@ class _InspectionPassVerificationScreenState
         ),
         const SizedBox(height: 20),
 
-        // Unmasked Landlord Details
-        if (landlordContact != null) ...[
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0F172A),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.emerald.withValues(alpha: 0.4)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Icon(Icons.lock_open_rounded, color: AppColors.emerald, size: 20),
-                    SizedBox(width: 8),
-                    Text(
-                      'UNMASKED LANDLORD DIRECT CONTACT',
-                      style: TextStyle(
-                        color: AppColors.emeraldLight,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.8,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                _buildContactRow(
-                  Icons.person,
-                  'Landlord / Owner',
-                  landlordContact['name']?.toString() ?? 'Verified Owner',
-                ),
-                const SizedBox(height: 10),
-                _buildContactRow(
-                  Icons.phone,
-                  'Phone Number',
-                  landlordContact['phone']?.toString() ?? '+232-xx-xxx-xxx',
-                ),
-                if (landlordContact['address'] != null) ...[
-                  const SizedBox(height: 10),
-                  _buildContactRow(
-                    Icons.location_on,
-                    'Exact Plot / Street Address',
-                    landlordContact['address'].toString(),
+        // The owner's phone and exact address are never shown here: Vektolux coordinates the next step.
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: AppColors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.gray200),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.verified_user_rounded, color: AppColors.emeraldDark, size: 20),
+                  SizedBox(width: 8),
+                  Text(
+                    'NEXT STEPS',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 0.8, color: AppColors.obsidian),
                   ),
                 ],
-              ],
-            ),
+              ),
+              const SizedBox(height: 10),
+              if (publicLocation != null)
+                Text(publicLocation, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 6),
+              Text(
+                serverMessage ?? 'Vektolux will coordinate the next steps with the property owner.',
+                style: const TextStyle(fontSize: 12, color: AppColors.gray600),
+              ),
+            ],
           ),
-          const SizedBox(height: 24),
-        ],
+        ),
+        const SizedBox(height: 24),
 
         VxButton.primary(
           text: 'Verify Another Tour',
@@ -384,32 +365,6 @@ class _InspectionPassVerificationScreenState
               _otpController.clear();
             });
           },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildContactRow(IconData icon, String label, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 18, color: Colors.white70),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: const TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                value,
-                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700),
-              ),
-            ],
-          ),
         ),
       ],
     );

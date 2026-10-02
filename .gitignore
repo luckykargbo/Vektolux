@@ -44,3 +44,14 @@ ios/Flutter/app.flx
 ios/Flutter/flutter_assets/
 ios/Flutter/Flutter.framework
 ios/Flutter/Flutter.podspec
+
+*.keystore
+
+# Signing credentials and secrets: never committed
+android/key.properties
+*.jks
+*.p12
+*.p8
+*.pem
+*.mobileprovision
+*.cer

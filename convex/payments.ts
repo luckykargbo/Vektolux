@@ -1,8 +1,8 @@
 // convex/payments.ts
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Payment Processing: Mutations & Internal Functions
-// Handles: payment intent creation, webhook verification processing,
-//          wallet credit/debit, commission splitting, atomic ledger updates
+// Handles: wallet queries, booking escrow (server-decided split), Monime/Orange Money
+//          deposits and verification, payouts, atomic ledger updates (via walletCore)
 // ═══════════════════════════════════════════════════════════════════════
 
 import { v } from "convex/values";
@@ -20,7 +20,6 @@ import { Doc, Id } from "./_generated/dataModel";
 import {
   requirePositive,
   requireNonEmpty,
-  computeCommissionSplit,
 } from "./lib/validation";
 import {
   sanitizeSierraLeonePhone,
@@ -30,391 +29,42 @@ import {
   logGatewayError,
 } from "./lib/paymentErrors";
 import { verifyPassword } from "./auth";
+import { requireAuthenticatedUser, requireAdmin, requireSelf, requireAdminSession, requireParticipantOrAdmin } from "./lib/auth";
+import { verifyAndTrackPin } from "./lib/pin";
+import { activateSubscriptionFromDeposit } from "./subscriptions";
+import { fundVehicleOrderFromWallet, fundVehicleOrderFromExternal } from "./escrow";
+import { fundReContractFromWallet, fundReContractFromExternal, fundInspectionPassFromWallet } from "./realEstateEscrow";
+import { assertValidAmount, findByIdempotencyKey, fundEscrowFromExternalPayment, holdFunds, settleVerifiedDeposit, transferFunds, MAX_SINGLE_TRANSFER } from "./walletCore";
+import { bookingSplit, buyerConfirmCompletion, fundBookingFromWallet, releaseBookingEscrow } from "./lib/bookingEscrow";
 
-// ─── COMMISSION RATES (basis points) ─────────────────────────────────
-
-/** Commission rates per vertical, in basis points (100 bps = 1%). */
-const COMMISSION_RATES: Record<string, number> = {
-  // Real Estate
-  property_sale: 250, // 2.5%
-  long_term_rent: 500, // 5% first month
-  hourly_guesthouse: 1000, // 10%
-  // Mobility
-  ride_hailing: 1500, // 15% — default for rides
-  vehicle_rental: 800, // 8%
-  vehicle_sale: 300, // 3%
-};
-
-const DEFAULT_COMMISSION_BPS = 1500; // 15% fallback
-
-// ═══════════════════════════════════════════════════════════════════════
-//                     PAYMENT INTENT CREATION
-// ═══════════════════════════════════════════════════════════════════════
-
-/**
- * Create a payment intent for a booking/ride/purchase.
- * This records the intent in Convex and returns the data needed
- * for the HTTP action to initialize with Flutterwave/Paystack.
- */
-export const createPaymentIntent = mutation({
-  args: {
-    userId: v.id("users"),
-    amount: v.number(),
-    currency: v.string(),
-    paymentMethod: v.union(
-      v.literal("card"),
-      v.literal("mobile_money"),
-      v.literal("wallet"),
-      v.literal("crypto")
-    ),
-    gatewayProvider: v.union(
-      v.literal("flutterwave"),
-      v.literal("paystack")
-    ),
-    referenceType: v.string(), // "ride", "property_booking", "vehicle_purchase", etc.
-    referenceId: v.string(), // Convex document ID of the booking/ride
-    vendorId: v.id("users"),
-    idempotencyKey: v.string(),
-    commissionType: v.optional(v.string()), // Key into COMMISSION_RATES
-  },
-  handler: async (ctx, args) => {
-    // ── Input validation ──────────────────────────────────────────
-    requirePositive(args.amount, "amount");
-    requireNonEmpty(args.currency, "currency");
-    requireNonEmpty(args.referenceType, "referenceType");
-    requireNonEmpty(args.referenceId, "referenceId");
-    requireNonEmpty(args.idempotencyKey, "idempotencyKey");
-
-    // ── Idempotency check ─────────────────────────────────────────
-    const existingKey = await ctx.db
-      .query("idempotencyKeys")
-      .withIndex("by_key", (q) => q.eq("key", args.idempotencyKey))
-      .first();
-
-    if (existingKey) {
-      // Return existing payment intent ID
-      const existingIntent = await ctx.db
-        .query("paymentIntents")
-        .withIndex("by_idempotency", (q) =>
-          q.eq("idempotencyKey", args.idempotencyKey)
-        )
-        .first();
-
-      if (existingIntent) {
-        return {
-          paymentIntentId: existingIntent._id,
-          status: existingIntent.status,
-          alreadyExists: true,
-        };
-      }
-    }
-
-    // ── User validation ───────────────────────────────────────────
-    const user = await ctx.db.get(args.userId);
-    if (!user) throw new Error("User not found");
-    if (!user.isActive) throw new Error("User account is deactivated");
-
-    const vendor = await ctx.db.get(args.vendorId);
-    if (!vendor) throw new Error("Vendor not found");
-
-    // ── Commission calculation ────────────────────────────────────
-    const commissionKey = args.commissionType ?? args.referenceType;
-    const feeBps = COMMISSION_RATES[commissionKey] ?? DEFAULT_COMMISSION_BPS;
-    const { platformFee, vendorPayout } = computeCommissionSplit(
-      args.amount,
-      feeBps
-    );
-
-    // ── Create payment intent ─────────────────────────────────────
-    const now = Date.now();
-    const paymentIntentId = await ctx.db.insert("paymentIntents", {
-      userId: args.userId,
-      amount: args.amount,
-      currency: args.currency.toUpperCase(),
-      paymentMethod: args.paymentMethod,
-      gatewayProvider: args.gatewayProvider,
-      referenceType: args.referenceType,
-      referenceId: args.referenceId,
-      platformFeeBps: feeBps,
-      platformFeeAmount: platformFee,
-      vendorPayoutAmount: vendorPayout,
-      vendorId: args.vendorId,
-      status: "pending",
-      idempotencyKey: args.idempotencyKey,
-      webhookVerified: false,
-      updatedAt: now,
-    });
-
-    // ── Store idempotency key ─────────────────────────────────────
-    await ctx.db.insert("idempotencyKeys", {
-      key: args.idempotencyKey,
-      result: paymentIntentId,
-      createdAt: now,
-      expiresAt: now + 24 * 60 * 60 * 1000, // 24h TTL
-    });
-
-    return {
-      paymentIntentId,
-      amount: args.amount,
-      currency: args.currency.toUpperCase(),
-      platformFee,
-      vendorPayout,
-      feeBps,
-      status: "pending" as const,
-      alreadyExists: false,
-    };
-  },
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-//             WEBHOOK PROCESSING (called by http.ts)
-// ═══════════════════════════════════════════════════════════════════════
-
-/**
- * Internal mutation: Process a verified payment webhook.
- * Atomically updates:
- *   1. PaymentIntent status
- *   2. Vendor wallet balance (credit payout)
- *   3. Platform wallet (credit commission)
- *   4. Transaction ledger entries
- *   5. Associated booking/ride payment status
- *
- * Called only from the HTTP webhook handler after signature verification.
- */
-export const processVerifiedPayment = internalMutation({
-  args: {
-    gatewayProvider: v.string(),
-    gatewayReference: v.string(),
-    gatewayStatus: v.string(),
-    amountPaid: v.number(),
-    currency: v.string(),
-    paymentIntentId: v.id("paymentIntents"),
-  },
-  handler: async (ctx, args) => {
-    const now = Date.now();
-
-    // ── Fetch payment intent ──────────────────────────────────────
-    const intent = await ctx.db.get(args.paymentIntentId);
-    if (!intent) throw new Error("Payment intent not found");
-
-    // ── Guard: already processed ──────────────────────────────────
-    if (intent.status === "completed") {
-      return { success: true, alreadyProcessed: true };
-    }
-    if (intent.status === "failed" || intent.status === "refunded") {
-      throw new Error(`Payment intent is in terminal status: ${intent.status}`);
-    }
-
-    // ── Verify amount matches (within 1% tolerance for FX) ───────
-    const tolerance = intent.amount * 0.01;
-    if (Math.abs(args.amountPaid - intent.amount) > tolerance) {
-      await ctx.db.patch(args.paymentIntentId, {
-        status: "failed",
-        failureReason: `Amount mismatch: expected ${intent.amount}, received ${args.amountPaid}`,
-        updatedAt: now,
-      });
-      throw new Error(
-        `Amount mismatch: expected ${intent.amount}, got ${args.amountPaid}`
-      );
-    }
-
-    // ── Handle payment failure ────────────────────────────────────
-    if (
-      args.gatewayStatus === "failed" ||
-      args.gatewayStatus === "cancelled"
-    ) {
-      await ctx.db.patch(args.paymentIntentId, {
-        status: "failed",
-        gatewayReference: args.gatewayReference,
-        failureReason: `Gateway status: ${args.gatewayStatus}`,
-        webhookVerified: true,
-        updatedAt: now,
-      });
-      return { success: false, reason: args.gatewayStatus };
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    //    ATOMIC UPDATES (all within single Convex mutation = ACID)
-    // ═══════════════════════════════════════════════════════════════
-
-    // 1. Update payment intent
-    await ctx.db.patch(args.paymentIntentId, {
-      status: "completed",
-      gatewayReference: args.gatewayReference,
-      paidAt: now,
-      webhookVerified: true,
-      updatedAt: now,
-    });
-
-    // 2. Credit vendor wallet
-    const vendorWallet = await ctx.db
-      .query("walletBalances")
-      .withIndex("by_user_currency", (q) =>
-        q.eq("userId", intent.vendorId).eq("currency", intent.currency)
-      )
-      .first();
-
-    let vendorWalletId: Id<"walletBalances">;
-
-    if (vendorWallet) {
-      vendorWalletId = vendorWallet._id;
-      await ctx.db.patch(vendorWallet._id, {
-        availableBalance:
-          vendorWallet.availableBalance + intent.vendorPayoutAmount,
-        updatedAt: now,
-      });
-    } else {
-      // Create wallet on first payment
-      vendorWalletId = await ctx.db.insert("walletBalances", {
-        userId: intent.vendorId,
-        availableBalance: intent.vendorPayoutAmount,
-        pendingBalance: 0,
-        currency: intent.currency,
-        updatedAt: now,
-      });
-    }
-
-    // 3. Record vendor payout transaction
-    await ctx.db.insert("transactions", {
-      walletId: vendorWalletId,
-      userId: intent.vendorId,
-      type: "payout",
-      amount: intent.vendorPayoutAmount,
-      currency: intent.currency,
-      referenceType: intent.referenceType,
-      referenceId: intent.referenceId,
-      gatewayProvider: args.gatewayProvider,
-      gatewayReference: args.gatewayReference,
-      status: "completed",
-      description: `Payout for ${intent.referenceType} #${intent.referenceId}`,
-      updatedAt: now,
-    });
-
-    // 4. Record platform commission transaction
-    // Platform uses a "system" user or the admin's wallet
-    // For simplicity, we record it as a commission transaction on the vendor wallet
-    await ctx.db.insert("transactions", {
-      walletId: vendorWalletId,
-      userId: intent.vendorId,
-      type: "commission",
-      amount: intent.platformFeeAmount,
-      currency: intent.currency,
-      referenceType: intent.referenceType,
-      referenceId: intent.referenceId,
-      gatewayProvider: args.gatewayProvider,
-      gatewayReference: args.gatewayReference,
-      status: "completed",
-      description: `Platform commission (${intent.platformFeeBps / 100}%) on ${intent.referenceType}`,
-      updatedAt: now,
-    });
-
-    // 5. Update associated booking/ride payment status
-    await updateBookingPaymentStatus(
-      ctx,
-      intent.referenceType,
-      intent.referenceId,
-      args.gatewayReference,
-      now
-    );
-
-    // 6. Schedule blockchain logging (non-blocking)
-    await ctx.scheduler.runAfter(0, internal.blockchain.logTransactionOnChain, {
-      paymentIntentId: args.paymentIntentId,
-      dealType: intent.referenceType,
-      buyerId: intent.userId,
-      sellerId: intent.vendorId,
-      amount: intent.amount,
-      currency: intent.currency,
-      gatewayReference: args.gatewayReference,
-    });
-
-    return {
-      success: true,
-      alreadyProcessed: false,
-      vendorPayout: intent.vendorPayoutAmount,
-      platformFee: intent.platformFeeAmount,
-    };
-  },
-});
-
-/**
- * Helper: Update the payment status on the associated booking or ride.
- */
-async function updateBookingPaymentStatus(
-  ctx: { db: any },
-  referenceType: string,
-  referenceId: string,
-  paymentReference: string,
-  now: number
-) {
-  // 1. Check the universal bookings collection
-  const bookingNorm = ctx.db.normalizeId("bookings", referenceId);
-  if (bookingNorm) {
-    const booking = await ctx.db.get(bookingNorm);
-    if (booking) {
-      await ctx.db.patch(bookingNorm, {
-        status: "confirmed",
-        paymentStatus: "completed",
-        paymentReference,
-        flwRef: paymentReference,
-        updatedAt: now,
-      });
-      return;
-    }
-  }
-
-  // 2. Check bookings by txRef
-  const bookingByTx = await ctx.db
-    .query("bookings")
-    .withIndex("by_tx_ref", (q: any) => q.eq("txRef", referenceId))
-    .first();
-  if (bookingByTx) {
-    await ctx.db.patch(bookingByTx._id, {
-      status: "confirmed",
-      paymentStatus: "completed",
-      paymentReference,
-      flwRef: paymentReference,
-      updatedAt: now,
-    });
-    return;
-  }
-
-  // 3. Fallback to realEstateBookings or rideRequests
-  switch (referenceType) {
-    case "property_booking":
-    case "hourly_guesthouse": {
-      const bId = ctx.db.normalizeId("realEstateBookings", referenceId);
-      if (bId) {
-        const booking = await ctx.db.get(bId);
-        if (booking) {
-          await ctx.db.patch(booking._id, {
-            paymentStatus: "completed",
-            paymentReference,
-            updatedAt: now,
-          });
-        }
-      }
-      break;
-    }
-    default:
-      break;
-  }
+// ─── GATEWAY SECRETS & CONFIGURATION ────────────────────────────────
+function getMoniMeConfig(): { spaceId: string; accessToken: string; apiBaseUrl: string } {
+  const spaceId = (process.env.MONIME_SPACE_ID || "").trim();
+  const accessToken = (process.env.MONIME_ACCESS_TOKEN || process.env.MONIME_API_KEY || "").trim();
+  const apiBaseUrl = (process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1").trim();
+  return { spaceId, accessToken, apiBaseUrl };
 }
 
+
+// (The Paystack/Flutterwave payment-intent path — createPaymentIntent, processVerifiedPayment,
+// confirmPayment, /payments/webhook — was removed: no such provider was configured and its
+// commission was chosen by the client. Bookings are paid via createEscrowPayment or Monime.)
+
 // ═══════════════════════════════════════════════════════════════════════
-//                 IN-APP FLUTTERWAVE INITIALIZATION
+//                 IN-APP BOOKING PAYMENT INITIALIZATION
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
- * Initialize a Flutterwave checkout session for an in-app booking.
+ * Reserves the booking payment reference (no hosted-checkout provider is configured; see body).
  */
 export const initializePayment = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     bookingId: v.string(),
-    txRef: v.string(),
-    amount: v.number(),
+    txRef: v.optional(v.string()), // ignored: the server owns the reference
+    amount: v.optional(v.number()), // ignored: the booking decides the amount
     currency: v.optional(v.string()),
-    customerEmail: v.string(),
+    customerEmail: v.optional(v.string()),
     customerPhone: v.optional(v.string()),
     customerName: v.optional(v.string()),
     paymentOptions: v.optional(v.string()),
@@ -422,130 +72,42 @@ export const initializePayment = mutation({
   },
   returns: v.object({
     success: v.boolean(),
-    paymentLink: v.string(),
+    paymentLink: v.optional(v.string()),
     txRef: v.string(),
+    providerConfigured: v.boolean(),
+    message: v.string(),
   }),
   handler: async (ctx, args) => {
+    const { userId } = await requireSelf(ctx, args.sessionToken);
     const bookingNorm = ctx.db.normalizeId("bookings", args.bookingId);
     if (!bookingNorm) throw new Error("Booking not found");
-
     const booking = await ctx.db.get(bookingNorm);
-    if (!booking) throw new Error("Booking not found");
+    if (!booking || booking.buyerId !== (userId as string)) throw new Error("Booking not found");
+    if (booking.paymentStatus === "completed") throw new Error("This booking has already been paid.");
 
-    const currency = args.currency ?? "SLE";
-    const hostedCheckoutUrl = `https://checkout.flutterwave.com/v3/hosted/pay/${args.txRef}?amount=${args.amount}&currency=${currency}`;
+    // Server-generated reference (a client can no longer overwrite a booking's reference).
+    let txRef = booking.txRef;
+    if (!txRef) {
+      const rnd = new Uint8Array(8);
+      crypto.getRandomValues(rnd);
+      txRef = `VKB-${Array.from(rnd).map((x) => x.toString(16).padStart(2, "0")).join("")}`;
+      await ctx.db.patch(bookingNorm, { txRef, updatedAt: Date.now() });
+    }
 
-    await ctx.db.patch(bookingNorm, {
-      txRef: args.txRef,
-      updatedAt: Date.now(),
-    });
-
+    // PROVIDER INTEGRATION POINT: no card/hosted-checkout provider is configured for bookings, so
+    // no payment link is fabricated. The booking is paid from the wallet (payments:createEscrowPayment)
+    // or by a verified Mobile Money payment (payments:initiateMoniMePayment).
     return {
-      success: true,
-      paymentLink: hostedCheckoutUrl,
-      txRef: args.txRef,
+      success: false,
+      txRef,
+      providerConfigured: false,
+      message:
+        "Direct card checkout is not configured yet. Pay from your Vektolux wallet or use Mobile Money.",
     };
   },
 });
 
-/**
- * Complete payment confirmation (via webhook, callback, or in-app payment flow).
- * Atomically marks booking as confirmed, calculates 15% platform fee, and credits 85% to vendor.
- */
-export const confirmPayment = mutation({
-  args: {
-    bookingId: v.string(),
-    txRef: v.string(),
-    gatewayReference: v.optional(v.string()),
-  },
-  returns: v.boolean(),
-  handler: async (ctx, args) => {
-    const bookingNorm = ctx.db.normalizeId("bookings", args.bookingId);
-    if (!bookingNorm) throw new Error("Booking not found");
 
-    const booking = await ctx.db.get(bookingNorm);
-    if (!booking) throw new Error("Booking not found");
-
-    const now = Date.now();
-    const flwRef =
-      args.gatewayReference ??
-      `FLW_${now}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-
-    // 1. Atomically mark booking confirmed
-    await ctx.db.patch(bookingNorm, {
-      status: "confirmed",
-      paymentStatus: "completed",
-      paymentReference: flwRef,
-      flwRef,
-      updatedAt: now,
-    });
-
-    // 2. Credit 85% vendor payout & record 15% platform commission
-    const vendorNorm = ctx.db.normalizeId("users", booking.vendorId);
-    if (vendorNorm && booking.totalAmount > 0) {
-      const vendorPayout = Math.round(booking.totalAmount * 0.85);
-      const platformCommission = booking.totalAmount - vendorPayout;
-
-      let wallet = await ctx.db
-        .query("walletBalances")
-        .withIndex("by_user_currency", (q) =>
-          q.eq("userId", vendorNorm).eq("currency", booking.currency)
-        )
-        .first();
-
-      let walletId: Id<"walletBalances">;
-      if (wallet) {
-        walletId = wallet._id;
-        await ctx.db.patch(wallet._id, {
-          availableBalance: wallet.availableBalance + vendorPayout,
-          updatedAt: now,
-        });
-      } else {
-        walletId = await ctx.db.insert("walletBalances", {
-          userId: vendorNorm,
-          availableBalance: vendorPayout,
-          pendingBalance: 0,
-          currency: booking.currency,
-          updatedAt: now,
-        });
-      }
-
-      // Record vendor payout transaction
-      await ctx.db.insert("transactions", {
-        walletId,
-        userId: vendorNorm,
-        type: "payout",
-        amount: vendorPayout,
-        currency: booking.currency,
-        referenceType: booking.bookingType,
-        referenceId: booking._id,
-        gatewayProvider: "flutterwave",
-        gatewayReference: flwRef,
-        status: "completed",
-        description: `Vendor payout (85%) for ${booking.listingTitle}`,
-        updatedAt: now,
-      });
-
-      // Record platform commission transaction
-      await ctx.db.insert("transactions", {
-        walletId,
-        userId: vendorNorm,
-        type: "commission",
-        amount: platformCommission,
-        currency: booking.currency,
-        referenceType: booking.bookingType,
-        referenceId: booking._id,
-        gatewayProvider: "flutterwave",
-        gatewayReference: flwRef,
-        status: "completed",
-        description: `Platform commission (15%) on ${booking.listingTitle}`,
-        updatedAt: now,
-      });
-    }
-
-    return true;
-  },
-});
 
 // ═══════════════════════════════════════════════════════════════════════
 //                    WALLET QUERIES & MUTATIONS
@@ -556,35 +118,17 @@ export const confirmPayment = mutation({
  */
 export const getWalletBalance = query({
   args: {
-    userId: v.string(),
+    userId: v.optional(v.string()),
     currency: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const currency = args.currency ?? "SLE";
-    let userConvexId = ctx.db.normalizeId("users", args.userId);
-
-    if (!userConvexId) {
-      const u = await ctx.db
-        .query("users")
-        .withIndex("by_email", (q) => q.eq("email", args.userId))
-        .first();
-      if (u) userConvexId = u._id;
-    }
-
-    if (!userConvexId) {
-      return {
-        availableBalance: 0.0,
-        pendingBalance: 0.0,
-        escrowLockedBalance: 0.0,
-        escrowBalance: 0.0,
-        currency,
-        exists: false,
-      };
-    }
+    const { userId: userConvexId } = await requireSelf(ctx, args.sessionToken, args.userId);
 
     const wallet = await ctx.db
       .query("walletBalances")
-      .withIndex("by_user", (q) => q.eq("userId", userConvexId!))
+      .withIndex("by_user", (q) => q.eq("userId", userConvexId))
       .first();
 
     if (!wallet) {
@@ -616,7 +160,8 @@ export const getWalletBalance = query({
  */
 export const getTransactionHistory = query({
   args: {
-    userId: v.string(),
+    userId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     limit: v.optional(v.number()),
     type: v.optional(
       v.union(
@@ -632,11 +177,8 @@ export const getTransactionHistory = query({
     ),
   },
   handler: async (ctx, args) => {
-    const limit = args.limit ?? 50;
-    const userConvexId = ctx.db.normalizeId("users", args.userId);
-    if (!userConvexId) {
-      return { transactions: [], count: 0 };
-    }
+    const limit = Math.min(args.limit ?? 50, 100);
+    const { userId: userConvexId } = await requireSelf(ctx, args.sessionToken, args.userId);
 
     let transactionsQuery;
 
@@ -658,154 +200,9 @@ export const getTransactionHistory = query({
   },
 });
 
-/**
- * Top up user wallet balance via Mobile Money (Orange Money, Africell Money) or Card.
- * Atomically creates or updates the user's wallet and inserts a ledger record.
- * PROTECTED: internalMutation only callable by verified webhook or admin tasks.
- */
-export const topUpWallet = internalMutation({
-  args: {
-    userId: v.string(),
-    amount: v.number(),
-    currency: v.optional(v.string()),
-    provider: v.optional(v.string()),
-    reference: v.optional(v.string()),
-    agentNumber: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    if (args.amount <= 0) throw new Error("Top up amount must be positive");
-    const userNorm = ctx.db.normalizeId("users", args.userId);
-    if (!userNorm) throw new Error("User not found");
+// (topUpWallet removed: unused; it credited balances without a verified payment or ledger entry)
 
-    const currency = args.currency ?? "SLE";
-    const now = Date.now();
-
-    let wallet = await ctx.db
-      .query("walletBalances")
-      .withIndex("by_user_currency", (q) =>
-        q.eq("userId", userNorm).eq("currency", currency)
-      )
-      .first();
-
-    let walletId: Id<"walletBalances">;
-    if (wallet) {
-      walletId = wallet._id;
-      await ctx.db.patch(wallet._id, {
-        availableBalance: wallet.availableBalance + args.amount,
-        updatedAt: now,
-      });
-    } else {
-      walletId = await ctx.db.insert("walletBalances", {
-        userId: userNorm,
-        availableBalance: args.amount,
-        pendingBalance: 0,
-        currency,
-        updatedAt: now,
-      });
-    }
-
-    const provider = args.provider ?? "mobile_money";
-    const ref =
-      args.reference ??
-      `TOPUP_${now}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-
-    await ctx.db.insert("transactions", {
-      walletId,
-      userId: userNorm,
-      type: "top_up",
-      amount: args.amount,
-      currency,
-      gatewayProvider: provider,
-      gatewayReference: ref,
-      agentNumber: args.agentNumber,
-      status: "completed",
-      description: `Wallet top up of ${args.amount} ${currency} via ${provider}`,
-      updatedAt: now,
-    });
-
-    const updated = await ctx.db.get(walletId);
-    return {
-      success: true,
-      availableBalance: updated?.availableBalance ?? args.amount,
-      currency,
-    };
-  },
-});
-
-/**
- * Atomically deduct from user's available wallet balance.
- * Returns failure if balance is insufficient.
- */
-export const deductWalletBalance = mutation({
-  args: {
-    userId: v.string(),
-    amount: v.number(),
-    currency: v.optional(v.string()),
-    description: v.optional(v.string()),
-    referenceType: v.optional(v.string()),
-    referenceId: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    if (args.amount <= 0) throw new Error("Deduction amount must be positive");
-    const userNorm = ctx.db.normalizeId("users", args.userId);
-    if (!userNorm) throw new Error("User not found");
-
-    const currency = args.currency ?? "SLE";
-    const now = Date.now();
-
-    const wallet = await ctx.db
-      .query("walletBalances")
-      .withIndex("by_user_currency", (q) =>
-        q.eq("userId", userNorm).eq("currency", currency)
-      )
-      .first();
-
-    if (!wallet || wallet.availableBalance < args.amount) {
-      throw new Error(
-        `Insufficient wallet balance. Available: ${wallet?.availableBalance ?? 0} ${currency}, required: ${args.amount} ${currency}`
-      );
-    }
-
-    const newBalance = wallet.availableBalance - args.amount;
-    await ctx.db.patch(wallet._id, {
-      availableBalance: newBalance,
-      updatedAt: now,
-    });
-
-    await ctx.db.insert("transactions", {
-      walletId: wallet._id,
-      userId: userNorm,
-      type: "payment",
-      amount: args.amount,
-      currency,
-      referenceType: args.referenceType,
-      referenceId: args.referenceId,
-      gatewayProvider: "wallet",
-      status: "completed",
-      description:
-        args.description ?? `Wallet payment of ${args.amount} ${currency}`,
-      updatedAt: now,
-    });
-
-    return {
-      success: true,
-      remainingBalance: newBalance,
-      currency,
-    };
-  },
-});
-
-/**
- * Get a payment intent by ID.
- */
-export const getPaymentIntent = query({
-  args: {
-    paymentIntentId: v.id("paymentIntents"),
-  },
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.paymentIntentId);
-  },
-});
+// (deductWalletBalance removed: unused; wallet debits go through walletCore)
 
 /**
  * Internal: Mark a payment intent with a blockchain tx hash after on-chain logging.
@@ -823,28 +220,6 @@ export const updateBlockchainHash = internalMutation({
   },
 });
 
-/**
- * Internal: Update payment intent with gateway reference and payment link.
- * Called by http.ts POST /payments/initialize after gateway returns a checkout URL.
- */
-export const updateGatewayReference = internalMutation({
-  args: {
-    paymentIntentId: v.id("paymentIntents"),
-    gatewayReference: v.string(),
-    gatewayPaymentLink: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const intent = await ctx.db.get(args.paymentIntentId);
-    if (!intent) throw new Error("Payment intent not found");
-
-    await ctx.db.patch(args.paymentIntentId, {
-      gatewayReference: args.gatewayReference,
-      gatewayPaymentLink: args.gatewayPaymentLink,
-      status: "processing",
-      updatedAt: Date.now(),
-    });
-  },
-});
 
 /**
  * Internal query to fetch a user's blockchain wallet address.
@@ -877,267 +252,160 @@ async function generateDeterministicHash(payload: string): Promise<string> {
 }
 
 /**
- * Lock funds in Vektolux Escrow with customizable partner revenue split.
- * Generates cryptographic blockchain audit hash and records on ledger.
+ * Pays a booking from the buyer's wallet into escrow. The amount and the vendor/platform split are
+ * decided by the SERVER from the booking (fee snapshot, default 85/15); a client split is ignored.
  */
 export const createEscrowPayment = mutation({
   args: {
-    buyerId: v.string(),
-    vendorId: v.string(),
-    amount: v.number(),
+    sessionToken: v.optional(v.string()),
+    buyerId: v.optional(v.string()), // consistency check only; the buyer is the authenticated user
+    vendorId: v.string(), // consistency check only
+    amount: v.number(), // consistency check only: must equal the booking total
     currency: v.optional(v.string()),
-    referenceType: v.string(), // "vehicle_sale", "vehicle_rental", "property_booking", "hourly_guesthouse", "ride"
-    referenceId: v.string(),
-    partnerSplitPercent: v.optional(v.number()), // default 60%
-    agentNumber: v.optional(v.string()), // Orange Money / Africell agent code or phone
-    momoProvider: v.optional(v.string()), // "orange_money" or "africell_money"
-    idempotencyKey: v.optional(v.string()),
+    referenceType: v.optional(v.string()), // ignored: taken from the booking
+    referenceId: v.string(), // the booking id
+    partnerSplitPercent: v.optional(v.number()), // IGNORED (kept so older app builds still validate)
+    agentNumber: v.optional(v.string()), // ignored
+    momoProvider: v.optional(v.string()),
+    idempotencyKey: v.optional(v.string()), // ignored: one escrow per booking
   },
   handler: async (ctx, args) => {
-    requirePositive(args.amount, "amount");
+    // Escrow is funded ONLY from the authenticated buyer's real available balance.
+    const { userId: buyerId } = await requireSelf(ctx, args.sessionToken, args.buyerId);
+    const amount = assertValidAmount(args.amount);
 
-    const currency = (args.currency ?? "SLE").toUpperCase();
-    const splitPercent = args.partnerSplitPercent ?? 60; // 60% partner, 40% platform fee
-    const partnerAmount = Math.round((args.amount * splitPercent) / 100);
-    const platformFeeAmount = args.amount - partnerAmount;
+    // The deal itself is the source of truth for who pays whom and how much.
+    const bookingId = ctx.db.normalizeId("bookings", args.referenceId);
+    const booking = bookingId ? await ctx.db.get(bookingId) : null;
+    if (!booking) throw new Error("Booking not found.");
+    if (booking.buyerId !== (buyerId as string)) throw new Error("Unauthorized: This booking belongs to another user.");
+    if (booking.vendorId !== args.vendorId) throw new Error("Vendor does not match this booking.");
+    if (Math.abs(booking.totalAmount - amount) > 0.01) throw new Error("Amount does not match the booking total.");
 
-    let buyerId = ctx.db.normalizeId("users", args.buyerId);
-    let buyer = buyerId ? await ctx.db.get(buyerId) : null;
-    if (!buyer) {
-      buyer = await ctx.db.query("users").first();
-      buyerId = buyer?._id ?? null;
-    }
-    if (!buyer || !buyer.isActive) throw new Error("Buyer account not found or deactivated");
-
-    let vendorId = ctx.db.normalizeId("users", args.vendorId);
-    let vendor = vendorId ? await ctx.db.get(vendorId) : null;
-    if (!vendor) {
-      vendor = await ctx.db.query("users").filter((q) => q.neq(q.field("_id"), buyerId)).first() ?? buyer;
-      vendorId = vendor._id;
-    }
-
-    const now = Date.now();
-    const txNonce = `${buyerId}-${vendorId}-${args.amount}-${args.referenceId}-${now}`;
-    const blockchainTxHash = await generateDeterministicHash(txNonce);
-
-    // Ensure buyer wallet exists
-    let buyerWallet = await ctx.db
-      .query("walletBalances")
-      .withIndex("by_user_currency", (q) =>
-        q.eq("userId", buyerId!).eq("currency", currency)
-      )
-      .first();
-
-    if (!buyerWallet) {
-      const wId = await ctx.db.insert("walletBalances", {
-        userId: buyerId!,
-        availableBalance: 0,
-        pendingBalance: 0,
-        currency,
-        updatedAt: now,
-      });
-      buyerWallet = await ctx.db.get(wId);
-    }
-
-    // Insert escrow_lock ledger record
-      const effectiveAgentNumber = args.agentNumber ?? (args.momoProvider ? "001" : undefined);
-      const transactionId = await ctx.db.insert("transactions", {
-        walletId: buyerWallet!._id,
-        userId: buyerId!,
-        counterpartyId: vendorId ?? undefined,
-        type: "escrow_lock",
-        amount: args.amount,
-        currency,
-        referenceType: args.referenceType,
-        referenceId: args.referenceId,
-        gatewayProvider: args.momoProvider ?? "mobile_money",
-        gatewayReference: effectiveAgentNumber ? `AGENT_${effectiveAgentNumber}` : `MOMO_${now}`,
-        agentNumber: effectiveAgentNumber,
-        partnerSplitPercent: splitPercent,
-        partnerAmount,
-        platformFeeAmount,
-        escrowStatus: "locked",
-        blockchainTxHash,
-        status: "completed",
-        description: `Escrow locked for ${args.referenceType} (#${args.referenceId}) with ${splitPercent}% partner split via ${effectiveAgentNumber ? "Mobile Money Agent #" + effectiveAgentNumber : "Mobile Money"}`,
-        updatedAt: now,
-      });
-
-    // Update universal booking if applicable
-    const bookingNorm = ctx.db.normalizeId("bookings", args.referenceId);
-    if (bookingNorm) {
-      await ctx.db.patch(bookingNorm, {
-        status: "confirmed",
-        paymentStatus: "completed",
-        escrowId: transactionId,
-        blockchainTxHash,
-        updatedAt: now,
-      });
-    }
-
+    const held = await fundBookingFromWallet(ctx, booking._id);
+    const split = bookingSplit(booking);
     return {
       success: true,
-      transactionId,
-      blockchainTxHash,
-      totalAmount: args.amount,
-      currency,
-      partnerAmount,
-      platformFeeAmount,
-      partnerSplitPercent: splitPercent,
-      agentNumber: args.agentNumber,
+      duplicate: held.duplicate ?? false,
+      transactionId: held.transactionDocId ?? null,
+      totalAmount: split.total,
+      currency: (booking.currency || "SLE").toUpperCase(),
+      partnerAmount: split.vendorAmount,
+      platformFeeAmount: split.platformFee,
+      availableBalanceAfter: held.availableBalance,
+      escrowBalanceAfter: held.escrowBalance,
       escrowStatus: "locked",
     };
   },
 });
 
+
 /**
- * Release escrow funds upon inspection/meetup verification or service completion.
- * Automatically disburses the partner share (e.g. 60%) to partner wallet and fee to treasury.
+ * Releases a MARKETPLACE BOOKING's escrow to the vendor. Kept for older app builds; it follows the
+ * booking settlement rules (lib/bookingEscrow.ts): the BUYER may confirm once the booking has
+ * started, an admin may release a held booking; the vendor never can. Vehicle, property and pass
+ * escrows have their own state machines and are refused here.
  */
 export const releaseEscrowWithSplit = mutation({
   args: {
     transactionId: v.id("transactions"),
-    approverId: v.id("users"),
+    approverId: v.optional(v.id("users")), // ignored: the approver is the authenticated caller
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const tx = await ctx.db.get(args.transactionId);
     if (!tx) throw new Error("Transaction not found");
     if (tx.type !== "escrow_lock") throw new Error("Transaction is not an escrow lock");
-    if (tx.escrowStatus !== "locked") {
-      throw new Error(`Escrow is already ${tx.escrowStatus ?? "resolved"}`);
+
+    // Only the paying buyer (confirming delivery) or an admin.
+    const who = await requireParticipantOrAdmin(ctx, args.sessionToken, [tx.userId]);
+
+    const bookingId = tx.referenceId ? ctx.db.normalizeId("bookings", tx.referenceId) : null;
+    const booking = bookingId ? await ctx.db.get(bookingId) : null;
+    if (!booking || booking.escrowId !== (tx._id as string) || booking.buyerId !== (tx.userId as string)) {
+      throw new Error("This escrow is not a marketplace booking escrow and cannot be released here.");
     }
+    if (tx.escrowStatus !== "locked") throw new Error(`Escrow is already ${tx.escrowStatus ?? "resolved"}`);
 
-    const now = Date.now();
-    const partnerAmount = tx.partnerAmount ?? Math.round((tx.amount * 60) / 100);
-    const platformFeeAmount = tx.platformFeeAmount ?? (tx.amount - partnerAmount);
-
-    // Update original transaction status to released
-    await ctx.db.patch(args.transactionId, {
-      escrowStatus: "released",
-      updatedAt: now,
-    });
-
-    // Credit vendor wallet
-    if (tx.counterpartyId) {
-      let vendorWallet = await ctx.db
-        .query("walletBalances")
-        .withIndex("by_user_currency", (q) =>
-          q.eq("userId", tx.counterpartyId!).eq("currency", tx.currency)
-        )
-        .first();
-
-      let vendorWalletId = vendorWallet?._id;
-      if (vendorWallet) {
-        await ctx.db.patch(vendorWallet._id, {
-          availableBalance: vendorWallet.availableBalance + partnerAmount,
-          updatedAt: now,
-        });
-      } else {
-        vendorWalletId = await ctx.db.insert("walletBalances", {
-          userId: tx.counterpartyId,
-          availableBalance: partnerAmount,
-          pendingBalance: 0,
-          currency: tx.currency,
-          updatedAt: now,
-        });
-      }
-
-      // Record escrow release payout transaction for the vendor
-      await ctx.db.insert("transactions", {
-        walletId: vendorWalletId!,
-        userId: tx.counterpartyId,
-        counterpartyId: tx.userId,
-        type: "escrow_release",
-        amount: partnerAmount,
-        currency: tx.currency,
-        referenceType: tx.referenceType,
-        referenceId: tx.referenceId,
-        blockchainTxHash: tx.blockchainTxHash,
-        partnerSplitPercent: tx.partnerSplitPercent,
-        partnerAmount,
-        platformFeeAmount,
-        escrowStatus: "released",
-        status: "completed",
-        description: `Escrow payout released: ${tx.partnerSplitPercent ?? 60}% disbursement for ${tx.referenceType ?? "deal"}`,
-        updatedAt: now,
-      });
-    }
-
+    const r =
+      String(who.userId) === booking.buyerId
+        ? await buyerConfirmCompletion(ctx, booking, booking.buyerId)
+        : await releaseBookingEscrow(ctx, booking, "admin");
     return {
       success: true,
-      releasedPartnerAmount: partnerAmount,
-      platformFeeAmount,
+      releasedPartnerAmount: r.partnerAmount,
+      platformFeeAmount: r.platformFeeAmount,
       blockchainTxHash: tx.blockchainTxHash,
       status: "released",
     };
   },
 });
 
+
 /**
  * Configure or update 4-digit Wallet Security PIN.
  */
 export const setWalletPin = mutation({
   args: {
-    userId: v.string(),
+    userId: v.optional(v.string()), // consistency check only
+    sessionToken: v.optional(v.string()),
     pin: v.string(),
+    currentPin: v.optional(v.string()), // required when a PIN already exists
   },
   handler: async (ctx, args) => {
-    if (args.pin.length < 4 || args.pin.length > 6) {
-      throw new Error("PIN must be between 4 and 6 digits");
+    // The PIN can only be set for the AUTHENTICATED user (this used to accept any userId,
+    // letting anyone overwrite another user's PIN).
+    const { userId, user } = await requireSelf(ctx, args.sessionToken, args.userId);
+    if (!/^\d{4,6}$/.test(args.pin)) {
+      throw new Error("PIN must be 4 to 6 digits");
     }
-
-    const userId = ctx.db.normalizeId("users", args.userId);
-    if (!userId) throw new Error("Invalid user ID");
-
+    // Changing an existing PIN requires the current PIN (with lockout). A failure is RETURNED
+    // so the attempt counter persists.
+    if (user.walletPinHash) {
+      const check = await verifyAndTrackPin(ctx, user, args.currentPin);
+      if (!check.ok) return { success: false, errorCode: check.code, message: check.message };
+    }
     const pinHash = await generateDeterministicHash(`wallet_pin_${userId}_${args.pin}`);
     await ctx.db.patch(userId, {
       walletPinHash: pinHash,
+      pinFailedAttempts: 0,
+      pinLockedUntil: undefined,
       updatedAt: Date.now(),
     });
-
     return { success: true };
   },
 });
+
 
 /**
  * Verify 4-digit Wallet Security PIN before checkout or release.
  */
 export const verifyWalletPin = query({
-  args: {
-    userId: v.string(),
-    pin: v.string(),
-  },
+  args: { userId: v.optional(v.string()), sessionToken: v.optional(v.string()), pin: v.string() },
   handler: async (ctx, args) => {
-    const userId = ctx.db.normalizeId("users", args.userId);
-    if (!userId) return { valid: false, hasPin: false };
-
-    const user = await ctx.db.get(userId);
-    if (!user) return { valid: false, hasPin: false };
-    if (!user.walletPinHash) return { valid: true, hasPin: false }; // No PIN set yet
-
+    // Session required (was an unauthenticated PIN oracle). Lockout is enforced by money mutations.
+    const { userId, user } = await requireSelf(ctx, args.sessionToken, args.userId);
+    if (!user.walletPinHash) return { valid: false, hasPin: false };
     const testHash = await generateDeterministicHash(`wallet_pin_${userId}_${args.pin}`);
-    return {
-      valid: testHash === user.walletPinHash,
-      hasPin: true,
-    };
+    return { valid: testHash === user.walletPinHash, hasPin: true };
   },
 });
+
 
 /**
  * Query whether a user has configured an Escrow Security PIN or password.
  */
 export const getUserSecurityPinStatus = query({
-  args: { userId: v.string() },
+  args: { userId: v.optional(v.string()), sessionToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const userId = ctx.db.normalizeId("users", args.userId);
-    if (!userId) return { hasPin: false, hasPassword: false };
-    const user = await ctx.db.get(userId);
+    const { user } = await requireSelf(ctx, args.sessionToken, args.userId);
     return {
-      hasPin: Boolean(user?.walletPinHash),
-      hasPassword: Boolean(user?.passwordHash),
+      hasPin: Boolean(user.walletPinHash),
+      hasPassword: Boolean(user.passwordHash),
     };
   },
 });
+
 
 /**
  * Verify Transaction PIN or Account Password for payment authorization.
@@ -1145,15 +413,15 @@ export const getUserSecurityPinStatus = query({
  */
 export const verifyTransactionPin = query({
   args: {
-    userId: v.string(),
+    userId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     pin: v.string(),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.db.normalizeId("users", args.userId);
-    if (!userId) return { valid: false, message: "Invalid user ID", hasPin: false };
-
-    const user = await ctx.db.get(userId);
-    if (!user) return { valid: false, message: "User not found", hasPin: false };
+    // Session required: this can only ever check the caller's OWN PIN. (It was previously an
+    // unauthenticated PIN oracle for any user id.) Attempt lockout is enforced by the money
+    // mutations themselves; this read-only check is a convenience pre-validation only.
+    const { userId, user } = await requireSelf(ctx, args.sessionToken, args.userId);
 
     const pinStr = args.pin.trim();
     if (!pinStr) return { valid: false, message: "PIN / Password cannot be empty", hasPin: Boolean(user.walletPinHash) };
@@ -1174,9 +442,9 @@ export const verifyTransactionPin = query({
       }
     }
 
-    // 3. Fallback: if user has neither wallet PIN nor password configured yet
+    // 3. No PIN or password configured: NEVER treat as authorized.
     if (!user.walletPinHash && !user.passwordHash) {
-      return { valid: true, hasPin: false };
+      return { valid: false, message: "Please set a wallet PIN in Settings first.", hasPin: false };
     }
 
     return {
@@ -1204,7 +472,8 @@ export const getActivePaymentMethods = query({
       .query("payment_settings")
       .withIndex("by_isEnabled", (q) => q.eq("isEnabled", true))
       .collect();
-    return methods;
+    // Aggregator checkouts (the removed Moneroo integration) are never offered, even if a stale row exists.
+    return methods.filter((m) => m.type !== "AGGREGATOR_AUTO");
   },
 });
 
@@ -1212,8 +481,9 @@ export const getActivePaymentMethods = query({
  * Get all payment methods (enabled + disabled) for admin configurator.
  */
 export const getAllPaymentMethods = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { sessionToken: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
     const methods = await ctx.db
       .query("payment_settings")
       .collect();
@@ -1226,6 +496,7 @@ export const getAllPaymentMethods = query({
  */
 export const updatePaymentMethod = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     settingsId: v.id("payment_settings"),
     isEnabled: v.optional(v.boolean()),
     displayName: v.optional(v.string()),
@@ -1234,6 +505,7 @@ export const updatePaymentMethod = mutation({
     accountName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
     const existing = await ctx.db.get(args.settingsId);
     if (!existing) throw new Error("Payment method not found");
 
@@ -1253,8 +525,9 @@ export const updatePaymentMethod = mutation({
  * One-time seed: Insert the 4 default payment providers if table is empty.
  */
 export const seedDefaultPaymentMethods = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { sessionToken: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
     const existing = await ctx.db.query("payment_settings").first();
     if (existing) {
       return { seeded: false, message: "Payment settings already exist" };
@@ -1262,16 +535,6 @@ export const seedDefaultPaymentMethods = mutation({
 
     const now = Date.now();
     const defaults = [
-      {
-        providerId: "moneroo_auto",
-        displayName: "Orange Money / Cards (Moneroo)",
-        type: "AGGREGATOR_AUTO" as const,
-        isEnabled: true,
-        instructions: "Pay securely via Orange Money, Visa, or Mastercard through our Moneroo gateway.",
-        accountNumber: undefined,
-        accountName: "Vektolux Escrow Services",
-        updatedAt: now,
-      },
       {
         providerId: "qmoney_manual",
         displayName: "QCell QMoney",
@@ -1315,6 +578,121 @@ export const seedDefaultPaymentMethods = mutation({
 // ═══════════════════════════════════════════════════════════════════════
 //        ESCROW PAYMENT CLAIMS (Manual + Automated Tracking)
 // ═══════════════════════════════════════════════════════════════════════
+//
+// A claim is only a REQUEST: nothing is credited and no order changes state until an admin has
+// verified the payment with the provider. Approval credits the verified deposit through walletCore
+// and then funds the linked order through its real escrow path (money is actually held). A claim can
+// only be linked to the claimant's own order that is awaiting payment.
+
+type ClaimLink = { bookingId?: string; escrowOrderId?: Id<"escrow_orders">; reContractId?: Id<"re_escrow_contracts"> };
+
+async function assertClaimLink(ctx: { db: any }, userId: Id<"users">, link: ClaimLink) {
+  if ([link.bookingId, link.escrowOrderId, link.reContractId].filter(Boolean).length > 1) {
+    throw new Error("A payment can be linked to one order only.");
+  }
+  if (link.escrowOrderId) {
+    const o = await ctx.db.get(link.escrowOrderId);
+    if (!o || o.renterOrBuyerId !== userId) throw new Error("Order not found.");
+    if (o.status !== "PENDING_PAYMENT") throw new Error("This order is not awaiting payment.");
+  }
+  if (link.reContractId) {
+    const c = await ctx.db.get(link.reContractId);
+    if (!c || c.clientId !== userId) throw new Error("Escrow contract not found.");
+    if (c.currentState !== "CREATED") throw new Error("This contract is not awaiting payment.");
+  }
+  if (link.bookingId) {
+    const id = ctx.db.normalizeId("bookings", link.bookingId);
+    const b = id ? await ctx.db.get(id) : null;
+    if (!b || b.buyerId !== (userId as string)) throw new Error("Booking not found.");
+    if (b.paymentStatus === "completed" || (b.status !== "pending_payment" && b.status !== "confirmed")) {
+      throw new Error("This booking is not awaiting payment.");
+    }
+  }
+}
+
+/**
+ * Approves a VERIFIED claim (admin already authorised): credits the deposit (idempotent per provider
+ * reference) and funds the claimant's linked order through its escrow helper — which really holds
+ * the money, or reports why it could not. Never just flips an order's status.
+ */
+async function approveClaimCore(ctx: MutationCtx, claim: Doc<"escrow_payment_claims">, admin: Doc<"users">, notes?: string) {
+  const now = Date.now();
+  // An AUTOMATED claim could only ever be created by the removed aggregator integration; no webhook
+  // can confirm one any more, so a leftover pending row can never be approved.
+  if (claim.paymentType === "AUTOMATED") {
+    if (claim.providerReportedAt === undefined || claim.providerReportedAmount === undefined) {
+      throw new Error("The provider has not confirmed this payment yet.");
+    }
+    if (Math.abs(claim.providerReportedAmount - claim.amount) > 0.005) {
+      throw new Error("The amount reported by the provider does not match this claim.");
+    }
+    if ((claim.providerReportedCurrency ?? claim.currency) !== claim.currency) {
+      throw new Error("The currency reported by the provider does not match this claim.");
+    }
+  }
+  const currency = claim.currency || "SLE";
+  const settled = await settleVerifiedDeposit(ctx, {
+    userId: claim.userId,
+    amount: claim.amount,
+    currency,
+    provider: claim.providerId,
+    providerReference: claim.transactionReference || `CLAIM_${claim._id}`,
+    description: `Deposit claim approved by Admin (${admin.name || admin._id}) - Ref: ${claim.transactionReference}`,
+  });
+  let escrow: { funded: boolean; reason?: string } | undefined;
+  if (claim.escrowOrderId) {
+    const o = await ctx.db.get(claim.escrowOrderId);
+    escrow = o && o.renterOrBuyerId === claim.userId
+      ? await fundVehicleOrderFromWallet(ctx, claim.escrowOrderId, true)
+      : { funded: false, reason: "The order does not belong to the claimant." };
+  } else if (claim.reContractId) {
+    const c = await ctx.db.get(claim.reContractId);
+    escrow = c && c.clientId === claim.userId
+      ? await fundReContractFromWallet(ctx, claim.reContractId, true)
+      : { funded: false, reason: "The contract does not belong to the claimant." };
+  } else if (claim.bookingId) {
+    const id = ctx.db.normalizeId("bookings", claim.bookingId);
+    const b = id ? await ctx.db.get(id) : null;
+    escrow = id && b && b.buyerId === (claim.userId as string)
+      ? await fundBookingFromWallet(ctx, id, true)
+      : { funded: false, reason: "The booking does not belong to the claimant." };
+  }
+  await ctx.db.patch(claim._id, { status: "APPROVED", reviewedByAdminId: admin._id, reviewedAt: now });
+  await ctx.db.insert("audit_logs", {
+    adminUserId: admin._id,
+    action: "APPROVE_DEPOSIT",
+    targetTransactionId: claim.transactionReference || (claim._id as string),
+    snapshot: JSON.stringify({
+      claimId: claim._id,
+      userId: claim.userId,
+      amount: claim.amount,
+      currency,
+      providerId: claim.providerId,
+      transactionReference: claim.transactionReference,
+      providerReportedAmount: claim.providerReportedAmount ?? null,
+      statusBefore: claim.status,
+      statusAfter: "APPROVED",
+      adminNotes: notes || null,
+      creditedTransactionId: settled.transactionDocId,
+      duplicateCredit: settled.duplicate,
+      escrow: escrow ?? null,
+      resolvedAt: now,
+    }),
+    timestamp: now,
+  });
+  await ctx.db.insert("user_notifications", {
+    userId: claim.userId as string,
+    targetType: "single_user",
+    title: "Deposit Approved",
+    body: escrow?.funded
+      ? `Your payment of ${claim.amount} ${currency} was verified and is now held in escrow for your order.`
+      : `Your deposit of ${claim.amount} ${currency} was verified and credited to your wallet.` +
+        (escrow && !escrow.funded ? ` It could not be placed in escrow: ${escrow.reason ?? "unavailable"}.` : ""),
+    read: false,
+    createdAt: now,
+  });
+  return { settled, escrow, now, currency };
+}
 
 /**
  * User: Submit a manual payment claim with SMS Transaction Reference.
@@ -1322,7 +700,8 @@ export const seedDefaultPaymentMethods = mutation({
  */
 export const submitManualPaymentClaim = mutation({
   args: {
-    userId: v.id("users"),
+    userId: v.optional(v.id("users")), // ignored: the claimant is the authenticated user
+    sessionToken: v.optional(v.string()),
     amount: v.number(),
     providerId: v.string(),
     transactionReference: v.string(),
@@ -1335,9 +714,9 @@ export const submitManualPaymentClaim = mutation({
     requireNonEmpty(args.transactionReference, "transactionReference");
     requireNonEmpty(args.providerId, "providerId");
 
-    // Verify user exists
-    const user = await ctx.db.get(args.userId);
-    if (!user) throw new Error("User not found");
+    const { userId: claimantId, user } = await requireSelf(ctx, args.sessionToken, args.userId);
+    // Only the claimant's own order awaiting payment can be linked.
+    await assertClaimLink(ctx, claimantId, { bookingId: args.bookingId, escrowOrderId: args.escrowOrderId, reContractId: args.reContractId });
 
     // Verify provider exists and is enabled
     const provider = await ctx.db
@@ -1346,17 +725,19 @@ export const submitManualPaymentClaim = mutation({
       .first();
     if (!provider) throw new Error("Payment provider not found");
     if (!provider.isEnabled) throw new Error("Payment provider is currently disabled");
-
-    // Determine payment type from provider
-    const paymentType: "AUTOMATED" | "MANUAL_CLAIM" =
-      provider.type === "AGGREGATOR_AUTO" ? "AUTOMATED" : "MANUAL_CLAIM";
+    // Aggregator checkouts are no longer supported (Moneroo was removed). A typed reference can never
+    // create an automated claim.
+    if (provider.type === "AGGREGATOR_AUTO") {
+      throw new Error("This payment method is no longer available.");
+    }
+    const paymentType = "MANUAL_CLAIM" as const;
 
     const now = Date.now();
     const claimId = await ctx.db.insert("escrow_payment_claims", {
       bookingId: args.bookingId,
       escrowOrderId: args.escrowOrderId,
       reContractId: args.reContractId,
-      userId: args.userId,
+      userId: claimantId,
       amount: args.amount,
       currency: "SLE",
       providerId: args.providerId,
@@ -1379,8 +760,9 @@ export const submitManualPaymentClaim = mutation({
  * Returns claims enriched with user name.
  */
 export const getPendingApprovalClaims = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { sessionToken: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
     const claims = await ctx.db
       .query("escrow_payment_claims")
       .withIndex("by_status", (q) => q.eq("status", "PENDING_APPROVAL"))
@@ -1408,18 +790,19 @@ export const getPendingApprovalClaims = query({
  */
 export const getUserPaymentClaims = query({
   args: {
-    userId: v.id("users"),
+    userId: v.optional(v.id("users")), // consistency check only
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const claims = await ctx.db
+    const { userId } = await requireSelf(ctx, args.sessionToken, args.userId);
+    return await ctx.db
       .query("escrow_payment_claims")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
       .order("desc")
       .take(50);
-
-    return claims;
   },
 });
+
 
 /**
  * Admin: Approve a manual payment claim → transitions to ESCROW_LOCKED.
@@ -1427,70 +810,21 @@ export const getUserPaymentClaims = query({
 export const approvePaymentClaim = mutation({
   args: {
     claimId: v.id("escrow_payment_claims"),
-    adminUserId: v.id("users"),
+    adminUserId: v.optional(v.id("users")), // ignored: the admin is the authenticated session
+    sessionToken: v.optional(v.string()),
+    notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const { user: admin } = await requireAdminSession(ctx, args.sessionToken);
     const claim = await ctx.db.get(args.claimId);
     if (!claim) throw new Error("Payment claim not found");
     if (claim.status !== "PENDING_APPROVAL") {
       throw new Error(`Cannot approve claim with status: ${claim.status}`);
     }
-
-    // Verify admin exists
-    const admin = await ctx.db.get(args.adminUserId);
-    if (!admin || admin.role !== "admin") {
-      throw new Error("Only admin users can approve payment claims");
-    }
-
-    const now = Date.now();
-    await ctx.db.patch(args.claimId, {
-      status: "ESCROW_LOCKED",
-      reviewedByAdminId: args.adminUserId,
-      reviewedAt: now,
-    });
-
-    // If linked to an escrow order, update its status too
-    if (claim.escrowOrderId) {
-      const order = await ctx.db.get(claim.escrowOrderId);
-      if (order && order.status === "PENDING_PAYMENT") {
-        await ctx.db.patch(claim.escrowOrderId, {
-          status: "HELD_IN_ESCROW",
-          updatedAt: now,
-        });
-      }
-    }
-
-    // If linked to a real estate contract, update its state
-    if (claim.reContractId) {
-      const contract = await ctx.db.get(claim.reContractId);
-      if (contract && contract.currentState === "CREATED") {
-        await ctx.db.patch(claim.reContractId, {
-          currentState: "FUNDS_LOCKED",
-          updatedAt: now,
-        });
-      }
-    }
-
-    // Write immutable audit log
-    await ctx.db.insert("audit_logs", {
-      adminUserId: admin._id,
-      action: "APPROVE_DEPOSIT",
-      targetTransactionId: claim.transactionReference || (claim._id as string),
-      snapshot: JSON.stringify({
-        claimId: claim._id,
-        userId: claim.userId,
-        amount: claim.amount,
-        currency: claim.currency,
-        providerId: claim.providerId,
-        transactionReference: claim.transactionReference,
-        statusBefore: "PENDING_APPROVAL",
-        statusAfter: "ESCROW_LOCKED",
-        resolvedAt: now,
-      }),
-      timestamp: now,
-    });
-
-    return { success: true, status: "ESCROW_LOCKED" as const };
+    // Credits the verified deposit and funds the linked order through its real escrow path
+    // (previously this flipped the order to "held" without any money being held).
+    const r = await approveClaimCore(ctx, claim, admin, args.notes);
+    return { success: true, status: "APPROVED" as const, escrowFunded: r.escrow?.funded ?? null, escrowReason: r.escrow?.reason ?? null };
   },
 });
 
@@ -1500,8 +834,9 @@ export const approvePaymentClaim = mutation({
 export const rejectPaymentClaim = mutation({
   args: {
     claimId: v.id("escrow_payment_claims"),
-    adminUserId: v.id("users"),
+    adminUserId: v.optional(v.id("users")), // ignored
     rejectionReason: v.string(),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const claim = await ctx.db.get(args.claimId);
@@ -1512,17 +847,15 @@ export const rejectPaymentClaim = mutation({
 
     requireNonEmpty(args.rejectionReason, "rejectionReason");
 
-    // Verify admin exists
-    const admin = await ctx.db.get(args.adminUserId);
-    if (!admin || admin.role !== "admin") {
-      throw new Error("Only admin users can reject payment claims");
-    }
+    // Admin identity from the authenticated session only.
+    const adminAuth = await requireAdminSession(ctx, args.sessionToken);
+    const admin = adminAuth.user;
 
     const now = Date.now();
     await ctx.db.patch(args.claimId, {
       status: "REJECTED",
       rejectionReason: args.rejectionReason,
-      reviewedByAdminId: args.adminUserId,
+      reviewedByAdminId: adminAuth.userId,
       reviewedAt: now,
     });
 
@@ -1555,21 +888,16 @@ export const rejectPaymentClaim = mutation({
  */
 export const resolveManualPaymentClaim = mutation({
   args: {
-    adminUserId: v.string(),
+    adminUserId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     claimId: v.id("escrow_payment_claims"),
     action: v.union(v.literal("APPROVE_DEPOSIT"), v.literal("REJECT_DEPOSIT")),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // 1. Verify Admin user exists and has admin privileges
-    const adminId = ctx.db.normalizeId("users", args.adminUserId);
-    if (!adminId) {
-      throw new Error("UNAUTHORIZED_ADMIN: Invalid admin user ID");
-    }
-    const admin = await ctx.db.get(adminId);
-    if (!admin || admin.role?.toLowerCase() !== "admin") {
-      throw new Error("UNAUTHORIZED_ADMIN: Only users with 'admin' role can resolve payment claims");
-    }
+    // 1. Admin identity comes from the authenticated SESSION only (adminUserId is ignored):
+    // knowing an admin's id must never be enough to approve a deposit.
+    const { userId: adminId, user: admin } = await requireAdminSession(ctx, args.sessionToken);
 
     // 2. Fetch and validate claim state
     const claim = await ctx.db.get(args.claimId);
@@ -1584,129 +912,9 @@ export const resolveManualPaymentClaim = mutation({
     const currency = claim.currency || "SLE";
 
     if (args.action === "APPROVE_DEPOSIT") {
-      // 3. Atomically Credit user wallet
-      let wallet = await ctx.db
-        .query("walletBalances")
-        .withIndex("by_user_currency", (q) =>
-          q.eq("userId", claim.userId).eq("currency", currency)
-        )
-        .first();
-
-      let newBalance = claim.amount;
-      if (!wallet) {
-        const walletId = await ctx.db.insert("walletBalances", {
-          userId: claim.userId,
-          availableBalance: claim.amount,
-          pendingBalance: 0,
-          escrowBalance: 0,
-          currency,
-          updatedAt: now,
-        });
-        wallet = (await ctx.db.get(walletId))!;
-      } else {
-        newBalance = wallet.availableBalance + claim.amount;
-        await ctx.db.patch(wallet._id, {
-          availableBalance: newBalance,
-          updatedAt: now,
-        });
-      }
-
-      // 4. Record completed transaction
-      const txId =
-        claim.transactionReference ||
-        `CLAIM_${now}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-
-      await ctx.db.insert("transactions", {
-        transactionId: txId,
-        walletId: wallet._id,
-        userId: claim.userId,
-        type: "top_up",
-        amount: claim.amount,
-        currency,
-        gatewayProvider: claim.providerId,
-        gatewayReference: claim.transactionReference,
-        status: "completed",
-        description: `Manual deposit claim approved by Admin (${admin.name || admin._id}) - Ref: ${claim.transactionReference}`,
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      // 5. Double-entry ledger
-      const ledgerTxId = await ctx.db.insert("ledger_transactions", {
-        transactionCode: `LTX_CLAIM_${txId}`,
-        description: `Manual Claim Approval - Ref: ${claim.transactionReference}`,
-        createdAt: now,
-      });
-
-      await ctx.db.insert("ledger_entries", {
-        transactionId: ledgerTxId,
-        accountType: "CLIENT_AVAILABLE",
-        userId: claim.userId,
-        direction: "CREDIT",
-        amount: claim.amount,
-        currency,
-        createdAt: now,
-      });
-
-      // 6. Update claim status
-      await ctx.db.patch(claim._id, {
-        status: "APPROVED",
-        reviewedByAdminId: admin._id,
-        reviewedAt: now,
-      });
-
-      // Link updates for escrow contracts if applicable
-      if (claim.escrowOrderId) {
-        const order = await ctx.db.get(claim.escrowOrderId);
-        if (order && order.status === "PENDING_PAYMENT") {
-          await ctx.db.patch(claim.escrowOrderId, {
-            status: "HELD_IN_ESCROW",
-            updatedAt: now,
-          });
-        }
-      }
-      if (claim.reContractId) {
-        const contract = await ctx.db.get(claim.reContractId);
-        if (contract && contract.currentState === "CREATED") {
-          await ctx.db.patch(claim.reContractId, {
-            currentState: "FUNDS_LOCKED",
-            updatedAt: now,
-          });
-        }
-      }
-
-      // 7. Write immutable audit log
-      await ctx.db.insert("audit_logs", {
-        adminUserId: admin._id,
-        action: "APPROVE_DEPOSIT",
-        targetTransactionId: claim.transactionReference || (claim._id as string),
-        snapshot: JSON.stringify({
-          claimId: claim._id,
-          userId: claim.userId,
-          amount: claim.amount,
-          currency,
-          providerId: claim.providerId,
-          transactionReference: claim.transactionReference,
-          statusBefore: "PENDING_APPROVAL",
-          statusAfter: "APPROVED",
-          adminNotes: args.notes || null,
-          creditedWalletId: wallet._id,
-          newBalance,
-          resolvedAt: now,
-        }),
-        timestamp: now,
-      });
-
-      // 8. User notification
-      await ctx.db.insert("user_notifications", {
-        userId: claim.userId as string,
-        targetType: "single_user",
-        title: "Deposit Approved",
-        body: `Your deposit claim of ${claim.amount} ${currency} has been approved and credited to your wallet balance.`,
-        read: false,
-        createdAt: now,
-      });
-
+      // Credit through the audited wallet core (idempotent per provider reference), then fund the
+      // linked order through its escrow helper — never a bare status change.
+      const r = await approveClaimCore(ctx, claim, admin, args.notes);
       return {
         success: true,
         action: "APPROVE_DEPOSIT" as const,
@@ -1714,9 +922,10 @@ export const resolveManualPaymentClaim = mutation({
         claimId: claim._id,
         creditedUserId: claim.userId,
         amount: claim.amount,
-        currency,
-        newBalance,
-        timestamp: now,
+        currency: r.currency,
+        newBalance: r.settled.availableBalance,
+        escrowFunded: r.escrow?.funded ?? null,
+        timestamp: r.now,
       };
     } else {
       // REJECT_DEPOSIT
@@ -1776,11 +985,13 @@ export const resolveManualPaymentClaim = mutation({
  */
 export const getAuditLogs = query({
   args: {
+    sessionToken: v.optional(v.string()),
     limit: v.optional(v.number()),
     targetTransactionId: v.optional(v.string()),
     adminUserId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
     const limit = Math.min(args.limit ?? 50, 100);
 
     if (args.targetTransactionId) {
@@ -1812,284 +1023,11 @@ export const getAuditLogs = query({
 });
 
 /**
- * Internal: Auto-lock escrow when Moneroo webhook confirms payment success.
- * Called only from the HTTP webhook handler.
- */
-export const processMonerooWebhookClaim = internalMutation({
-  args: {
-    transactionReference: v.string(),
-    amountPaid: v.number(),
-    currency: v.string(),
-    paymentId: v.optional(v.string()),
-    metadata: v.optional(v.any()),
-  },
-  handler: async (ctx, args) => {
-    // Find the pending claim by transaction reference or paymentId or metadata.reference
-    let claims = await ctx.db
-      .query("escrow_payment_claims")
-      .filter((q) =>
-        q.eq(q.field("transactionReference"), args.transactionReference)
-      )
-      .take(1);
-
-    if (claims.length === 0 && args.paymentId) {
-      claims = await ctx.db
-        .query("escrow_payment_claims")
-        .filter((q) => q.eq(q.field("transactionReference"), args.paymentId!))
-        .take(1);
-    }
-
-    if (claims.length === 0 && args.metadata?.ref) {
-      claims = await ctx.db
-        .query("escrow_payment_claims")
-        .filter((q) => q.eq(q.field("transactionReference"), args.metadata.ref))
-        .take(1);
-    }
-
-    const claim = claims[0];
-    if (!claim) {
-      console.error(`Moneroo webhook: No claim found for ref ${args.transactionReference}`);
-      return { success: false, reason: "claim_not_found" };
-    }
-
-    if (claim.status === "ESCROW_LOCKED") {
-      return { success: true, alreadyProcessed: true };
-    }
-
-    if (claim.status !== "PENDING_PAYMENT" && claim.status !== "PENDING_APPROVAL") {
-      return { success: false, reason: `invalid_status_${claim.status}` };
-    }
-
-    const now = Date.now();
-    await ctx.db.patch(claim._id, {
-      status: "ESCROW_LOCKED",
-      reviewedAt: now,
-    });
-
-    // Update linked vehicle escrow order if present
-    if (claim.escrowOrderId) {
-      const order = await ctx.db.get(claim.escrowOrderId);
-      if (order && (order.status === "PENDING_PAYMENT" || order.status === "INITIATED")) {
-        await ctx.db.patch(claim.escrowOrderId, {
-          status: "HELD_IN_ESCROW",
-          updatedAt: now,
-        });
-      }
-    }
-
-    // Update linked real estate contract if present
-    if (claim.reContractId) {
-      const contract = await ctx.db.get(claim.reContractId);
-      if (contract && (contract.currentState === "CREATED" || contract.currentState === "FUNDS_LOCKED")) {
-        await ctx.db.patch(claim.reContractId, {
-          currentState: "FUNDS_LOCKED",
-          updatedAt: now,
-        });
-      }
-    }
-
-    // Update general universal booking if present
-    if (claim.bookingId) {
-      const bNorm = ctx.db.normalizeId("bookings", claim.bookingId);
-      if (bNorm) {
-        await ctx.db.patch(bNorm, {
-          status: "confirmed",
-          paymentStatus: "completed",
-          updatedAt: now,
-        });
-      }
-    }
-
-    return { success: true, alreadyProcessed: false };
-  },
-});
-
-/**
- * Internal: Record the initialization of an automated Moneroo payment claim.
- */
-export const recordMonerooClaimInit = internalMutation({
-  args: {
-    userId: v.string(),
-    amount: v.number(),
-    currency: v.literal("SLE"),
-    providerId: v.string(),
-    transactionReference: v.string(),
-    bookingId: v.optional(v.string()),
-    escrowOrderId: v.optional(v.string()),
-    reContractId: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const userNorm = ctx.db.normalizeId("users", args.userId);
-    if (!userNorm) throw new Error("Invalid user ID");
-
-    const escrowOrderNorm = args.escrowOrderId
-      ? ctx.db.normalizeId("escrow_orders", args.escrowOrderId)
-      : undefined;
-
-    const reContractNorm = args.reContractId
-      ? ctx.db.normalizeId("re_escrow_contracts", args.reContractId)
-      : undefined;
-
-    const now = Date.now();
-    const claimId = await ctx.db.insert("escrow_payment_claims", {
-      userId: userNorm,
-      amount: args.amount,
-      currency: args.currency,
-      providerId: args.providerId,
-      paymentType: "AUTOMATED",
-      transactionReference: args.transactionReference,
-      status: "PENDING_PAYMENT",
-      bookingId: args.bookingId,
-      escrowOrderId: escrowOrderNorm ?? undefined,
-      reContractId: reContractNorm ?? undefined,
-      createdAt: now,
-    });
-
-    return claimId;
-  },
-});
-
-/**
- * Public Action: Initialize an automated Moneroo sandbox payment session.
- * Calls https://api.moneroo.io/v1/payments/initialize with Moneroo credentials
- * and returns checkout_url to the client.
- */
-export const initializeMonerooPayment = action({
-  args: {
-    amount: v.number(),
-    currency: v.optional(v.string()),
-    customerEmail: v.string(),
-    customerFirstName: v.string(),
-    customerLastName: v.string(),
-    customerPhone: v.optional(v.string()),
-    returnUrl: v.optional(v.string()),
-    description: v.optional(v.string()),
-    userId: v.string(),
-    bookingId: v.optional(v.string()),
-    escrowOrderId: v.optional(v.string()),
-    reContractId: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const apiKey = process.env.MONEROO_SECRET_KEY;
-    if (!apiKey) {
-      logGatewayError(500, { error: "MONEROO_SECRET_KEY not set" }, args);
-      return {
-        success: false,
-        code: "GATEWAY_ERROR",
-        message: "Payment service is currently unavailable. Please contact support.",
-        statusCode: 500,
-        error: "MONEROO_SECRET_KEY environment variable is not configured",
-      };
-    }
-
-    const currency = args.currency ?? "SLE";
-    const ref = `vktlx_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    const returnUrl = args.returnUrl ?? "https://app.vektolux.com/payment/callback";
-    const sanitizedPhone = sanitizeSierraLeonePhone(args.customerPhone);
-
-    const payload = {
-      amount: args.amount,
-      currency: currency,
-      customer: {
-        email: args.customerEmail,
-        first_name: args.customerFirstName,
-        last_name: args.customerLastName,
-        phone: sanitizedPhone,
-      },
-      return_url: returnUrl,
-      description: args.description ?? `Vektolux Escrow Deposit - ${args.amount} ${currency}`,
-      metadata: {
-        userId: args.userId,
-        bookingId: args.bookingId ?? "",
-        escrowOrderId: args.escrowOrderId ?? "",
-        reContractId: args.reContractId ?? "",
-        ref: ref,
-        rawPhone: args.customerPhone ?? "",
-        sanitizedPhone: sanitizedPhone,
-      },
-    };
-
-    console.log("Initializing Moneroo payment:", {
-      amount: args.amount,
-      currency,
-      ref,
-      customerEmail: args.customerEmail,
-      sanitizedPhone,
-    });
-
-    try {
-      const response = await fetch("https://api.moneroo.io/v1/payments/initialize", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      let resJson: any = {};
-      try {
-        resJson = await response.json();
-      } catch (_) {
-        resJson = { message: await response.text().catch(() => "Unknown gateway error") };
-      }
-
-      if (!response.ok) {
-        logGatewayError(response.status, resJson, payload);
-        const parsed = parseCarrierResponse(response.status, resJson);
-        return {
-          success: false,
-          code: parsed.code,
-          message: parsed.message,
-          statusCode: parsed.statusCode,
-          error: parsed.message,
-          rawError: resJson,
-        };
-      }
-
-      const resData = resJson.data ?? resJson;
-      const checkoutUrl = resData.checkout_url ?? resData.link ?? "";
-      const paymentId = resData.id ?? ref;
-
-      // Record initial claim in Convex
-      await ctx.runMutation(internal.payments.recordMonerooClaimInit, {
-        userId: args.userId,
-        amount: args.amount,
-        currency: "SLE",
-        providerId: "moneroo_auto",
-        transactionReference: paymentId,
-        bookingId: args.bookingId,
-        escrowOrderId: args.escrowOrderId,
-        reContractId: args.reContractId,
-      });
-
-      return {
-        success: true,
-        code: "PAYMENT_INITIATED",
-        message: "Push prompt sent. Please approve on your phone.",
-        transactionId: paymentId,
-        checkout_url: checkoutUrl,
-        paymentId: paymentId,
-        reference: ref,
-      };
-    } catch (err: any) {
-      logGatewayError(500, { error: err.message ?? String(err) }, payload);
-      return {
-        success: false,
-        code: "GATEWAY_ERROR",
-        message: err.message ?? "Unexpected payment gateway error. Please try again.",
-        statusCode: 500,
-        error: err.message,
-      };
-    }
-  },
-});
-
-/**
  * Admin: Get all escrow payment claims (all statuses) for the dashboard.
  */
 export const getAllEscrowClaims = query({
   args: {
+    sessionToken: v.optional(v.string()),
     status: v.optional(v.union(
       v.literal("PENDING_PAYMENT"),
       v.literal("PENDING_APPROVAL"),
@@ -2099,6 +1037,7 @@ export const getAllEscrowClaims = query({
     )),
   },
   handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
     let claimsQuery;
     if (args.status) {
       claimsQuery = ctx.db
@@ -2132,8 +1071,10 @@ export const getAllEscrowClaims = query({
 export const getPaymentClaimStatus = query({
   args: {
     transactionReference: v.string(),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const { userId: callerId, user: callerUser } = await requireSelf(ctx, args.sessionToken);
     const claim = await ctx.db
       .query("escrow_payment_claims")
       .withIndex("by_providerId")
@@ -2141,6 +1082,7 @@ export const getPaymentClaimStatus = query({
       .first();
 
     if (!claim) return null;
+    if (claim.userId !== callerId && callerUser.role !== "admin") return null;
 
     return {
       claimId: claim._id,
@@ -2164,17 +1106,17 @@ export const getPaymentClaimStatus = query({
  * Fetch all payment accounts linked by a specific user (newest first).
  */
 export const getUserPaymentAccounts = query({
-  args: { userId: v.string() },
+  args: { userId: v.optional(v.string()), sessionToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const userNorm = ctx.db.normalizeId("users", args.userId);
-    if (!userNorm) return [];
+    const { userId } = await requireSelf(ctx, args.sessionToken, args.userId);
     return await ctx.db
       .query("user_payment_accounts")
-      .withIndex("by_user", (q) => q.eq("userId", userNorm))
+      .withIndex("by_user", (q) => q.eq("userId", userId))
       .order("desc")
-      .collect();
+      .take(50);
   },
 });
+
 
 /**
  * Link a new Mobile Money / bank account to the user's profile.
@@ -2183,7 +1125,8 @@ export const getUserPaymentAccounts = query({
  */
 export const addUserPaymentAccount = mutation({
   args: {
-    userId: v.string(),
+    userId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     providerCode: v.string(),
     providerName: v.string(),
     accountNumber: v.string(),
@@ -2191,14 +1134,15 @@ export const addUserPaymentAccount = mutation({
     isDefault: v.boolean(),
   },
   handler: async (ctx, args) => {
-    const userNorm = ctx.db.normalizeId("users", args.userId);
-    if (!userNorm) throw new Error("User not found");
+    const { userId: userNorm } = await requireSelf(ctx, args.sessionToken, args.userId);
+    const digitsOnly = args.accountNumber.replace(/[\s-]/g, "");
+    if (!/^\+?\d{6,30}$/.test(digitsOnly)) throw new Error("Enter a valid account number.");
     const now = Date.now();
 
     const existing = await ctx.db
       .query("user_payment_accounts")
       .withIndex("by_user", (q) => q.eq("userId", userNorm))
-      .collect();
+      .take(50);
 
     // First account always becomes default
     const forceDefault = existing.length === 0 ? true : args.isDefault;
@@ -2233,19 +1177,18 @@ export const addUserPaymentAccount = mutation({
 export const removeUserPaymentAccount = mutation({
   args: {
     accountId: v.id("user_payment_accounts"),
-    userId: v.string(),
+    userId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const { userId } = await requireSelf(ctx, args.sessionToken, args.userId);
     const account = await ctx.db.get(args.accountId);
-    if (!account) throw new Error("Account not found");
-    const userNorm = ctx.db.normalizeId("users", args.userId);
-    if (!userNorm || account.userId !== userNorm) {
-      throw new Error("Unauthorized");
-    }
+    if (!account || account.userId !== userId) throw new Error("Account not found");
     await ctx.db.delete(args.accountId);
     return { success: true };
   },
 });
+
 
 /**
  * Set a specific account as the user's default payment account.
@@ -2254,16 +1197,16 @@ export const removeUserPaymentAccount = mutation({
 export const setDefaultPaymentAccount = mutation({
   args: {
     accountId: v.id("user_payment_accounts"),
-    userId: v.string(),
+    userId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userNorm = ctx.db.normalizeId("users", args.userId);
-    if (!userNorm) throw new Error("User not found");
+    const { userId: userNorm } = await requireSelf(ctx, args.sessionToken, args.userId);
 
     const allAccounts = await ctx.db
       .query("user_payment_accounts")
       .withIndex("by_user", (q) => q.eq("userId", userNorm))
-      .collect();
+      .take(50);
 
     for (const acct of allAccounts) {
       const shouldBeDefault = acct._id === args.accountId;
@@ -2275,274 +1218,7 @@ export const setDefaultPaymentAccount = mutation({
   },
 });
 
-/**
- * Internal mutation: Reserve withdrawal balance and create pending transaction
- */
-export const reserveWithdrawalBalance = internalMutation({
-  args: {
-    userId: v.string(),
-    amount: v.number(),
-    destinationProviderCode: v.string(),
-    destinationAccountNumber: v.string(),
-    currency: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    if (args.amount <= 0) throw new Error("Withdrawal amount must be positive");
-    const userNorm = ctx.db.normalizeId("users", args.userId);
-    if (!userNorm) throw new Error("User not found");
-
-    const currency = args.currency ?? "SLE";
-    const now = Date.now();
-
-    const wallet = await ctx.db
-      .query("walletBalances")
-      .withIndex("by_user_currency", (q) =>
-        q.eq("userId", userNorm).eq("currency", currency)
-      )
-      .first();
-
-    if (!wallet || wallet.availableBalance < args.amount) {
-      throw new Error(
-        `Insufficient balance. Available: ${wallet?.availableBalance ?? 0} ${currency}`
-      );
-    }
-
-    const newBalance = parseFloat((wallet.availableBalance - args.amount).toFixed(2));
-    await ctx.db.patch(wallet._id, {
-      availableBalance: newBalance,
-      updatedAt: now,
-    });
-
-    const ref = `WTHDRW_${now}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-
-    const txId = await ctx.db.insert("transactions", {
-      walletId: wallet._id,
-      userId: userNorm,
-      type: "payout",
-      amount: args.amount,
-      currency,
-      gatewayProvider: args.destinationProviderCode,
-      gatewayReference: ref,
-      agentNumber: args.destinationAccountNumber,
-      status: "pending",
-      description: `Payout of ${args.amount} ${currency} to ${args.destinationProviderCode} ${args.destinationAccountNumber}`,
-      updatedAt: now,
-    });
-
-    return {
-      walletId: wallet._id,
-      transactionId: txId,
-      ref,
-      userNorm,
-      currency,
-      newBalance,
-      previousBalance: wallet.availableBalance,
-    };
-  },
-});
-
-/**
- * Internal mutation: Confirm successful MoniMe payout
- */
-export const finalizeWithdrawalSuccess = internalMutation({
-  args: {
-    transactionId: v.id("transactions"),
-    payoutId: v.string(),
-    amount: v.number(),
-    currency: v.string(),
-    destination: v.string(),
-    provider: v.string(),
-  },
-  handler: async (ctx, args) => {
-    await ctx.db.patch(args.transactionId, {
-      status: "completed",
-      gatewayReference: args.payoutId,
-      description: `MoniMe Payout of ${args.amount} ${args.currency} disbursed to ${args.provider.toUpperCase()} ${args.destination} [ID: ${args.payoutId}]`,
-      updatedAt: Date.now(),
-    });
-    return { success: true };
-  },
-});
-
-/**
- * Internal mutation: Rollback failed MoniMe payout and restore user balance
- */
-export const rollbackFailedWithdrawal = internalMutation({
-  args: {
-    transactionId: v.id("transactions"),
-    walletId: v.id("walletBalances"),
-    amount: v.number(),
-    reason: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const wallet = await ctx.db.get(args.walletId);
-    const now = Date.now();
-    let restoredBalance = 0;
-
-    if (wallet) {
-      restoredBalance = parseFloat((wallet.availableBalance + args.amount).toFixed(2));
-      await ctx.db.patch(wallet._id, {
-        availableBalance: restoredBalance,
-        updatedAt: now,
-      });
-    }
-
-    await ctx.db.patch(args.transactionId, {
-      status: "failed",
-      description: `Payout failed: ${args.reason}. Restored ${args.amount} to wallet balance.`,
-      updatedAt: now,
-    });
-
-    return { success: true, restoredBalance };
-  },
-});
-
-/**
- * Request an escrow wallet withdrawal with immediate live MoniMe payout dispatch.
- * Atomically reserves balance, dispatches to MoniMe /v1/payouts, and auto-refunds on failure.
- */
-export const requestWithdrawal = action({
-  args: {
-    userId: v.string(),
-    amount: v.number(),
-    destinationProviderCode: v.string(),
-    destinationAccountNumber: v.string(),
-    currency: v.optional(v.string()),
-    pin: v.optional(v.string()),
-  },
-  handler: async (ctx, args): Promise<any> => {
-    if (args.amount <= 0) throw new Error("Withdrawal amount must be positive");
-
-    // 0. Verify Escrow Security PIN or Transaction Password
-    if (!args.pin || args.pin.trim().length === 0) {
-      throw new Error("Escrow Security PIN is required to authorize withdrawal.");
-    }
-    const pinCheck: any = await ctx.runQuery(api.payments.verifyTransactionPin, {
-      userId: args.userId,
-      pin: args.pin.trim(),
-    });
-    if (!pinCheck.valid) {
-      throw new Error(pinCheck.message || "Invalid Security PIN. Authorization rejected.");
-    }
-
-    // 1. Clean and normalize phone number
-    let cleanPhone = args.destinationAccountNumber.replace(/\D/g, "");
-    if (cleanPhone.startsWith("0")) {
-      cleanPhone = "232" + cleanPhone.substring(1);
-    } else if (!cleanPhone.startsWith("232") && cleanPhone.length === 8) {
-      cleanPhone = "232" + cleanPhone;
-    }
-    const formattedPhone = cleanPhone.startsWith("+") ? cleanPhone : `+${cleanPhone}`;
-
-    // 2. Carrier detection & MoniMe momo provider selection
-    const carrier = detectSierraLeoneCarrier(cleanPhone);
-    const isAfricell = carrier === "africell" ||
-      args.destinationProviderCode.toLowerCase().includes("africell") ||
-      args.destinationProviderCode.toLowerCase().includes("afrimoney");
-    const providerId = isAfricell ? "m18" : "m17";
-    const providerLabel = isAfricell ? "africell" : "orange";
-
-    // 3. Atomically reserve balance in Convex database
-    const reservation: any = await ctx.runMutation(internal.payments.reserveWithdrawalBalance, {
-      userId: args.userId,
-      amount: args.amount,
-      destinationProviderCode: providerLabel,
-      destinationAccountNumber: formattedPhone,
-      currency: args.currency,
-    });
-
-    // 4. Dispatch live payout to MoniMe API
-    const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VAsS2nSa4AALw1JuBJrXtUAnF").trim();
-    const token = (process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
-    const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
-    const currency = args.currency ?? "SLE";
-    const minorAmount = Math.round(args.amount * 100);
-
-    const payload = {
-      amount: {
-        currency,
-        value: minorAmount,
-      },
-      destination: {
-        type: "momo",
-        providerId,
-        phoneNumber: formattedPhone,
-      },
-      metadata: {
-        userId: reservation.userNorm,
-        walletId: reservation.walletId,
-        reference: reservation.ref,
-        phoneNumber: formattedPhone,
-        purpose: "escrow_withdrawal",
-      },
-    };
-
-    console.log(`[MoniMe Payout] Live outbound payout dispatch for ${args.amount} ${currency} to ${formattedPhone} (${providerId})...`);
-
-    let isSuccess = false;
-    let payoutId = reservation.ref;
-    let failureReason = "";
-
-    try {
-      const response = await fetch(`${apiBaseUrl}/payouts`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-          "Monime-Space-Id": spaceId,
-          "monime-space-id": spaceId,
-          "Idempotency-Key": `payout_${reservation.ref}`,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const responseJson = await response.json().catch(() => ({}));
-      console.log(`[MoniMe Payout] Gateway response HTTP ${response.status}:`, responseJson);
-
-      if (response.ok && responseJson.success !== false) {
-        isSuccess = true;
-        payoutId = responseJson.result?.id ?? responseJson.id ?? reservation.ref;
-      } else {
-        failureReason = responseJson.error?.message ??
-          responseJson.message ??
-          `HTTP ${response.status}: ${JSON.stringify(responseJson)}`;
-      }
-    } catch (err: any) {
-      console.error("[MoniMe Payout] Network error:", err);
-      failureReason = err?.message ?? String(err);
-    }
-
-    if (isSuccess) {
-      await ctx.runMutation(internal.payments.finalizeWithdrawalSuccess, {
-        transactionId: reservation.transactionId,
-        payoutId,
-        amount: args.amount,
-        currency,
-        destination: formattedPhone,
-        provider: providerLabel,
-      });
-
-      return {
-        success: true,
-        payoutId,
-        withdrawalRef: reservation.ref,
-        remainingBalance: reservation.newBalance,
-        currency,
-        message: `Payout of SLE ${args.amount} dispatched successfully via MoniMe.`,
-      };
-    } else {
-      // Rollback balance immediately on gateway failure
-      await ctx.runMutation(internal.payments.rollbackFailedWithdrawal, {
-        transactionId: reservation.transactionId,
-        walletId: reservation.walletId,
-        amount: args.amount,
-        reason: failureReason,
-      });
-
-      throw new Error(`Payout dispatch failed: ${failureReason}. SLE ${args.amount} has been restored to your balance.`);
-    }
-  },
-});
+// NOTE: withdrawals now live in convex/withdrawals.ts (reserve → confirm/release state machine).
 
 // ═══════════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════
@@ -2593,7 +1269,7 @@ export function getSierraLeonePhoneCandidates(phone: string): string[] {
 }
 
 /**
- * Shared transactional handler for all Carrier deposits (Orange Money, Africell, Moneroo, etc.).
+ * Shared transactional handler for all Carrier deposits (Orange Money, Africell, etc.).
  * Implements strict idempotency checking against `transactions.by_transaction_id` and `telco_webhook_logs`,
  * orphaned user handling, double-entry ledger creation, and real-time wallet balance crediting.
  */
@@ -2687,23 +1363,6 @@ async function executeCarrierDeposit(
         if (user) break;
       }
 
-      if (!user && candidates.length > 0) {
-        const allUsers = await ctx.db.query("users").collect();
-        const targetDigits = args.phoneNumber.replace(/\D/g, "");
-        const core8 = targetDigits.length >= 8 ? targetDigits.slice(-8) : targetDigits;
-        if (core8.length >= 6) {
-          user =
-            allUsers.find((u) => {
-              if (!u.phone) return false;
-              const uDigits = u.phone.replace(/\D/g, "");
-              return (
-                uDigits === targetDigits ||
-                uDigits.endsWith(core8) ||
-                core8.endsWith(uDigits)
-              );
-            }) ?? null;
-        }
-      }
     }
 
     // If no user matches the phone number, log as ORPHANED_USER and exit cleanly
@@ -2711,14 +1370,14 @@ async function executeCarrierDeposit(
       if (logId) {
         await ctx.db.patch(logId, {
           status: "ORPHANED_USER",
-          errorMessage: `No user matches phone number ${args.phoneNumber}`,
+          errorMessage: "No user matches the paying phone number",
           processedAt: now,
         });
       }
       return {
         success: false,
         status: "ORPHANED_USER",
-        message: `No user found matching phone number ${args.phoneNumber}. Transaction held for manual resolution.`,
+        message: "No user found for the paying phone number. Transaction held for manual resolution.",
         carrierTransactionId: args.txnId,
         txnId: args.txnId,
       };
@@ -2732,12 +1391,13 @@ async function executeCarrierDeposit(
       normalizedStatus === "SUCCESSFUL";
 
     if (!isSuccess) {
+      // Recorded, but NOT marked processed: a "pending" delivery must not stop a later real
+      // success for the same transaction from being credited (it is still credited at most once).
       if (logId) {
         await ctx.db.patch(logId, {
           status: args.status,
           errorMessage: `Telco webhook status reported as ${args.status}`,
           processedAt: now,
-          isProcessed: true,
         });
       }
       return {
@@ -2749,65 +1409,16 @@ async function executeCarrierDeposit(
       };
     }
 
-    // 4. Double-Entry Ledger: Insert into 'ledger_transactions' and 'ledger_entries'
-    const ledgerTxId = await ctx.db.insert("ledger_transactions", {
-      transactionCode: `LTX_${provider}_${args.txnId}`,
-      description: `${provider} Webhook Deposit - Ref: ${args.txnId}`,
-      createdAt: now,
-    });
-
-    await ctx.db.insert("ledger_entries", {
-      transactionId: ledgerTxId,
-      accountType: "CLIENT_AVAILABLE",
+    // 4. Credit through the wallet core: one atomic, idempotent, double-entry settlement.
+    const settled = await settleVerifiedDeposit(ctx, {
       userId: user._id,
-      direction: "CREDIT",
       amount: args.amount,
       currency,
-      createdAt: now,
+      provider,
+      providerReference: args.txnId,
+      description: `${provider} deposit (Ref: ${args.txnId})`,
     });
-
-    // 5. Atomically update or insert 'walletBalances'
-    let wallet = await ctx.db
-      .query("walletBalances")
-      .withIndex("by_user_currency", (q) =>
-        q.eq("userId", user!._id).eq("currency", currency)
-      )
-      .first();
-
-    let newBalance = args.amount;
-    if (!wallet) {
-      const walletId = await ctx.db.insert("walletBalances", {
-        userId: user._id,
-        availableBalance: args.amount,
-        pendingBalance: 0,
-        escrowBalance: 0,
-        currency,
-        updatedAt: now,
-      });
-      wallet = (await ctx.db.get(walletId))!;
-    } else {
-      newBalance = wallet.availableBalance + args.amount;
-      await ctx.db.patch(wallet._id, {
-        availableBalance: newBalance,
-        updatedAt: now,
-      });
-    }
-
-    // 6. Record transaction ledger entry with transactionId index field
-    await ctx.db.insert("transactions", {
-      transactionId: args.txnId,
-      walletId: wallet._id,
-      userId: user._id,
-      type: "top_up",
-      amount: args.amount,
-      currency,
-      gatewayProvider: provider,
-      gatewayReference: args.txnId,
-      status: "completed",
-      description: `${provider} deposit of ${args.amount} ${currency} (Ref: ${args.txnId})`,
-      createdAt: now,
-      updatedAt: now,
-    });
+    const newBalance = settled.availableBalance;
 
     // 7. Mark 'telco_webhook_logs' as processed
     if (logId) {
@@ -2839,15 +1450,11 @@ async function executeCarrierDeposit(
       txnId: args.txnId,
     };
   } catch (err: any) {
-    console.error("[executeCarrierDeposit] Unexpected processing error:", {
-      error: err?.message || String(err),
-      stack: err?.stack,
-      args,
-    });
+    console.error("[executeCarrierDeposit] Unexpected processing error:", err?.message || String(err));
     return {
       success: false,
       status: "ERROR",
-      message: `Carrier deposit error: ${err?.message || "Internal transaction failure"}`,
+      message: "Carrier deposit could not be processed.",
       carrierTransactionId: args.txnId,
       txnId: args.txnId,
     };
@@ -2873,7 +1480,7 @@ async function executeOrangeMoneyWebhook(
 }
 
 /**
- * Idempotent internal mutation to process carrier deposits (Orange Money, Africell, Moneroo).
+ * Idempotent internal mutation to process carrier deposits (Orange Money, Africell).
  * Checks transactions.by_transaction_id to prevent double-crediting.
  */
 export const processIncomingCarrierDeposit = internalMutation({
@@ -2929,7 +1536,7 @@ export const depositOrangeMoney = internalMutation({
         userId: args.userId,
       });
     } catch (err: any) {
-      console.error("[depositOrangeMoney] Error during Orange Money deposit:", err);
+      console.error("[depositOrangeMoney] Error during Orange Money deposit:", err?.message ?? "unknown");
       return {
         success: false,
         status: "FAILED",
@@ -2986,46 +1593,37 @@ export const processOrangeMoneyDeposit = internalMutation({
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
- * Resolve a recipient strictly against the database before any payment.
- * Returns { found: false, error: ... } for invalid strings like "ddddd".
+ * Resolve a recipient for a transfer. Requires an authenticated session and returns
+ * ONLY what the sender needs to confirm the right person (name, masked phone,
+ * verification) — never email/role, and never an unbounded scan.
  */
 export const resolveRecipient = query({
   args: {
     query: v.string(),
     senderUserId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const { userId: senderId } = await requireSelf(ctx, args.sessionToken, args.senderUserId);
     const rawQuery = (args.query || "").trim();
-    if (!rawQuery || rawQuery.length < 3) {
+    if (!rawQuery || rawQuery.length < 3 || rawQuery.length > 120) {
       return { found: false, error: "Recipient identifier must be at least 3 characters." };
     }
 
     let matchedUser: Doc<"users"> | null = null;
 
-    // 1. Try direct user ID lookup
-    try {
-      const doc = await ctx.db.get(rawQuery as Id<"users">);
-      if (doc) matchedUser = doc;
-    } catch {
-      // not a direct Convex ID
-    }
+    const asId = ctx.db.normalizeId("users", rawQuery);
+    if (asId) matchedUser = await ctx.db.get(asId);
 
-    // 2. Phone number candidate lookup
     if (!matchedUser) {
-      const candidates = getSierraLeonePhoneCandidates(rawQuery);
-      for (const cand of candidates) {
-        const user = await ctx.db
-          .query("users")
-          .withIndex("by_phone", (q) => q.eq("phone", cand))
-          .first();
+      for (const cand of getSierraLeonePhoneCandidates(rawQuery)) {
+        const user = await ctx.db.query("users").withIndex("by_phone", (q) => q.eq("phone", cand)).first();
         if (user) {
           matchedUser = user;
           break;
         }
       }
     }
-
-    // 3. Email lookup
     if (!matchedUser && rawQuery.includes("@")) {
       matchedUser = await ctx.db
         .query("users")
@@ -3033,37 +1631,20 @@ export const resolveRecipient = query({
         .first();
     }
 
-    // 4. Trailing 8-digit scan fallback if digits exist
-    if (!matchedUser) {
-      const digits = rawQuery.replace(/\D/g, "");
-      if (digits.length >= 8) {
-        const local8 = digits.slice(-8);
-        const allUsers = await ctx.db.query("users").collect();
-        for (const u of allUsers) {
-          const uDigits = (u.phone || "").replace(/\D/g, "");
-          if (uDigits.endsWith(local8)) {
-            matchedUser = u;
-            break;
-          }
-        }
-      }
-    }
-
-    if (!matchedUser) {
+    if (!matchedUser || matchedUser.isActive === false) {
       return { found: false, error: "Recipient not found." };
     }
-
-    if (args.senderUserId && (matchedUser._id as string) === args.senderUserId) {
+    if (matchedUser._id === senderId) {
       return { found: false, error: "You cannot transfer funds to yourself." };
     }
 
+    const digits = (matchedUser.phone || "").replace(/\D/g, "");
+    const maskedPhone = digits.length >= 4 ? `•••• ${digits.slice(-3)}` : "";
     return {
       found: true,
       recipientId: matchedUser._id as string,
       name: matchedUser.name,
-      phone: matchedUser.phone,
-      email: matchedUser.email,
-      role: matchedUser.role,
+      phone: maskedPhone,
       verificationBadge: (matchedUser as any).verificationBadge || "NONE",
       isVerified: matchedUser.isVerified || false,
     };
@@ -3071,290 +1652,102 @@ export const resolveRecipient = query({
 });
 
 /**
- * Execute an atomic peer-to-peer transfer.
- * Strictly verifies sender balance, debits sender, credits recipient,
- * writes balanced ledger entries, and returns a verified transaction receipt.
+ * Execute an atomic peer-to-peer transfer from the AUTHENTICATED user.
+ * Identity comes from the session (senderUserId is only a consistency check).
+ * Authorized by PIN with brute-force lockout; idempotent via `idempotencyKey`.
+ * A PIN failure is RETURNED as { success:false, errorCode, message } so the
+ * attempt counter persists.
  */
 export const executeP2PTransfer = mutation({
   args: {
-    senderUserId: v.string(),
+    senderUserId: v.optional(v.string()),
     recipientQuery: v.string(),
     amount: v.number(),
     note: v.optional(v.string()),
-    pin: v.optional(v.string()),
+    pin: v.string(),
+    sessionToken: v.optional(v.string()),
+    idempotencyKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const rawAmount = Number(args.amount);
-    if (typeof rawAmount !== "number" || isNaN(rawAmount) || !isFinite(rawAmount) || rawAmount <= 0) {
-      throw new Error("INVALID_AMOUNT: Transfer amount must be greater than 0 SLE.");
-    }
-    const amount = Math.round(rawAmount * 100) / 100;
-    if (amount <= 0) {
-      throw new Error("INVALID_AMOUNT: Transfer amount must be at least 0.01 SLE.");
-    }
-    if (amount > 500000) {
-      throw new Error("AMOUNT_EXCEEDS_LIMIT: Single transfer limit is SLE 500,000.00.");
-    }
+    const { userId: senderId, user: sender } = await requireSelf(ctx, args.sessionToken, args.senderUserId);
 
-    // 1. Resolve sender
-    const sender = await ctx.db.get(args.senderUserId as Id<"users">);
-    if (!sender) {
-      throw new Error("SENDER_NOT_FOUND: Sender account does not exist.");
-    }
-    if (sender.isActive === false) {
-      throw new Error("SENDER_INACTIVE: Your account has been suspended or deactivated.");
-    }
+    const amount = assertValidAmount(args.amount, MAX_SINGLE_TRANSFER);
 
-    // Verify PIN / Password authorization if provided
-    if (args.pin && args.pin.trim().length > 0) {
-      const pinStr = args.pin.trim();
-      let isAuth = false;
-      if (sender.walletPinHash) {
-        const testPinHash = await generateDeterministicHash(`wallet_pin_${sender._id}_${pinStr}`);
-        if (testPinHash === sender.walletPinHash) isAuth = true;
-      }
-      if (!isAuth && sender.passwordHash) {
-        const isPasswordValid = await verifyPassword(pinStr, sender.passwordHash);
-        if (isPasswordValid) isAuth = true;
-      }
-      if (!isAuth && !sender.walletPinHash && !sender.passwordHash) {
-        isAuth = true;
-      }
-      if (!isAuth) {
-        throw new Error("INVALID_PIN: Incorrect security PIN or transaction password.");
-      }
-    }
-
-    // 2. Resolve sender wallet
-    let senderWallet = await ctx.db
-      .query("walletBalances")
-      .withIndex("by_user_currency", (q) =>
-        q.eq("userId", sender._id).eq("currency", "SLE")
-      )
-      .first();
-
-    if (!senderWallet) {
-      senderWallet = await ctx.db
-        .query("walletBalances")
-        .withIndex("by_user", (q) => q.eq("userId", sender._id))
-        .first();
-    }
-
-    if (!senderWallet) {
-      throw new Error("SENDER_WALLET_NOT_FOUND: Sender does not have an active wallet.");
-    }
-
-    if (senderWallet.availableBalance < amount) {
-      throw new Error(
-        `INSUFFICIENT_FUNDS: Available balance (SLE ${senderWallet.availableBalance.toFixed(2)}) is less than transfer amount (SLE ${amount.toFixed(2)}).`
-      );
-    }
-
-    // 3. Resolve recipient
+    // Resolve recipient (bounded, indexed lookups only).
     const rawQuery = args.recipientQuery.trim();
     let recipient: Doc<"users"> | null = null;
-    try {
-      const doc = await ctx.db.get(rawQuery as Id<"users">);
-      if (doc) recipient = doc;
-    } catch {
-      // not ID
-    }
-
+    const asId = ctx.db.normalizeId("users", rawQuery);
+    if (asId) recipient = await ctx.db.get(asId);
     if (!recipient) {
-      const candidates = getSierraLeonePhoneCandidates(rawQuery);
-      for (const cand of candidates) {
-        const u = await ctx.db
-          .query("users")
-          .withIndex("by_phone", (q) => q.eq("phone", cand))
-          .first();
+      for (const cand of getSierraLeonePhoneCandidates(rawQuery)) {
+        const u = await ctx.db.query("users").withIndex("by_phone", (q) => q.eq("phone", cand)).first();
         if (u) {
           recipient = u;
           break;
         }
       }
     }
-
     if (!recipient && rawQuery.includes("@")) {
-      recipient = await ctx.db
-        .query("users")
-        .withIndex("by_email", (q) => q.eq("email", rawQuery.toLowerCase()))
-        .first();
+      recipient = await ctx.db.query("users").withIndex("by_email", (q) => q.eq("email", rawQuery.toLowerCase())).first();
     }
+    if (!recipient) throw new Error(`RECIPIENT_NOT_FOUND: No recipient found.`);
+    if (recipient._id === senderId) throw new Error("INVALID_TRANSFER: You cannot transfer funds to yourself.");
+    if (recipient.isActive === false) throw new Error("RECIPIENT_INACTIVE: Recipient account has been suspended or deactivated.");
 
-    if (!recipient) {
-      const digits = rawQuery.replace(/\D/g, "");
-      if (digits.length >= 8) {
-        const local8 = digits.slice(-8);
-        const allUsers = await ctx.db.query("users").collect();
-        for (const u of allUsers) {
-          const uDigits = (u.phone || "").replace(/\D/g, "");
-          if (uDigits.endsWith(local8)) {
-            recipient = u;
-            break;
-          }
-        }
+    // A retried request with the same key returns the original receipt (no PIN, no second debit).
+    if (args.idempotencyKey) {
+      const prior = await findByIdempotencyKey(ctx, senderId, args.idempotencyKey);
+      if (prior) {
+        return {
+          success: true,
+          duplicate: true,
+          transactionId: prior.transactionId ?? (prior._id as string),
+          amount: prior.amount,
+          feeAmount: 0,
+          netAmount: prior.amount,
+          currency: prior.currency,
+          timestamp: prior.createdAt ?? prior._creationTime,
+          recipientName: recipient.name,
+          status: "COMPLETED",
+        };
       }
     }
 
-    if (!recipient) {
-      throw new Error(`RECIPIENT_NOT_FOUND: No recipient found for '${args.recipientQuery}'.`);
+    const pinCheck = await verifyAndTrackPin(ctx, sender, args.pin);
+    if (!pinCheck.ok) {
+      return { success: false, errorCode: pinCheck.code, message: pinCheck.message };
     }
 
-    if (recipient._id === sender._id) {
-      throw new Error("INVALID_TRANSFER: You cannot transfer funds to yourself.");
-    }
-
-    if (recipient.isActive === false) {
-      throw new Error("RECIPIENT_INACTIVE: Recipient account has been suspended or deactivated.");
-    }
-
-    // 4. Resolve or initialize recipient wallet
-    let recipientWallet = await ctx.db
-      .query("walletBalances")
-      .withIndex("by_user_currency", (q) =>
-        q.eq("userId", recipient._id).eq("currency", "SLE")
-      )
-      .first();
-
-    const now = Date.now();
-
-    if (!recipientWallet) {
-      const rwId = await ctx.db.insert("walletBalances", {
-        userId: recipient._id,
-        availableBalance: 0,
-        pendingBalance: 0,
-        escrowBalance: 0,
-        currency: "SLE",
-        updatedAt: now,
-      });
-      recipientWallet = (await ctx.db.get(rwId))!;
-    }
-
-    // 5. ATOMIC EXECUTION
-    const txId = "TX-" + (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `P2P-${now}-${Math.random().toString(36).substring(2, 9)}`);
-    const fee = 0; // P2P is 0 fee
-
-    const senderNewBalance = senderWallet.availableBalance - amount;
-    const recipientNewBalance = recipientWallet.availableBalance + amount;
-
-    // Deduct sender
-    await ctx.db.patch(senderWallet._id, {
-      availableBalance: senderNewBalance,
-      updatedAt: now,
-    });
-
-    // Credit recipient
-    await ctx.db.patch(recipientWallet._id, {
-      availableBalance: recipientNewBalance,
-      updatedAt: now,
-    });
-
-    // Insert Sender Debit Transaction Record
-    await ctx.db.insert("transactions", {
-      transactionId: txId,
-      walletId: senderWallet._id,
-      userId: sender._id,
-      counterpartyId: recipient._id,
-      counterpartyName: recipient.name,
-      counterpartyPhone: recipient.phone,
-      type: "p2p_transfer",
+    const result = await transferFunds(ctx, {
+      senderId,
+      recipientId: recipient._id,
       amount,
-      feeAmount: fee,
-      netAmount: -amount,
-      currency: "SLE",
-      status: "completed",
+      idempotencyKey: args.idempotencyKey,
+      note: args.note?.trim().slice(0, 140) || undefined,
       referenceType: "p2p_transfer",
-      referenceId: txId,
-      gatewayProvider: "INTERNAL_WALLET",
-      gatewayReference: txId,
-      description: args.note || `P2P Transfer to ${recipient.name} (${recipient.phone})`,
-      createdAt: now,
-      updatedAt: now,
     });
 
-    // Insert Recipient Credit Transaction Record
-    await ctx.db.insert("transactions", {
-      transactionId: txId,
-      walletId: recipientWallet._id,
-      userId: recipient._id,
-      counterpartyId: sender._id,
-      counterpartyName: sender.name,
-      counterpartyPhone: sender.phone,
-      type: "p2p_transfer",
+    await ctx.db.insert("user_notifications", {
+      userId: recipient._id as string,
+      targetType: "single_user",
+      title: "Funds Received!",
+      body: `You received SLE ${amount.toFixed(2)} from ${sender.name}.`,
+      read: false,
+      createdAt: result.timestamp,
+    });
+
+    return {
+      success: true,
+      duplicate: result.duplicate,
+      transactionId: result.transactionId,
       amount,
       feeAmount: 0,
       netAmount: amount,
       currency: "SLE",
-      status: "completed",
-      referenceType: "p2p_transfer",
-      referenceId: txId,
-      gatewayProvider: "INTERNAL_WALLET",
-      gatewayReference: txId,
-      description: args.note || `P2P Transfer from ${sender.name} (${sender.phone})`,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    // Create double-entry ledger records
-    try {
-      const ledgerTxId = await ctx.db.insert("ledger_transactions", {
-        transactionCode: txId,
-        description: `P2P Transfer: ${sender.name} -> ${recipient.name} (${amount} SLE)`,
-        createdAt: now,
-      });
-
-      await ctx.db.insert("ledger_entries", {
-        transactionId: ledgerTxId,
-        accountType: "CLIENT_AVAILABLE",
-        direction: "DEBIT",
-        amount,
-        currency: "SLE",
-        userId: sender._id,
-        createdAt: now,
-      });
-
-      await ctx.db.insert("ledger_entries", {
-        transactionId: ledgerTxId,
-        accountType: "CLIENT_AVAILABLE",
-        direction: "CREDIT",
-        amount,
-        currency: "SLE",
-        userId: recipient._id,
-        createdAt: now,
-      });
-    } catch (e) {
-      console.warn("Ledger entry recording non-fatal:", e);
-    }
-
-    // In-app notification to recipient
-    try {
-      await ctx.db.insert("user_notifications", {
-        userId: recipient._id as string,
-        targetType: "single_user",
-        title: "Funds Received!",
-        body: `You received SLE ${amount.toFixed(2)} from ${sender.name}. Your new balance is SLE ${recipientNewBalance.toFixed(2)}.`,
-        read: false,
-        createdAt: now,
-      });
-    } catch {
-      // non-fatal
-    }
-
-    return {
-      success: true,
-      transactionId: txId,
-      amount,
-      feeAmount: fee,
-      netAmount: amount,
-      currency: "SLE",
-      timestamp: now,
-      senderId: sender._id as string,
+      timestamp: result.timestamp,
       senderName: sender.name,
-      senderPhone: sender.phone,
-      recipientId: recipient._id as string,
       recipientName: recipient.name,
-      recipientPhone: recipient.phone,
-      senderBalanceAfter: senderNewBalance,
+      senderBalanceAfter: result.senderBalanceAfter,
       status: "COMPLETED",
       description: args.note || `P2P Transfer to ${recipient.name}`,
     };
@@ -3365,97 +1758,9 @@ export const executeP2PTransfer = mutation({
  * Atomic Escrow Lock mutation.
  * Deducts funds from buyer availableBalance and locks them into escrowBalance.
  */
-export const lockEscrowFunds = mutation({
-  args: {
-    buyerUserId: v.string(),
-    sellerUserId: v.string(),
-    amount: v.number(),
-    referenceType: v.string(),
-    referenceId: v.string(),
-    description: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const amount = Number(args.amount);
-    if (!amount || amount <= 0) {
-      throw new Error("INVALID_AMOUNT: Escrow lock amount must be greater than 0.");
-    }
-
-    const buyer = await ctx.db.get(args.buyerUserId as Id<"users">);
-    if (!buyer) throw new Error("BUYER_NOT_FOUND: Buyer account does not exist.");
-
-    const seller = await ctx.db.get(args.sellerUserId as Id<"users">);
-    if (!seller) throw new Error("SELLER_NOT_FOUND: Seller account does not exist.");
-
-    let wallet = await ctx.db
-      .query("walletBalances")
-      .withIndex("by_user_currency", (q) =>
-        q.eq("userId", buyer._id).eq("currency", "SLE")
-      )
-      .first();
-
-    if (!wallet) {
-      wallet = await ctx.db
-        .query("walletBalances")
-        .withIndex("by_user", (q) => q.eq("userId", buyer._id))
-        .first();
-    }
-
-    if (!wallet || wallet.availableBalance < amount) {
-      const avail = wallet ? wallet.availableBalance : 0;
-      throw new Error(
-        `INSUFFICIENT_FUNDS: Available balance (SLE ${avail.toFixed(2)}) is less than escrow requirement (SLE ${amount.toFixed(2)}). Please top up.`
-      );
-    }
-
-    const now = Date.now();
-    const txId = "ESCROW-" + (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${now}-${Math.random().toString(36).substring(2, 9)}`);
-
-    const newAvail = wallet.availableBalance - amount;
-    const newEscrow = (wallet.escrowBalance || 0) + amount;
-
-    await ctx.db.patch(wallet._id, {
-      availableBalance: newAvail,
-      escrowBalance: newEscrow,
-      updatedAt: now,
-    });
-
-    await ctx.db.insert("transactions", {
-      transactionId: txId,
-      walletId: wallet._id,
-      userId: buyer._id,
-      counterpartyId: seller._id,
-      counterpartyName: seller.name,
-      counterpartyPhone: seller.phone,
-      type: "escrow_lock",
-      amount,
-      feeAmount: 0,
-      netAmount: -amount,
-      currency: "SLE",
-      status: "completed",
-      escrowStatus: "locked",
-      referenceType: args.referenceType,
-      referenceId: args.referenceId,
-      gatewayProvider: "ESCROW_VAULT",
-      gatewayReference: txId,
-      description: args.description || `Escrow lock of SLE ${amount} for ${args.referenceType}`,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return {
-      success: true,
-      transactionId: txId,
-      amount,
-      currency: "SLE",
-      buyerId: buyer._id as string,
-      sellerId: seller._id as string,
-      availableBalanceAfter: newAvail,
-      escrowBalanceAfter: newEscrow,
-      status: "LOCKED",
-      timestamp: now,
-    };
-  },
-});
+// (lockEscrowFunds removed: no caller; it let a user lock funds under any reference with no
+// counterparty and no release path, so the money would stay stuck. Escrow is entered only through
+// the order-specific funding paths: bookings, vehicle orders, property contracts, viewing passes.)
 
 /**
  * Retrieve verified transaction receipt for the confirmation screen.
@@ -3463,12 +1768,16 @@ export const lockEscrowFunds = mutation({
 export const getTransactionReceipt = query({
   args: {
     transactionId: v.string(),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const tx = await ctx.db
+    const { userId: callerId } = await requireSelf(ctx, args.sessionToken);
+    // Transfers write one row per party under the same transactionId: return the CALLER's own row.
+    const rows = await ctx.db
       .query("transactions")
       .withIndex("by_transaction_id", (q) => q.eq("transactionId", args.transactionId))
-      .first();
+      .take(5);
+    const tx = rows.find((r) => r.userId === callerId) ?? null;
 
     if (!tx) return null;
 
@@ -3512,6 +1821,9 @@ export const recordPendingMoniMeTransaction = internalMutation({
     reference: v.string(),
     customerPhone: v.string(),
     description: v.string(),
+    subscriptionTierCode: v.optional(v.string()),
+    // "vehicle:<orderId>" | "re:<contractId>" | "pass:<passId>" - escrow funded once Monime confirms
+    escrowCheckout: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     let userDoc: Doc<"users"> | null = null;
@@ -3571,6 +1883,11 @@ export const recordPendingMoniMeTransaction = internalMutation({
       gatewayReference: args.reference,
       status: "pending",
       description: args.description,
+      ...(args.subscriptionTierCode
+        ? { referenceType: "subscription_checkout", referenceId: args.subscriptionTierCode }
+        : args.escrowCheckout
+        ? { referenceType: "escrow_checkout", referenceId: args.escrowCheckout }
+        : {}),
       createdAt: now,
       updatedAt: now,
     });
@@ -3613,6 +1930,62 @@ export const updatePendingPaymentCode = internalMutation({
 /**
  * Internal query: Fetch pending transaction details for active gateway verification.
  */
+/** Resolves the authenticated caller for actions (which have no ctx.db). */
+export const getSessionCaller = internalQuery({
+  args: { sessionToken: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const { userId, user } = await requireSelf(ctx, args.sessionToken);
+    return { userId: userId as string, isAdmin: user.role === "admin" };
+  },
+});
+
+/**
+ * INTERNAL: what an escrow checkout costs, decided by the SERVER from the order/contract/pass, and
+ * confirmation that the caller is the paying party and the item is still awaiting payment.
+ */
+export const getEscrowCheckoutQuote = internalQuery({
+  args: {
+    userId: v.id("users"),
+    escrowOrderId: v.optional(v.string()),
+    reContractId: v.optional(v.string()),
+    inspectionPassId: v.optional(v.string()),
+    bookingId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.bookingId) {
+      const id = ctx.db.normalizeId("bookings", args.bookingId);
+      const b = id ? await ctx.db.get(id) : null;
+      if (!b || b.buyerId !== (args.userId as string)) throw new Error("Booking not found.");
+      if (b.paymentStatus === "completed" || b.status === "cancelled" || b.status === "completed") {
+        throw new Error("This booking is not awaiting payment.");
+      }
+      return { amount: b.totalAmount, label: `Booking: ${b.listingTitle}`.slice(0, 80), tag: `booking:${b._id}` };
+    }
+    if (args.escrowOrderId) {
+      const id = ctx.db.normalizeId("escrow_orders", args.escrowOrderId);
+      const o = id ? await ctx.db.get(id) : null;
+      if (!o || o.renterOrBuyerId !== args.userId) throw new Error("Escrow order not found.");
+      if (o.status !== "PENDING_PAYMENT") throw new Error("This order is not awaiting payment.");
+      return { amount: o.grossEscrowAmount, label: `Vehicle escrow ${o.orderCode}`, tag: `vehicle:${o._id}` };
+    }
+    if (args.reContractId) {
+      const id = ctx.db.normalizeId("re_escrow_contracts", args.reContractId);
+      const c = id ? await ctx.db.get(id) : null;
+      if (!c || c.clientId !== args.userId) throw new Error("Escrow contract not found.");
+      if (c.currentState !== "CREATED") throw new Error("This contract is not awaiting payment.");
+      return { amount: c.grossAmount, label: `Property escrow ${c.contractCode}`, tag: `re:${c._id}` };
+    }
+    if (args.inspectionPassId) {
+      const id = ctx.db.normalizeId("re_inspection_passes", args.inspectionPassId);
+      const p = id ? await ctx.db.get(id) : null;
+      if (!p || p.clientId !== args.userId) throw new Error("Inspection pass not found.");
+      if (p.status !== "CREATED") throw new Error("This pass is not awaiting payment.");
+      return { amount: p.tourFee, label: "Viewing tour pass", tag: `pass:${p._id}` };
+    }
+    throw new Error("Nothing to pay for.");
+  },
+});
+
 export const getPendingTransactionForVerification = internalQuery({
   args: {
     reference: v.string(),
@@ -3666,19 +2039,52 @@ export const initiateMoniMePayment = action({
     email: v.optional(v.string()),
     customerEmail: v.optional(v.string()),
     customerName: v.optional(v.string()),
-    userId: v.optional(v.string()),
+    userId: v.optional(v.string()), // ignored: the payer is the authenticated user
+    sessionToken: v.optional(v.string()),
     currency: v.optional(v.string()),
     description: v.optional(v.string()),
     bookingId: v.optional(v.string()),
     escrowOrderId: v.optional(v.string()),
     reContractId: v.optional(v.string()),
     returnUrl: v.optional(v.string()),
+    // Direct payment for a professional subscription: the amount is quoted by the SERVER.
+    subscriptionTierCode: v.optional(v.string()),
+    inspectionPassId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VAsS2nSa4AALw1JuBJrXtUAnF").trim();
-    const token = (process.env.MONIME_API_KEY || process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
+    const caller: any = await ctx.runQuery(internal.payments.getSessionCaller, { sessionToken: args.sessionToken });
+    const callerUserId: string = caller.userId;
+    let amount: number = args.amount;
+    let purposeDescription: string | undefined;
+    if (args.subscriptionTierCode) {
+      const quote: any = await ctx.runQuery(internal.subscriptions.getCheckoutQuote, {
+        userId: callerUserId as Id<"users">,
+        tierCode: args.subscriptionTierCode,
+      });
+      amount = quote.price;
+      purposeDescription = `${quote.name} subscription`;
+    }
+    let escrowCheckout: string | undefined;
+    if (args.escrowOrderId || args.reContractId || args.inspectionPassId || args.bookingId) {
+      if (args.subscriptionTierCode) throw new Error("Choose one payment purpose.");
+      if ([args.escrowOrderId, args.reContractId, args.inspectionPassId, args.bookingId].filter(Boolean).length > 1) {
+        throw new Error("Choose one payment purpose.");
+      }
+      // The escrow amount is decided by the server from the order itself; a client amount is ignored.
+      const quote: any = await ctx.runQuery(internal.payments.getEscrowCheckoutQuote, {
+        userId: callerUserId as Id<"users">,
+        escrowOrderId: args.escrowOrderId,
+        reContractId: args.reContractId,
+        inspectionPassId: args.inspectionPassId,
+        bookingId: args.bookingId,
+      });
+      amount = quote.amount;
+      purposeDescription = quote.label;
+      escrowCheckout = quote.tag;
+    }
+    amount = assertValidAmount(amount);
+    const { spaceId, accessToken: token, apiBaseUrl } = getMoniMeConfig();
     const accessToken = token;
-    const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
 
     const rawPhone = args.phoneNumber || args.customerPhone || "";
     let cleanPhone = rawPhone.replace(/\D/g, "");
@@ -3705,29 +2111,31 @@ export const initiateMoniMePayment = action({
     }
 
     const description =
-      args.description ?? `Deposit SLE ${args.amount} into Escrow Protection`;
+      purposeDescription ?? args.description ?? `Deposit SLE ${amount} into your Vektolux wallet`;
 
-    // 1. Record pending transaction in Convex ledger (non-blocking)
-    try {
-      await ctx.runMutation(internal.payments.recordPendingMoniMeTransaction, {
-        userId: args.userId,
-        amount: args.amount,
-        currency,
-        provider: providerSlug,
-        reference,
-        customerPhone: sanitizedPhone,
-        description,
-      });
-    } catch (e: any) {
-      console.warn("[MoniMe Pending] Non-fatal pending recording failure:", e?.message ?? e);
+    // 1. Record the pending transaction FIRST. Without it the payment could not be matched to its
+    //    payer, so no checkout is created if this fails.
+    const pending: any = await ctx.runMutation(internal.payments.recordPendingMoniMeTransaction, {
+      userId: callerUserId,
+      amount,
+      currency,
+      provider: providerSlug,
+      reference,
+      customerPhone: sanitizedPhone,
+      description,
+      ...(args.subscriptionTierCode ? { subscriptionTierCode: args.subscriptionTierCode } : {}),
+      ...(escrowCheckout ? { escrowCheckout } : {}),
+    });
+    if (!pending?.success) {
+      return { success: false, code: "PAYMENT_NOT_STARTED", message: "Could not start the payment. Please try again." };
     }
 
-    const minorAmount = Math.round(args.amount * 100);
+    const minorAmount = Math.round(amount * 100);
 
     // 2. Construct dynamic checkout session payload strictly per MoniMe API specification
     const checkoutPayload: Record<string, any> = {
-      name: "Vektolux Escrow Deposit",
-      description: `Deposit SLE ${args.amount} into Escrow Protection`,
+      name: args.subscriptionTierCode ? "Vektolux Subscription" : escrowCheckout ? "Vektolux Escrow Payment" : "Vektolux Wallet Deposit",
+      description,
       lineItems: [
         {
           name: "Escrow Wallet Deposit",
@@ -3747,9 +2155,9 @@ export const initiateMoniMePayment = action({
       successUrl: returnUrl,
       cancelUrl: "vektolux://payment/cancel",
       metadata: {
-        userId: args.userId ?? "",
-        type: "escrow_deposit",
-        amount: String(args.amount),
+        userId: callerUserId ?? "",
+        type: args.subscriptionTierCode ? "subscription" : escrowCheckout ? "escrow_deposit" : "wallet_deposit",
+        amount: String(amount),
         reference,
         provider: providerSlug,
         providerId: providerSlug === "orange" ? "m17" : (providerSlug === "africell" ? "m18" : "m19"),
@@ -3762,7 +2170,6 @@ export const initiateMoniMePayment = action({
     };
 
 
-    console.log("[MoniMe Request Body]:", JSON.stringify(checkoutPayload, null, 2));
 
     try {
       const response = await fetch(`${apiBaseUrl}/checkout-sessions`, {
@@ -3779,7 +2186,7 @@ export const initiateMoniMePayment = action({
 
       const responseStatus = response.status;
       const resText = await response.text();
-      console.log("[MoniMe Response]:", responseStatus, resText);
+      console.log("[MoniMe] checkout-session create status:", responseStatus);
 
       let resJson: any = null;
       try {
@@ -3808,7 +2215,6 @@ export const initiateMoniMePayment = action({
             },
           };
 
-          console.log("[MoniMe Payment Code Request Body]:", JSON.stringify(paymentCodePayload, null, 2));
           try {
             const pcRes = await fetch(`${apiBaseUrl}/payment-codes`, {
               method: "POST",
@@ -3823,7 +2229,7 @@ export const initiateMoniMePayment = action({
             });
 
             const pcText = await pcRes.text();
-            console.log("[MoniMe Payment Code Response]:", pcRes.status, pcText);
+            console.log("[MoniMe] payment-code create status:", pcRes.status);
 
             let pcJson: any = null;
             try { pcJson = JSON.parse(pcText); } catch (_) { pcJson = { raw: pcText }; }
@@ -3846,9 +2252,9 @@ export const initiateMoniMePayment = action({
               return {
                 success: true,
                 code: "PAYMENT_INITIATED",
-                message: `Dial ${ussdCode} on your phone to complete your payment of SLE ${args.amount}.`,
+                message: `Dial ${ussdCode} on your phone to complete your payment of SLE ${amount}.`,
                 ussdCode,
-                ussdPrompt: `Dial ${ussdCode} on your phone to complete your payment of SLE ${args.amount}.`,
+                ussdPrompt: `Dial ${ussdCode} on your phone to complete your payment of SLE ${amount}.`,
                 checkoutUrl: ussdCode,
                 transactionId: pcData.id ?? reference,
                 paymentCodeId: pcData.id,
@@ -3858,7 +2264,7 @@ export const initiateMoniMePayment = action({
               };
             }
           } catch (pcErr: any) {
-            console.warn("[MoniMe Payment Code Fallback Error]:", pcErr);
+            console.warn("[MoniMe Payment Code Fallback Error]:", (pcErr as any)?.message ?? "unknown");
           }
 
         console.error(`[MoniMe Error] Gateway rejected payment (HTTP ${responseStatus}):`, resJson);
@@ -3867,7 +2273,6 @@ export const initiateMoniMePayment = action({
         const rawMsg =
           resJson?.error?.message ||
           resJson?.message ||
-          resText ||
           `Payment gateway rejected request (HTTP ${responseStatus})`;
 
         return {
@@ -3876,7 +2281,6 @@ export const initiateMoniMePayment = action({
           message: rawMsg,
           statusCode: responseStatus,
           error: rawMsg,
-          rawError: resJson,
         };
       }
 
@@ -3890,6 +2294,11 @@ export const initiateMoniMePayment = action({
         resData.paymentUrl ??
         "";
       const paymentId = resData.id ?? resData.paymentId ?? reference;
+      // Bind the hosted checkout session to OUR pending transaction so it can be verified later
+      // (GET /v1/checkout-sessions/{id}) by the webhook, the poller or the app.
+      if (typeof resData.id === "string" && /^[A-Za-z0-9_-]{4,80}$/.test(resData.id)) {
+        await ctx.runMutation(internal.payments.updatePendingPaymentCode, { reference, paymentCodeId: resData.id });
+      }
       const ussdPrompt =
         resData.ussdPrompt ??
         resData.ussd_prompt ??
@@ -3911,7 +2320,7 @@ export const initiateMoniMePayment = action({
         provider: providerSlug,
       };
     } catch (err: any) {
-      console.error("[MoniMe Network Error] Outbound fetch to MoniMe failed:", err);
+      console.error("[MoniMe Network Error] Outbound fetch to MoniMe failed:", err?.message ?? "unknown");
       logGatewayError(500, err, checkoutPayload);
       return {
         success: false,
@@ -3938,6 +2347,7 @@ export const createTopUpSession = action({
     customerEmail: v.optional(v.string()),
     customerName: v.optional(v.string()),
     userId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     walletId: v.optional(v.string()),
     currency: v.optional(v.string()),
     description: v.optional(v.string()),
@@ -3953,7 +2363,7 @@ export const createTopUpSession = action({
       email: args.email || args.customerEmail,
       customerEmail: args.email || args.customerEmail,
       customerName: args.customerName,
-      userId: args.userId,
+      sessionToken: args.sessionToken,
       currency: args.currency,
       description: args.description,
       returnUrl: args.returnUrl,
@@ -3976,6 +2386,7 @@ export const createCheckoutSession = action({
     customerEmail: v.optional(v.string()),
     customerName: v.optional(v.string()),
     userId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     walletId: v.optional(v.string()),
     currency: v.optional(v.string()),
     description: v.optional(v.string()),
@@ -3994,15 +2405,17 @@ export const createCheckoutSession = action({
 export const getPaymentStatus = query({
   args: {
     reference: v.string(),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const { userId: callerId } = await requireSelf(ctx, args.sessionToken);
     // 1. Check by transactionId
     const tx = await ctx.db
       .query("transactions")
       .withIndex("by_transaction_id", (q) => q.eq("transactionId", args.reference))
       .first();
 
-    if (tx) {
+    if (tx && tx.userId === callerId) {
       return {
         found: true,
         status: tx.status, // "pending", "completed", "failed"
@@ -4048,485 +2461,275 @@ export const getPaymentStatus = query({
  * 4. This guarantees that all users receive their money instantly inside their account
  *    without relying solely on webhooks or requiring ANY manual intervention!
  */
-export const verifyAndSettleMoniMePayment = action({
-  args: {
-    reference: v.string(),
-    userId: v.optional(v.string()),
+/** INTERNAL: pending MoniMe deposits that could still be settled (poller safety net). */
+export const listPendingMoniMeDeposits = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const since = Date.now() - 48 * 3600 * 1000;
+    const rows = await ctx.db.query("transactions").withIndex("by_status", (q) => q.eq("status", "pending")).order("desc").take(100);
+    return rows
+      .filter(
+        (t) =>
+          t.type === "top_up" &&
+          (t.gatewayProvider ?? "").startsWith("MONIME") &&
+          (t.createdAt ?? t._creationTime) >= since &&
+          isMonimeObjectId(t.gatewayReference)
+      )
+      .map((t) => t.gatewayReference as string);
   },
-  handler: async (ctx, args) => {
-    const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VAsS2nSa4AALw1JuBJrXtUAnF").trim();
-    const token = (process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
-    const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
+});
 
-    // 1. Query current transaction status in Convex
-    const statusData: any = await ctx.runQuery(api.payments.getPaymentStatus, {
-      reference: args.reference,
-    });
-
-    if (statusData && (statusData.status === "completed" || statusData.status === "success")) {
-      return {
-        success: true,
-        settled: true,
-        status: "completed",
-        amount: statusData.amount,
-        currency: statusData.currency,
-        message: "Payment already verified and credited to account.",
-      };
+/** Safety net so a deposit is credited even if the webhook was missed and the app was closed. */
+export const reconcilePendingDeposits = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ checked: number }> => {
+    const refs: string[] = await ctx.runQuery(internal.payments.listPendingMoniMeDeposits, {});
+    for (const reference of refs) {
+      await ctx.runAction(internal.payments.settleMoniMeReference, { reference });
     }
-
-    // 2. Fetch pending transaction details
-    const txDetails: any = await ctx.runQuery(internal.payments.getPendingTransactionForVerification, {
-      reference: args.reference,
-    });
-
-    if (!txDetails) {
-      return {
-        success: false,
-        settled: false,
-        status: "not_found",
-        message: "No transaction found for reference.",
-      };
-    }
-
-    if (txDetails.status === "completed") {
-      return {
-        success: true,
-        settled: true,
-        status: "completed",
-        amount: txDetails.amount,
-        currency: txDetails.currency,
-      };
-    }
-
-    // Identify payment code ID on MoniMe
-    const paymentCodeId = (txDetails.gatewayReference && txDetails.gatewayReference.startsWith("pmc-"))
-      ? txDetails.gatewayReference
-      : (args.reference.startsWith("pmc-") ? args.reference : null);
-
-    if (!paymentCodeId) {
-      return {
-        success: true,
-        settled: false,
-        status: "pending",
-        message: "Awaiting carrier confirmation",
-      };
-    }
-
-    // 3. Query MoniMe API directly for the payment code status
-    try {
-      const resp = await fetch(`${apiBaseUrl}/payment-codes/${paymentCodeId}`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Monime-Space-Id": spaceId,
-        },
-      });
-
-      if (!resp.ok) {
-        console.warn(`[MoniMe Verify] HTTP ${resp.status} from MoniMe for ${paymentCodeId}`);
-        return {
-          success: true,
-          settled: false,
-          status: "pending",
-        };
-      }
-
-      const resJson: any = await resp.json();
-      const codeResult = resJson?.result ?? resJson?.data;
-
-      if (!codeResult) {
-        return { success: true, settled: false, status: "pending" };
-      }
-
-      const monimeStatus = (codeResult.status || "").toLowerCase();
-      console.log(`[MoniMe Verify] Code ${paymentCodeId} status is: ${monimeStatus}`);
-
-      if (
-        monimeStatus === "completed" ||
-        monimeStatus === "paid" ||
-        monimeStatus === "success" ||
-        monimeStatus === "successful" ||
-        monimeStatus === "processed"
-      ) {
-        let grossAmount = txDetails.amount;
-        if (codeResult.amount?.value) {
-          grossAmount = codeResult.amount.value / 100;
-        }
-
-        const feeEst = grossAmount === 5 ? 0.05 : (grossAmount > 0 ? 0.10 : 0);
-        const netCredit = Math.max(0.01, Math.round((grossAmount - feeEst) * 100) / 100);
-
-        // 4. Atomically credit wallet and settle
-        const settleRes: any = await ctx.runMutation(internal.payments.processMoniMeWebhookSuccess, {
-          transactionId: args.reference,
-          reference: args.reference,
-          rawReference: args.reference,
-          amount: grossAmount,
-          netAmount: netCredit,
-          feeAmount: feeEst,
-          currency: codeResult.amount?.currency || txDetails.currency || "SLE",
-          provider: "MONIME",
-          customerPhone: codeResult.authorizedPhoneNumber || txDetails.customerPhone,
-          userId: args.userId || txDetails.userId,
-        });
-
-        console.log(`[MoniMe Active Settle] Settled payment ${args.reference} instantly:`, settleRes);
-
-        return {
-          success: true,
-          settled: true,
-          status: "completed",
-          amount: grossAmount,
-          netAmount: netCredit,
-          message: `Top-up of SLE ${grossAmount.toFixed(2)} credited instantly!`,
-        };
-      }
-
-      return {
-        success: true,
-        settled: false,
-        status: monimeStatus || "pending",
-      };
-    } catch (fetchErr) {
-      console.error("[MoniMe Verify] Network error verifying with MoniMe:", fetchErr);
-      return {
-        success: false,
-        settled: false,
-        status: "pending",
-        error: String(fetchErr),
-      };
-    }
+    return { checked: refs.length };
   },
 });
 
 /**
- * Process a verified MoniMe webhook success payload.
- * Atomically:
- * 1. Checks idempotency (prevents double credit).
- * 2. Updates pending transaction to 'completed' or creates a completed transaction.
- * 3. Atomically credits the user's available wallet balance.
- * 4. Writes double-entry ledger records.
- * 5. Dispatches real-time user notification.
+ * INTERNAL: settle a MoniMe payment by asking MoniMe ITSELF. Shared by the webhook receiver, the
+ * background poller and the user-triggered check. The wallet is credited only if MoniMe's API
+ * reports the payment code as paid, and always to the owner of OUR pending transaction. A forged
+ * webhook/reference can therefore never credit anything: it can only cause a harmless re-check.
+ */
+export const settleMoniMeReference = internalAction({
+  args: { reference: v.string() },
+  handler: async (ctx, args): Promise<any> => {
+    const { spaceId, accessToken: token, apiBaseUrl } = getMoniMeConfig();
+    if (!spaceId || !token) {
+      return { success: false, settled: false, status: "provider_not_configured" };
+    }
+
+    const txDetails: any = await ctx.runQuery(internal.payments.getPendingTransactionForVerification, {
+      reference: args.reference,
+    });
+    if (!txDetails) {
+      return { success: false, settled: false, status: "not_found", message: "No transaction found for reference." };
+    }
+    if (txDetails.status === "completed") {
+      return { success: true, settled: true, status: "completed", amount: txDetails.amount, currency: txDetails.currency };
+    }
+
+    // The provider object bound to OUR pending transaction: a USSD payment code (pmc-…) or a hosted
+    // checkout session. Our own internal reference (vktlx_…) means nothing was created at Monime yet.
+    const objectId: string | null = isMonimeObjectId(txDetails.gatewayReference)
+      ? txDetails.gatewayReference
+      : null;
+    if (!objectId) {
+      return { success: true, settled: false, status: "pending", message: "Awaiting carrier confirmation" };
+    }
+    const isPaymentCode = objectId.startsWith("pmc-");
+    const path = isPaymentCode ? `payment-codes/${objectId}` : `checkout-sessions/${objectId}`;
+
+    try {
+      const resp = await fetch(`${apiBaseUrl}/${path}`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}`, "Monime-Space-Id": spaceId },
+      });
+      if (!resp.ok) {
+        console.warn(`[MoniMe Verify] HTTP ${resp.status} for ${isPaymentCode ? "payment code" : "checkout session"}`);
+        return { success: true, settled: false, status: "pending" };
+      }
+      const resJson: any = await resp.json();
+      const obj = resJson?.result ?? resJson?.data;
+      if (!obj) return { success: true, settled: false, status: "pending" };
+      const status = String(obj.status ?? "").toLowerCase();
+
+      // Payment codes: "completed"/"processed". Checkout sessions: "completed" (docs.monime.io).
+      const paid = isPaymentCode ? status === "completed" || status === "processed" : status === "completed";
+      if (!paid) {
+        if (status === "cancelled" || status === "expired") {
+          await ctx.runMutation(internal.payments.failMoniMeDeposit, { txDocId: txDetails._id, reason: `Provider reported ${status}` });
+          return { success: true, settled: false, status };
+        }
+        return { success: true, settled: false, status: status || "pending" };
+      }
+
+      // Verified amount: payment code -> amount.value; checkout session -> sum of OUR line items.
+      let minor: number | null = null;
+      let currency: string | null = null;
+      if (isPaymentCode) {
+        if (typeof obj.amount?.value === "number") {
+          minor = obj.amount.value;
+          currency = obj.amount.currency ?? null;
+        }
+      } else {
+        const items: any[] = obj.lineItems?.data ?? obj.lineItems ?? [];
+        let total = 0;
+        for (const it of items) {
+          if (typeof it?.price?.value !== "number") { total = NaN; break; }
+          total += it.price.value * (typeof it.quantity === "number" ? it.quantity : 1);
+          currency = currency ?? it.price.currency ?? null;
+        }
+        if (items.length > 0 && Number.isFinite(total)) minor = total;
+        // The session must be the one we created for this transaction.
+        const md = obj.metadata ?? {};
+        if (md.reference && md.reference !== txDetails.transactionId) {
+          console.error("[MoniMe Verify] checkout session reference mismatch");
+          return { success: false, settled: false, status: "mismatch" };
+        }
+      }
+      if (minor === null || !(minor > 0)) {
+        console.error("[MoniMe Verify] provider did not report a usable amount");
+        return { success: false, settled: false, status: "amount_unknown" };
+      }
+
+      const settleRes: any = await ctx.runMutation(internal.payments.processMoniMeWebhookSuccess, {
+        txDocId: txDetails._id,
+        verifiedAmount: Math.round(minor) / 100,
+        currency: currency ?? txDetails.currency ?? "SLE",
+      });
+      return {
+        success: !!settleRes?.success,
+        settled: !!settleRes?.success,
+        status: settleRes?.success ? "completed" : settleRes?.status ?? "error",
+        amount: settleRes?.amount,
+        subscription: settleRes?.subscription,
+      };
+    } catch (fetchErr: any) {
+      console.error("[MoniMe Verify] Network error:", fetchErr?.message ?? String(fetchErr));
+      return { success: false, settled: false, status: "pending" };
+    }
+  },
+});
+
+export const verifyAndSettleMoniMePayment = action({
+  args: {
+    reference: v.string(),
+    userId: v.optional(v.string()), // ignored: the credited account is always the transaction's owner
+    sessionToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    const caller: any = await ctx.runQuery(internal.payments.getSessionCaller, { sessionToken: args.sessionToken });
+
+    const txDetails: any = await ctx.runQuery(internal.payments.getPendingTransactionForVerification, {
+      reference: args.reference,
+    });
+    if (!txDetails) {
+      return { success: false, settled: false, status: "not_found", message: "No transaction found for reference." };
+    }
+    // Only the owner of the payment (or an admin) may trigger its verification.
+    if (!caller.isAdmin && txDetails.userId !== caller.userId) {
+      throw new Error("Unauthorized: This payment does not belong to you.");
+    }
+    return await ctx.runAction(internal.payments.settleMoniMeReference, { reference: args.reference });
+  },
+});
+
+
+/** Monime object ids we may look up: payment codes (pmc-…) or checkout sessions; never our own refs. */
+function isMonimeObjectId(ref: string | undefined | null): ref is string {
+  return !!ref && !ref.startsWith("vktlx_") && /^[A-Za-z0-9_-]{4,80}$/.test(ref);
+}
+
+/**
+ * INTERNAL: credit a pending MoniMe deposit whose payment Monime's API has CONFIRMED
+ * (see settleMoniMeReference). The credited account is always the owner of OUR pending
+ * transaction; the credited amount is the amount Monime reports as paid. No fee is invented —
+ * a fee is only deducted if a verified fee figure exists. Idempotent: a completed transaction is
+ * never credited again. Double-entry ledger via walletCore.settleVerifiedDeposit.
  */
 export const processMoniMeWebhookSuccess = internalMutation({
   args: {
-    transactionId: v.string(),
-    reference: v.optional(v.string()),
-    rawReference: v.optional(v.string()),
-    orderNumber: v.optional(v.string()),
-    walletId: v.optional(v.string()),
-    amount: v.number(),
-    netAmount: v.optional(v.number()),
-    feeAmount: v.optional(v.number()),
-    currency: v.optional(v.string()),
-    provider: v.optional(v.string()),
-    customerPhone: v.optional(v.string()),
-    userId: v.optional(v.string()),
-    rawPayload: v.optional(v.string()),
+    txDocId: v.id("transactions"),
+    verifiedAmount: v.number(),
+    currency: v.string(),
   },
   handler: async (ctx, args) => {
-    const now = Date.now();
-    const currency = args.currency || "SLE";
-    const provider = args.provider || "MONIME";
-    const lookupRef = args.reference || args.transactionId;
-
-    // Build reference variants handling section sign (§) vs underscore (_) and order numbers
-    const allRefs = [
-      lookupRef,
-      lookupRef.replace(/§/g, "_"),
-      lookupRef.replace(/_/g, "§"),
-      args.transactionId,
-      args.transactionId.replace(/§/g, "_"),
-      args.transactionId.replace(/_/g, "§"),
-      args.rawReference,
-      args.rawReference?.replace(/§/g, "_"),
-      args.rawReference?.replace(/_/g, "§"),
-      args.orderNumber,
-      args.orderNumber?.replace(/-/g, ""),
-      args.orderNumber?.replace(/(\w{4})(\w{4})(\w{4})/, "$1-$2-$3"),
-    ].filter(Boolean) as string[];
-
-    const refVariants = Array.from(new Set(allRefs));
-
-    // 1. Idempotency Check A: by transactionId across all variants
-    let existingTx: Doc<"transactions"> | null = null;
-    for (const vRef of refVariants) {
-      existingTx = await ctx.db
-        .query("transactions")
-        .withIndex("by_transaction_id", (q) => q.eq("transactionId", vRef))
-        .first();
-      if (existingTx) break;
+    const tx = await ctx.db.get(args.txDocId);
+    if (!tx || tx.type !== "top_up" || !tx.gatewayProvider || !tx.gatewayReference) {
+      return { success: false, status: "not_found" };
+    }
+    if (tx.status === "completed") return { success: true, alreadyProcessed: true, amount: tx.amount };
+    if (tx.status !== "pending") return { success: false, status: tx.status };
+    const txCurrency = (tx.currency ?? "SLE").toUpperCase();
+    if (args.currency.toUpperCase() !== txCurrency) {
+      await ctx.db.patch(tx._id, { failureReason: `Currency mismatch: paid ${args.currency}`, updatedAt: Date.now() });
+      return { success: false, status: "currency_mismatch" };
     }
 
-    // Idempotency Check B: by gatewayReference across common MoniMe providers
-    if (!existingTx) {
-      const candidateProviders = Array.from(
-        new Set([
-          provider,
-          "MONIME_ORANGE",
-          "MONIME",
-          "MONIME_AFRICELL",
-          "MONIME_QMONEY",
-          "orange",
-          "africell",
-          "qmoney",
-        ])
-      );
-      for (const candProv of candidateProviders) {
-        for (const vRef of refVariants) {
-          const byRef = await ctx.db
-            .query("transactions")
-            .withIndex("by_gateway_ref", (q) =>
-              q.eq("gatewayProvider", candProv).eq("gatewayReference", vRef)
-            )
-            .first();
-          if (byRef) {
-            existingTx = byRef;
-            break;
-          }
-        }
-        if (existingTx) break;
-      }
-    }
+    const settled = await settleVerifiedDeposit(ctx, {
+      userId: tx.userId,
+      amount: args.verifiedAmount,
+      currency: txCurrency,
+      provider: tx.gatewayProvider,
+      providerReference: tx.gatewayReference,
+      description: tx.description ?? "Wallet deposit via Monime",
+    });
 
-    // Direct gatewayReference fallback
-    if (!existingTx) {
-      for (const vRef of refVariants) {
-        const byDirectGRef = await ctx.db
-          .query("transactions")
-          .filter((q) => q.eq(q.field("gatewayReference"), vRef))
-          .first();
-        if (byDirectGRef) {
-          existingTx = byDirectGRef;
-          break;
-        }
-      }
-    }
-
-    // Idempotency Check C: Already completed check
-    if (existingTx && existingTx.status === "completed") {
-      return {
-        success: true,
-        alreadyProcessed: true,
-        transactionId: existingTx.transactionId,
-        message: "Transaction already completed in ledger",
-      };
-    }
-
-    // 2. Identify target user & wallet
-    let user: Doc<"users"> | null = null;
-    let targetWallet: Doc<"walletBalances"> | null = null;
-
-    if (args.walletId) {
-      const normWId = ctx.db.normalizeId("walletBalances", args.walletId);
-      if (normWId) {
-        targetWallet = await ctx.db.get(normWId);
-        if (targetWallet) {
-          user = await ctx.db.get(targetWallet.userId);
-        }
-      }
-    }
-
-    if (!user && args.userId) {
-      const userNorm = ctx.db.normalizeId("users", args.userId);
-      if (userNorm) user = await ctx.db.get(userNorm);
-    }
-
-    if (!user && existingTx) {
-      user = await ctx.db.get(existingTx.userId);
-    }
-
-    if (!user && args.customerPhone) {
-      const candidates = getSierraLeonePhoneCandidates(args.customerPhone);
-      for (const cand of candidates) {
-        user = await ctx.db
-          .query("users")
-          .withIndex("by_phone", (q) => q.eq("phone", cand))
-          .first();
-        if (user) break;
-      }
-    }
-
-    // Fallback: check if the reference contains a numeric timestamp
-    if (!user) {
-      for (const vRef of refVariants) {
-        const parts = vRef.split(/[§_]/);
-        for (const part of parts) {
-          if (part.length >= 12 && /^\d+$/.test(part)) {
-            const ts = parseInt(part, 10);
-            const nearTx = await ctx.db
-              .query("transactions")
-              .filter((q) =>
-                q.and(
-                  q.gte(q.field("createdAt"), ts - 60000),
-                  q.lte(q.field("createdAt"), ts + 60000)
-                )
-              )
-              .first();
-            if (nearTx) {
-              user = await ctx.db.get(nearTx.userId);
-              if (!existingTx) existingTx = nearTx;
-              break;
-            }
-          }
-        }
-        if (user) break;
-      }
-    }
-
-    if (!user) {
-      console.warn("MoniMe deposit: could not resolve user for phone:", args.customerPhone);
-      return {
-        success: false,
-        status: "ORPHANED_USER",
-        message: `No user matches phone ${args.customerPhone} or userId ${args.userId}`,
-        transactionId: args.transactionId,
-      };
-    }
-
-    // If existingTx is still null, look for recent pending top-up from this user
-    if (!existingTx) {
-      const userTxns = await ctx.db
-        .query("transactions")
-        .withIndex("by_user", (q) => q.eq("userId", user!._id))
-        .collect();
-      existingTx =
-        userTxns.find(
-          (tx) =>
-            tx.type === "top_up" &&
-            tx.status === "pending" &&
-            Math.abs(tx.amount - args.amount) < 0.01
-        ) ?? null;
-    }
-
-    // Calculate net credit amount (e.g. 5.00 gross -> 4.95 net with 0.05 fee)
-    const fee =
-      args.feeAmount !== undefined
-        ? args.feeAmount
-        : args.netAmount !== undefined
-        ? args.amount - args.netAmount
-        : args.amount === 5
-        ? 0.05
-        : 0.10;
-    const creditAmount =
-      args.netAmount !== undefined && args.netAmount > 0
-        ? args.netAmount
-        : Math.max(0.01, Math.round((args.amount - fee) * 100) / 100);
-
-    // 3. Atomically credit user's wallet
-    let wallet =
-      targetWallet ??
-      (await ctx.db
-        .query("walletBalances")
-        .withIndex("by_user_currency", (q) =>
-          q.eq("userId", user!._id).eq("currency", currency)
-        )
-        .first());
-
-    let newAvailableBalance = creditAmount;
-    let newEscrowBalance = creditAmount;
-    let walletId: Id<"walletBalances">;
-
-    if (!wallet) {
-      walletId = await ctx.db.insert("walletBalances", {
-        userId: user._id,
-        availableBalance: creditAmount,
-        pendingBalance: 0,
-        escrowBalance: creditAmount,
-        currency,
-        updatedAt: now,
-      });
-    } else {
-      walletId = wallet._id;
-      newAvailableBalance = Math.round(((wallet.availableBalance ?? 0) + creditAmount) * 100) / 100;
-      newEscrowBalance = Math.round(((wallet.escrowBalance ?? 0) + creditAmount) * 100) / 100;
-      await ctx.db.patch(wallet._id, {
-        availableBalance: newAvailableBalance,
-        escrowBalance: newEscrowBalance,
-        updatedAt: now,
-      });
-    }
-
-    // 4. Update existing pending transaction or insert new completed transaction
-    const normalizedGatewayRef = lookupRef.replace(/§/g, "_");
-    const displayOrder = args.orderNumber ? ` [Order: ${args.orderNumber}]` : "";
-
-    if (existingTx) {
-      await ctx.db.patch(existingTx._id, {
-        status: "completed",
-        amount: args.amount,
-        netAmount: creditAmount,
-        feeAmount: fee,
-        gatewayReference: normalizedGatewayRef,
-        failureReason: undefined,
-        description: `MoniMe Top-Up — SLE ${args.amount.toFixed(2)} (Net: SLE ${creditAmount.toFixed(2)}) via ${provider}${displayOrder}`,
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.insert("transactions", {
-        transactionId: args.orderNumber || args.transactionId,
-        walletId,
-        userId: user._id,
-        type: "top_up",
-        amount: args.amount,
-        netAmount: creditAmount,
-        feeAmount: fee,
-        currency,
-        gatewayProvider: provider,
-        gatewayReference: normalizedGatewayRef,
-        status: "completed",
-        description: `MoniMe Top-Up — SLE ${args.amount.toFixed(2)} (Net: SLE ${creditAmount.toFixed(2)}) via ${provider}${displayOrder}`,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-
-    // 5. Record double-entry ledger entries
-    try {
-      const ledgerTxId = await ctx.db.insert("ledger_transactions", {
-        transactionCode: `LTX_MONIME_${args.transactionId}`,
-        description: `MoniMe Deposit - Ref: ${args.transactionId}`,
-        createdAt: now,
-      });
-
-      await ctx.db.insert("ledger_entries", {
-        transactionId: ledgerTxId,
-        accountType: "CLIENT_AVAILABLE",
-        userId: user._id,
-        direction: "CREDIT",
-        amount: creditAmount,
-        currency,
-        createdAt: now,
-      });
-    } catch (e) {
-      console.warn("Ledger transaction recording non-fatal:", e);
-    }
-
-    // 6. Real-time push / in-app notification
-    try {
+    let subscription: { activated: boolean; reason?: string; expiryDate?: number } | undefined;
+    let escrow: { funded: boolean; reason?: string } | undefined;
+    if (!settled.duplicate && tx.referenceType === "subscription_checkout" && tx.referenceId) {
+      subscription = await activateSubscriptionFromDeposit(ctx, tx.userId, tx.referenceId, tx._id);
+    } else if (!settled.duplicate && tx.referenceType === "escrow_checkout" && tx.referenceId) {
+      escrow = await fundEscrowFromDeposit(ctx, tx.referenceId);
       await ctx.db.insert("user_notifications", {
-        userId: user._id as string,
+        userId: tx.userId as string,
         targetType: "single_user",
-        title: "Deposit Successful! 💳",
-        body: `Your wallet has been credited with SLE ${creditAmount.toFixed(2)} via MoniMe (${provider}). Your new balance is SLE ${newAvailableBalance.toFixed(2)}.`,
+        title: escrow.funded ? "Payment secured in escrow" : "Payment received",
+        body: escrow.funded
+          ? `Your payment of ${txCurrency} ${args.verifiedAmount.toFixed(2)} is now held in escrow.`
+          : `Your payment of ${txCurrency} ${args.verifiedAmount.toFixed(2)} was credited to your wallet, but it could not be placed in escrow: ${escrow.reason ?? "unavailable"}`,
         read: false,
-        createdAt: now,
+        createdAt: Date.now(),
       });
-    } catch {
-      // non-fatal
+    } else if (!settled.duplicate) {
+      await ctx.db.insert("user_notifications", {
+        userId: tx.userId as string,
+        targetType: "single_user",
+        title: "Deposit received",
+        body: `Your wallet has been credited with ${txCurrency} ${args.verifiedAmount.toFixed(2)}.`,
+        read: false,
+        createdAt: Date.now(),
+      });
     }
+    return { success: true, alreadyProcessed: settled.duplicate, amount: args.verifiedAmount, subscription, escrow };
+  },
+});
 
-    return {
-      success: true,
-      alreadyProcessed: false,
-      transactionId: args.transactionId,
-      grossAmount: args.amount,
-      netAmount: creditAmount,
-      currency,
-      userId: user._id,
-      newBalance: newAvailableBalance,
-      newEscrowBalance,
-    };
+/** After a verified deposit: hold it in escrow for the order/contract/pass it was paid for. Never throws for business reasons. */
+async function fundEscrowFromDeposit(ctx: MutationCtx, tag: string): Promise<{ funded: boolean; reason?: string }> {
+  const i = tag.indexOf(":");
+  const kind = tag.slice(0, i);
+  const rawId = tag.slice(i + 1);
+  try {
+    if (kind === "vehicle") {
+      const id = ctx.db.normalizeId("escrow_orders", rawId);
+      return id ? await fundVehicleOrderFromWallet(ctx, id, true) : { funded: false, reason: "Order not found." };
+    }
+    if (kind === "re") {
+      const id = ctx.db.normalizeId("re_escrow_contracts", rawId);
+      return id ? await fundReContractFromWallet(ctx, id, true) : { funded: false, reason: "Contract not found." };
+    }
+    if (kind === "pass") {
+      const id = ctx.db.normalizeId("re_inspection_passes", rawId);
+      return id ? await fundInspectionPassFromWallet(ctx, id, true) : { funded: false, reason: "Pass not found." };
+    }
+    if (kind === "booking") {
+      const id = ctx.db.normalizeId("bookings", rawId);
+      if (!id) return { funded: false, reason: "Booking not found." };
+      const r = await fundBookingFromWallet(ctx, id, true);
+      return { funded: r.funded, reason: r.reason };
+    }
+  } catch (e: any) {
+    return { funded: false, reason: String(e?.message ?? "unexpected error").slice(0, 160) };
+  }
+  return { funded: false, reason: "Unknown payment purpose." };
+}
+
+/** INTERNAL: a checkout that Monime reports as cancelled/expired — nothing was paid. */
+export const failMoniMeDeposit = internalMutation({
+  args: { txDocId: v.id("transactions"), reason: v.string() },
+  handler: async (ctx, args) => {
+    const tx = await ctx.db.get(args.txDocId);
+    if (!tx || tx.status !== "pending" || tx.type !== "top_up") return { updated: false };
+    await ctx.db.patch(tx._id, { status: "failed", failureReason: args.reason.slice(0, 200), updatedAt: Date.now() });
+    return { updated: true };
   },
 });
 
@@ -4535,292 +2738,8 @@ export const processMoniMeWebhookSuccess = internalMutation({
  * Locates the pending transaction for the reference or orderId,
  * completes the transaction, and credits SLE 9.90 (net credit) to the user's wallet.
  */
-export const patchPendingTopUp = mutation({
-  args: {
-    reference: v.optional(v.string()),
-    orderId: v.optional(v.string()),
-    netAmount: v.optional(v.number()),
-    grossAmount: v.optional(v.number()),
-    feeAmount: v.optional(v.number()),
-    userId: v.optional(v.string()),
-    customerPhone: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    if (!args.reference && !args.orderId) {
-      return { success: false, reason: "MISSING_REFERENCE" };
-    }
-
-    const lookupRef = args.reference;
-    const orderId = args.orderId;
-    const effectiveRef = (lookupRef ?? orderId ?? "MONIME_REF").replace(/§/g, "_");
-
-    const variants = [
-      lookupRef,
-      lookupRef ? lookupRef.replace(/§/g, "_") : undefined,
-      lookupRef ? lookupRef.replace(/_/g, "§") : undefined,
-      orderId,
-    ].filter(Boolean) as string[];
-
-    let tx: Doc<"transactions"> | null = null;
-
-    for (const variant of variants) {
-      tx = await ctx.db
-        .query("transactions")
-        .withIndex("by_transaction_id", (q) => q.eq("transactionId", variant))
-        .first();
-      if (tx) break;
-
-      const byRefs = await ctx.db
-        .query("transactions")
-        .withIndex("by_gateway_ref", (q) =>
-          q.eq("gatewayProvider", "MONIME_ORANGE").eq("gatewayReference", variant)
-        )
-        .first();
-      if (byRefs) {
-        tx = byRefs;
-        break;
-      }
-    }
-
-    if (!tx) {
-      return { success: false, reason: "TX_NOT_FOUND" };
-    }
-
-    const user = await ctx.db.get(tx.userId);
-    if (!user) {
-      throw new Error("Target user could not be found to patch balance.");
-    }
-
-    const grossAmount = args.grossAmount ?? tx.amount ?? 0;
-    const feeAmount = args.feeAmount ?? (tx.feeAmount ?? 0);
-    const netAmount = args.netAmount ?? Math.max(0, grossAmount - feeAmount);
-
-
-    const now = Date.now();
-    const currency = tx?.currency || "SLE";
-
-    // 1. Locate or create wallet
-    let wallet = await ctx.db
-      .query("walletBalances")
-      .withIndex("by_user_currency", (q) =>
-        q.eq("userId", user!._id).eq("currency", currency)
-      )
-      .first();
-
-    let walletId: Id<"walletBalances">;
-    let newBalance = netAmount;
-
-    if (!wallet) {
-      walletId = await ctx.db.insert("walletBalances", {
-        userId: user._id,
-        availableBalance: netAmount,
-        pendingBalance: 0,
-        escrowBalance: netAmount,
-        currency,
-        updatedAt: now,
-      });
-    } else {
-      walletId = wallet._id;
-      // Idempotency: if already completed and balance already updated, prevent duplicate credits
-      if (tx && tx.status === "completed") {
-        return {
-          success: true,
-          alreadyCompleted: true,
-          message: "Transaction was already marked completed",
-          currentBalance: wallet.availableBalance,
-          escrowBalance: wallet.escrowBalance,
-          walletId: wallet._id,
-          userId: user._id,
-        };
-      }
-
-      newBalance = (wallet.availableBalance ?? 0) + netAmount;
-      const newEscrow = (wallet.escrowBalance ?? 0) + netAmount;
-      await ctx.db.patch(wallet._id, {
-        availableBalance: newBalance,
-        escrowBalance: newEscrow,
-        updatedAt: now,
-      });
-    }
-
-    // 2. Complete the transaction
-    if (tx) {
-      await ctx.db.patch(tx._id, {
-        status: "completed",
-        amount: grossAmount,
-        netAmount,
-        feeAmount,
-        gatewayReference: effectiveRef,
-        failureReason: undefined,
-        description: `MoniMe Top-Up (Reconciled) — SLE ${grossAmount} (Net: SLE ${netAmount}) via Orange Money [Order: ${orderId ?? effectiveRef}]`,
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.insert("transactions", {
-        transactionId: orderId ?? effectiveRef,
-        walletId,
-        userId: user._id,
-        type: "top_up",
-        amount: grossAmount,
-        netAmount,
-        feeAmount,
-        currency,
-        gatewayProvider: "MONIME_ORANGE",
-        gatewayReference: effectiveRef,
-        status: "completed",
-        description: `MoniMe Top-Up (Reconciled) — SLE ${grossAmount} (Net: SLE ${netAmount}) via Orange Money [Order: ${orderId ?? effectiveRef}]`,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-
-    // 3. Double-entry ledger
-    try {
-      const ledgerTxId = await ctx.db.insert("ledger_transactions", {
-        transactionCode: `LTX_RECON_${orderId ?? effectiveRef}`,
-        description: `MoniMe Reconciled Deposit - Ref: ${effectiveRef} - Order: ${orderId ?? effectiveRef}`,
-        createdAt: now,
-      });
-
-      await ctx.db.insert("ledger_entries", {
-        transactionId: ledgerTxId,
-        accountType: "CLIENT_AVAILABLE",
-        userId: user._id,
-        direction: "CREDIT",
-        amount: netAmount,
-        currency,
-        createdAt: now,
-      });
-    } catch (e) {
-      console.warn("Ledger transaction recording non-fatal:", e);
-    }
-
-    // 4. In-app notification
-    try {
-      await ctx.db.insert("user_notifications", {
-        userId: user._id as string,
-        targetType: "single_user",
-        title: "Deposit Confirmed! 💳",
-        body: `Your wallet has been credited with SLE ${netAmount.toFixed(2)} (Net after fee of SLE ${feeAmount.toFixed(2)}) via MoniMe Orange Money. Your new balance is SLE ${newBalance.toFixed(2)}.`,
-        read: false,
-        createdAt: now,
-      });
-    } catch (_) {}
-
-    return {
-      success: true,
-      patched: true,
-      transactionId: tx?.transactionId ?? orderId,
-      user: {
-        id: user._id,
-        name: user.name,
-        phone: user.phone,
-      },
-      creditedAmount: netAmount,
-      grossAmount,
-      feeAmount,
-      newAvailableBalance: newBalance,
-      newEscrowBalance: newBalance,
-    };
-  },
-});
-
-/**
- * Internal mutation: Reconcile pending MoniMe transaction and credit balance.
- */
-export const checkAndCompletePendingMoniMe = internalMutation({
-  args: {
-    reference: v.optional(v.string()),
-    orderId: v.optional(v.string()),
-    userId: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const lookupRef = args.reference;
-    const orderId = args.orderId;
-
-    const variants = [
-      lookupRef,
-      lookupRef ? lookupRef.replace(/§/g, "_") : undefined,
-      lookupRef ? lookupRef.replace(/_/g, "§") : undefined,
-      orderId,
-    ].filter(Boolean) as string[];
-
-    let tx: Doc<"transactions"> | null = null;
-    for (const vRef of variants) {
-      tx = await ctx.db
-        .query("transactions")
-        .withIndex("by_transaction_id", (q) => q.eq("transactionId", vRef))
-        .first();
-      if (tx) break;
-
-      const byRef = await ctx.db
-        .query("transactions")
-        .withIndex("by_gateway_ref", (q) =>
-          q.eq("gatewayProvider", "MONIME_ORANGE").eq("gatewayReference", vRef)
-        )
-        .first();
-      if (byRef) {
-        tx = byRef;
-        break;
-      }
-    }
-
-    if (!tx) {
-      return { success: false, reason: "TX_NOT_FOUND" };
-    }
-
-    if (tx.status === "completed") {
-      const wallet = await ctx.db.get(tx.walletId);
-      return {
-        success: true,
-        status: "completed",
-        transactionId: tx.transactionId,
-        availableBalance: wallet?.availableBalance ?? 0,
-        escrowBalance: wallet?.escrowBalance ?? 0,
-      };
-    }
-
-    // Only complete if a real reference was matched
-    if (!args.reference && !args.orderId) {
-      return { success: false, reason: "REFERENCE_REQUIRED" };
-    }
-
-    const grossAmount = tx.amount || 0;
-    const feeAmount = tx.feeAmount ?? 0;
-    const netAmount = tx.netAmount ?? Math.max(0, grossAmount - feeAmount);
-    const now = Date.now();
-
-
-    const wallet = await ctx.db.get(tx.walletId);
-    if (!wallet) {
-      return { success: false, reason: "WALLET_NOT_FOUND" };
-    }
-
-    const newAvailable = (wallet.availableBalance ?? 0) + netAmount;
-    const newEscrow = (wallet.escrowBalance ?? 0) + netAmount;
-
-    await ctx.db.patch(wallet._id, {
-      availableBalance: newAvailable,
-      escrowBalance: newEscrow,
-      updatedAt: now,
-    });
-
-    await ctx.db.patch(tx._id, {
-      status: "completed",
-      netAmount,
-      feeAmount,
-      updatedAt: now,
-    });
-
-    return {
-      success: true,
-      status: "completed",
-      transactionId: tx.transactionId,
-      availableBalance: newAvailable,
-      escrowBalance: newEscrow,
-    };
-  },
-});
+// INTERNAL ONLY: credits a wallet; callable from reconciliation/webhooks, not clients.
+// (patchPendingTopUp removed: unused; deposits settle through settleMoniMeReference)
 
 /**
  * Public action: verify status of MoniMe payment on demand (polled or triggered by UI).
@@ -4830,17 +2749,20 @@ export const verifyMoniMeStatus = action({
     reference: v.optional(v.string()),
     orderId: v.optional(v.string()),
     userId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<any> => {
     const rawRef = args.reference || "";
     const cleanRef = rawRef.replace(/§/g, "_");
 
-    const result: any = await ctx.runMutation(internal.payments.checkAndCompletePendingMoniMe, {
-      reference: cleanRef || undefined,
-      orderId: args.orderId || undefined,
-      userId: args.userId || undefined,
+    // Delegates to REAL provider verification: the wallet is credited only if Monime itself
+    // reports the payment as successful (never merely because the client asks).
+    const ref = cleanRef || args.orderId || "";
+    if (!ref) return { success: false, reason: "REFERENCE_REQUIRED" };
+    const result: any = await ctx.runAction(api.payments.verifyAndSettleMoniMePayment, {
+      reference: ref,
+      sessionToken: args.sessionToken,
     });
-
     return result;
   },
 });
@@ -5014,7 +2936,8 @@ export const completeOtpSession = internalMutation({
 /**
  * Dispatch an outbound USSD OTP session via MoniMe API for "login" or "escrow_payout".
  */
-export const sendUssdOtp = action({
+// INTERNAL ONLY (disabled for clients): see the security note on verifyUssdOtp.
+export const sendUssdOtp = internalAction({
   args: {
     phoneNumber: v.string(),
     purpose: v.union(v.literal("login"), v.literal("escrow_payout")),
@@ -5025,10 +2948,8 @@ export const sendUssdOtp = action({
     userId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<any> => {
-    const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VAsS2nSa4AALw1JuBJrXtUAnF").trim();
-    const token = (process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
+    const { spaceId, accessToken: token, apiBaseUrl } = getMoniMeConfig();
     const accessToken = token;
-    const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
 
     const sanitizedPhone = sanitizeSierraLeonePhone(args.phoneNumber);
     const code = generateSecureOtp();
@@ -5044,7 +2965,7 @@ export const sendUssdOtp = action({
 
     if (accessToken && spaceId) {
       try {
-        console.log(`[MoniMe USSD OTP] Dispatching outbound session to ${sanitizedPhone} for ${args.purpose}...`);
+        console.log(`[MoniMe USSD OTP] Dispatching outbound session for ${args.purpose}`);
         const monimeRes = await fetch(`${apiBaseUrl}/ussd-otps`, {
           method: "POST",
           headers: {
@@ -5079,9 +3000,9 @@ export const sendUssdOtp = action({
             : (resJson?.ussdCode ||
                resJson?.prompt ||
                `USSD prompt sent to ${sanitizedPhone}. Enter your PIN to verify ${args.purpose}.`);
-          console.log("[MoniMe USSD OTP] Successfully registered on gateway:", resJson);
+          console.log("[MoniMe USSD OTP] Registered on gateway");
         } else {
-          console.warn(`[MoniMe USSD OTP] Gateway returned HTTP ${monimeRes.status}:`, resJson);
+          console.warn(`[MoniMe USSD OTP] Gateway returned HTTP ${monimeRes.status}`);
         }
       } catch (err: any) {
         console.warn("[MoniMe USSD OTP] Gateway call non-blocking error:", err?.message ?? err);
@@ -5113,7 +3034,6 @@ export const sendUssdOtp = action({
       dialCode,
       purpose: args.purpose,
       expiresInSeconds: 300,
-      debugCode: process.env.NODE_ENV !== "production" ? code : undefined,
     };
   },
 });
@@ -5121,7 +3041,8 @@ export const sendUssdOtp = action({
 /**
  * Validate user response to complete USSD OTP authentication or authorize escrow payout.
  */
-export const verifyUssdOtp = action({
+// INTERNAL ONLY (disabled for clients): see the security note on verifyUssdOtp.
+export const verifyUssdOtp = internalAction({
   args: {
     phoneNumber: v.string(),
     code: v.string(),
@@ -5163,7 +3084,9 @@ export const verifyUssdOtp = action({
 
     // Verify OTP code match
     const submittedCode = args.code.trim();
-    if (submittedCode !== session.code && submittedCode !== "123456") {
+    // SECURITY: there is no universal code. ("123456" used to be accepted for ANY phone, which
+    // allowed signing in as anyone and authorizing escrow payouts.)
+    if (submittedCode !== session.code) {
       return {
         success: false,
         code: "INVALID_OTP",
@@ -5194,10 +3117,8 @@ export const verifyUssdOtp = action({
 
     // Handle "escrow_payout" purpose: Disburse funds via MoniMe Payouts API
     if (args.purpose === "escrow_payout") {
-      const spaceId = (process.env.MONIME_SPACE_ID || "spc-k6VAsS2nSa4AALw1JuBJrXtUAnF").trim();
-      const token = (process.env.MONIME_ACCESS_TOKEN || "mon_11AR2m1kmTy8TVAhO7nP8cFbobPmacLV3fNej0GBabcgirGVych2RVZeKjjZd1uP").trim();
+      const { spaceId, accessToken: token, apiBaseUrl } = getMoniMeConfig();
       const accessToken = token;
-      const apiBaseUrl = process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1";
       const payoutAmount = session.payoutAmount ?? 0;
       const payoutCurrency = session.payoutCurrency ?? "SLE";
       const destination = session.destinationAccount ?? sanitizedPhone;
@@ -5240,9 +3161,9 @@ export const verifyUssdOtp = action({
           const payoutJson = await payoutRes.json().catch(() => ({}));
           if (payoutRes.ok) {
             payoutGatewayRef = payoutJson?.id ?? payoutJson?.data?.id ?? payoutGatewayRef;
-            console.log("[MoniMe Payout] Outbound payout successfully accepted by gateway:", payoutJson);
+            console.log("[MoniMe Payout] Outbound payout accepted by gateway");
           } else {
-            console.warn(`[MoniMe Payout] Gateway returned HTTP ${payoutRes.status}:`, payoutJson);
+            console.warn(`[MoniMe Payout] Gateway returned HTTP ${payoutRes.status}`);
           }
         } catch (err: any) {
           console.error("[MoniMe Payout Error] Outbound payout dispatch failed:", err?.message ?? err);
@@ -5307,38 +3228,37 @@ export const getEscrowBankClearingDetails = query({
 export const generateBankEscrowReference = mutation({
   args: {
     orderType: v.string(), // "VEHICLE" | "REAL_ESTATE"
-    orderId: v.optional(v.string()),
-    amount: v.number(),
+    orderId: v.string(),
+    amount: v.optional(v.number()), // ignored: the amount to transfer is the order's own amount
     userId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     description: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000).toString();
-    const bankReference = `VKTLX-DEAL-${randomSuffix}`;
+    const { userId: callerId } = await requireSelf(ctx, args.sessionToken, args.userId);
+    // Unguessable, unique reference.
+    const rnd = new Uint8Array(6);
+    crypto.getRandomValues(rnd);
+    const bankReference = `VKTLX-DEAL-${Array.from(rnd).map((b) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[b % 32]).join("")}`;
     const now = Date.now();
+    let amount: number;
 
-    if (args.orderId) {
-      if (args.orderType === "VEHICLE") {
-        const orderNorm = ctx.db.normalizeId("escrow_orders", args.orderId);
-        if (orderNorm) {
-          await ctx.db.patch(orderNorm, {
-            bankEscrowReference: bankReference,
-            paymentRail: "BANK_TRANSFER",
-            bankClearingStatus: "PENDING_TRANSFER",
-            updatedAt: now,
-          });
-        }
-      } else {
-        const reNorm = ctx.db.normalizeId("re_escrow_contracts", args.orderId);
-        if (reNorm) {
-          await ctx.db.patch(reNorm, {
-            bankEscrowReference: bankReference,
-            paymentRail: "BANK_TRANSFER",
-            bankClearingStatus: "PENDING_TRANSFER",
-            updatedAt: now,
-          });
-        }
-      }
+    // Only the order's own payer, only while it awaits payment (the property branch previously had
+    // no ownership check, so anyone could overwrite another user's bank reference).
+    if (args.orderType === "VEHICLE") {
+      const id = ctx.db.normalizeId("escrow_orders", args.orderId);
+      const ord = id ? await ctx.db.get(id) : null;
+      if (!id || !ord || ord.renterOrBuyerId !== callerId) throw new Error("Order not found.");
+      if (ord.status !== "PENDING_PAYMENT") throw new Error("This order is not awaiting payment.");
+      amount = ord.grossEscrowAmount;
+      await ctx.db.patch(id, { bankEscrowReference: bankReference, paymentRail: "BANK_TRANSFER", bankClearingStatus: "PENDING_TRANSFER", updatedAt: now });
+    } else {
+      const id = ctx.db.normalizeId("re_escrow_contracts", args.orderId);
+      const c = id ? await ctx.db.get(id) : null;
+      if (!id || !c || c.clientId !== callerId) throw new Error("Escrow contract not found.");
+      if (c.currentState !== "CREATED") throw new Error("This contract is not awaiting payment.");
+      amount = c.grossAmount;
+      await ctx.db.patch(id, { bankEscrowReference: bankReference, paymentRail: "BANK_TRANSFER", bankClearingStatus: "PENDING_TRANSFER", updatedAt: now });
     }
 
     return {
@@ -5347,7 +3267,7 @@ export const generateBankEscrowReference = mutation({
       bankDetails: {
         ...VEKTOLUX_ESCROW_BANK_ACCOUNT,
         paymentReference: bankReference,
-        amount: args.amount,
+        amount,
       },
     };
   },
@@ -5363,138 +3283,104 @@ export const confirmBankEscrowTransfer = mutation({
     externalBankTxnId: v.optional(v.string()),
     amountTransferred: v.number(),
     adminNotes: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // Confirming that real money cleared is an ADMIN action (previously public + unauthenticated,
+    // which let anyone mint escrowed funds with an arbitrary amount).
+    const { userId: adminId } = await requireAdminSession(ctx, args.sessionToken);
+    if (!Number.isFinite(args.amountTransferred) || args.amountTransferred <= 0) {
+      throw new Error("INVALID_AMOUNT: Transferred amount must be greater than 0.");
+    }
     const now = Date.now();
     const cleanRef = args.bankEscrowReference.trim();
 
-    // 1. Check vehicle escrow_orders
+    const bankTxn = (args.externalBankTxnId ?? cleanRef).trim();
+    const providerRef = `${cleanRef}:${bankTxn}`;
+
+    // 1. Vehicle escrow order
     const vehicleOrder = await ctx.db
       .query("escrow_orders")
       .withIndex("by_bank_ref", (q) => q.eq("bankEscrowReference", cleanRef))
       .first();
 
     if (vehicleOrder) {
-      await ctx.db.patch(vehicleOrder._id, {
-        status: "ESCROW_LOCKED",
-        bankClearingStatus: "CLEARED",
-        updatedAt: now,
-      });
-
-      // Credit buyer escrow balance in wallet
-      const buyerWallet = await ctx.db
-        .query("walletBalances")
-        .withIndex("by_user", (q: any) => q.eq("userId", vehicleOrder.renterOrBuyerId))
-        .first();
-
-      if (buyerWallet) {
-        await ctx.db.patch(buyerWallet._id, {
-          escrowBalance: (buyerWallet.escrowBalance ?? 0) + args.amountTransferred,
-          updatedAt: now,
-        });
+      // Idempotent: a repeated confirmation must not fund escrow twice.
+      if (vehicleOrder.bankClearingStatus === "CLEARED") {
+        return {
+          success: true,
+          type: "VEHICLE_ESCROW",
+          orderId: vehicleOrder._id,
+          orderCode: vehicleOrder.orderCode,
+          status: vehicleOrder.status,
+          clearedAmount: vehicleOrder.grossEscrowAmount,
+          alreadyProcessed: true,
+        };
       }
-
-      // Post double-entry ledger entry
-      try {
-        const txId = await ctx.db.insert("ledger_transactions", {
-          transactionCode: `LTX_SLCB_${args.externalBankTxnId ?? cleanRef}`,
-          escrowOrderId: vehicleOrder._id,
-          description: `Bank Wire Cleared (SLCB) - Ref: ${cleanRef}`,
-          createdAt: now,
-        });
-
-        await ctx.db.insert("ledger_entries", {
-          transactionId: txId,
-          accountType: "CLIENT_ESCROW_LOCKED",
-          userId: vehicleOrder.renterOrBuyerId,
-          direction: "CREDIT",
-          amount: args.amountTransferred,
-          currency: "SLE",
-          createdAt: now,
-        });
-      } catch (e) {
-        console.warn("Ledger transaction recording error:", e);
+      // The deal's own amount is the source of truth; an underpayment cannot fund it.
+      if (args.amountTransferred + 0.005 < vehicleOrder.grossEscrowAmount) {
+        throw new Error(
+          `AMOUNT_MISMATCH: Transferred SLE ${args.amountTransferred.toFixed(2)} is less than the required SLE ${vehicleOrder.grossEscrowAmount.toFixed(2)}.`
+        );
       }
-
-      // Notify buyer and seller
-      await ctx.db.insert("user_notifications", {
-        userId: vehicleOrder.renterOrBuyerId as string,
-        targetType: "single_user",
-        title: "Bank Wire Cleared — Escrow Locked! 🏦",
-        body: `Your bank transfer of SLE ${args.amountTransferred.toFixed(2)} for ${cleanRef} was confirmed by Sierra Leone Commercial Bank. Funds are safely locked in escrow.`,
-        read: false,
-        createdAt: now,
+      const funded = await fundVehicleOrderFromExternal(ctx, vehicleOrder._id, "BANK_TRANSFER", providerRef);
+      if (!funded.funded) throw new Error(funded.reason ?? "The order cannot be funded.");
+      await ctx.db.insert("audit_logs", {
+        adminUserId: adminId,
+        action: "APPROVE_DEPOSIT",
+        targetTransactionId: providerRef,
+        snapshot: JSON.stringify({ kind: "vehicle_escrow_bank_transfer", orderId: vehicleOrder._id, amount: args.amountTransferred, notes: args.adminNotes ?? null }),
+        timestamp: now,
       });
-
-      await ctx.db.insert("user_notifications", {
-        userId: vehicleOrder.ownerOrSellerId as string,
-        targetType: "single_user",
-        title: "Deal Escrow Funded (Bank Wire) 🏦",
-        body: `Buyer's bank transfer of SLE ${args.amountTransferred.toFixed(2)} for order ${vehicleOrder.orderCode} has cleared. You may proceed with vehicle inspection and handoff.`,
-        read: false,
-        createdAt: now,
-      });
-
       return {
         success: true,
         type: "VEHICLE_ESCROW",
         orderId: vehicleOrder._id,
         orderCode: vehicleOrder.orderCode,
-        status: "ESCROW_LOCKED",
-        clearedAmount: args.amountTransferred,
+        status: "HELD_IN_ESCROW",
+        clearedAmount: vehicleOrder.grossEscrowAmount,
       };
     }
 
-    // 2. Check real estate re_escrow_contracts
+    // 2. Real estate escrow contract
     const reContract = await ctx.db
       .query("re_escrow_contracts")
       .withIndex("by_bank_ref", (q) => q.eq("bankEscrowReference", cleanRef))
       .first();
 
     if (reContract) {
-      await ctx.db.patch(reContract._id, {
-        currentState: "FUNDS_LOCKED",
-        bankClearingStatus: "CLEARED",
-        updatedAt: now,
-      });
-
-      // Post double-entry ledger entry
-      try {
-        const txId = await ctx.db.insert("ledger_transactions", {
-          transactionCode: `LTX_SLCB_${args.externalBankTxnId ?? cleanRef}`,
-          description: `Bank Wire Cleared (SLCB) - Ref: ${cleanRef}`,
-          createdAt: now,
-        });
-
-        await ctx.db.insert("ledger_entries", {
-          transactionId: txId,
-          accountType: "CLIENT_ESCROW_LOCKED",
-          userId: reContract.clientId,
-          direction: "CREDIT",
-          amount: args.amountTransferred,
-          currency: "SLE",
-          createdAt: now,
-        });
-      } catch (e) {
-        console.warn("Ledger transaction recording error:", e);
+      if (reContract.bankClearingStatus === "CLEARED") {
+        return {
+          success: true,
+          type: "REAL_ESTATE_ESCROW",
+          contractId: reContract._id,
+          contractCode: reContract.contractCode,
+          status: reContract.currentState,
+          clearedAmount: reContract.grossAmount,
+          alreadyProcessed: true,
+        };
       }
-
-      await ctx.db.insert("user_notifications", {
-        userId: reContract.clientId as string,
-        targetType: "single_user",
-        title: "Bank Wire Cleared — Escrow Locked! 🏦",
-        body: `Your bank transfer of SLE ${args.amountTransferred.toFixed(2)} for contract ${cleanRef} was confirmed by Sierra Leone Commercial Bank. Escrow funds are secured.`,
-        read: false,
-        createdAt: now,
+      if (args.amountTransferred + 0.005 < reContract.grossAmount) {
+        throw new Error(
+          `AMOUNT_MISMATCH: Transferred SLE ${args.amountTransferred.toFixed(2)} is less than the required SLE ${reContract.grossAmount.toFixed(2)}.`
+        );
+      }
+      const funded = await fundReContractFromExternal(ctx, reContract._id, "BANK_TRANSFER", providerRef);
+      if (!funded.funded) throw new Error(funded.reason ?? "The contract cannot be funded.");
+      await ctx.db.insert("audit_logs", {
+        adminUserId: adminId,
+        action: "APPROVE_DEPOSIT",
+        targetTransactionId: providerRef,
+        snapshot: JSON.stringify({ kind: "re_escrow_bank_transfer", contractId: reContract._id, amount: args.amountTransferred, notes: args.adminNotes ?? null }),
+        timestamp: now,
       });
-
       return {
         success: true,
         type: "REAL_ESTATE_ESCROW",
         contractId: reContract._id,
         contractCode: reContract.contractCode,
         status: "FUNDS_LOCKED",
-        clearedAmount: args.amountTransferred,
+        clearedAmount: reContract.grossAmount,
       };
     }
 

@@ -14,6 +14,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import styles from "./escrow.module.css";
+import { adminFetch } from "@/lib/adminSession";
 
 interface EscrowSummary {
   totalOrders: number;
@@ -53,7 +54,7 @@ export default function EscrowDashboardPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/escrow");
+      const res = await adminFetch("/api/escrow");
       const data = await res.json();
       if (data.success) {
         setSummary(data.data?.summary ?? null);
@@ -75,7 +76,7 @@ export default function EscrowDashboardPage() {
     if (!confirm(`Are you sure you want to execute ${action} for order ${escrowOrderId}?`)) return;
     setActionLoading(escrowOrderId);
     try {
-      const res = await fetch("/api/escrow", {
+      const res = await adminFetch("/api/escrow", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, escrowOrderId, ...extra }),

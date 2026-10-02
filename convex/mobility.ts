@@ -18,6 +18,10 @@ import {
 } from "./schema";
 import { encodeGeohash } from "./lib/geo";
 import { requireVerifiedSeller } from "./middleware";
+import { requireAdminSession, requireOwnedDoc, requireSelf } from "./lib/auth";
+import { toPublicVehicle } from "./lib/publicListing";
+import { postingPermission } from "./lib/permissions";
+import { publicLocation } from "./lib/slLocations";
 
 // ═══════════════════════════════════════════════════════════════════════
 //                 REGISTER COMMERCIAL VEHICLE LISTING
@@ -58,7 +62,7 @@ export const registerVehicleListing = mutation({
   }),
   handler: async (ctx, args) => {
     // Enforce verified seller or dealer status
-    await requireVerifiedSeller(ctx, args.ownerId, args.sessionToken);
+    await requireVerifiedSeller(ctx, args.ownerId, args.sessionToken, "vehicle");
 
     const userId = ctx.db.normalizeId("users", args.ownerId);
     if (!userId) {
@@ -175,7 +179,7 @@ export const getVehiclesByCategory = query({
       price: v.price,
       pricingType: v.pricingType,
       capacity: v.capacity,
-      location: v.location,
+      location: publicLocation(v.location),
       images: v.images ?? v.imageUrls ?? [],
       imageUrls: v.images ?? v.imageUrls ?? [],
       status: v.status,
@@ -199,49 +203,7 @@ export const getVehiclesByCategory = query({
 //                    GET USER VEHICLES (OWNER LISTINGS)
 // ═══════════════════════════════════════════════════════════════════════
 
-export const getUserVehicles = query({
-  args: {
-    ownerId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const userId = ctx.db.normalizeId("users", args.ownerId);
-    if (!userId) return [];
 
-    const listings = await ctx.db
-      .query("vehicleListings")
-      .withIndex("by_owner", (q) => q.eq("ownerId", userId))
-      .order("desc")
-      .collect();
-
-    return listings
-      .filter((v) => v.isDeleted !== true)
-      .map((v) => ({
-        _id: v._id as string,
-        id: v._id as string,
-        ownerId: String(v.ownerId),
-        title: v.title,
-        category: v.category,
-        price: v.price,
-        pricingType: v.pricingType,
-        capacity: v.capacity,
-        location: v.location,
-        images: v.images ?? v.imageUrls ?? [],
-        imageUrls: v.images ?? v.imageUrls ?? [],
-        status: v.status,
-        make: v.make,
-        model: v.model,
-        year: v.year,
-        mileage: v.mileage,
-        transmission: v.transmission,
-        fuelType: v.fuelType,
-        serviceArea: v.serviceArea,
-        description: v.description,
-        currency: v.currency ?? "SLE",
-        isPublished: v.isPublished ?? true,
-        createdAt: v.createdAt ?? v._creationTime,
-      }));
-  },
-});
 
 // ═══════════════════════════════════════════════════════════════════════
 //                      LIST VEHICLES (DISCOVERY)
@@ -291,7 +253,7 @@ export const listVehicles = query({
       price: v.price,
       pricingType: v.pricingType,
       capacity: v.capacity,
-      location: v.location,
+      location: publicLocation(v.location),
       images: v.images ?? v.imageUrls ?? [],
       imageUrls: v.images ?? v.imageUrls ?? [],
       status: v.status,
@@ -337,8 +299,9 @@ export const getVehicleById = query({
       ...safeListing
     } = listing as typeof listing & { privateContactPhone?: string; contactPhone?: string };
 
+    const publicListing = toPublicVehicle(safeListing as any);
     return {
-      ...safeListing,
+      ...publicListing,
       _id: listing._id as string,
       id: listing._id as string,
       images: listing.images ?? listing.imageUrls ?? [],
@@ -364,10 +327,12 @@ export const getVehicleById = query({
 
 export const takeDownListing = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     listingId: v.string(),
     reason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
     const id = ctx.db.normalizeId("vehicleListings", args.listingId);
     if (!id) throw new Error("Vehicle listing not found");
 
@@ -390,10 +355,13 @@ export const updateVehicleListingStatus = mutation({
   args: {
     listingId: v.string(),
     status: commercialVehicleStatus,
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const id = ctx.db.normalizeId("vehicleListings", args.listingId);
-    if (!id) throw new Error("Vehicle listing not found");
+    const { doc: listing } = await requireOwnedDoc(
+      ctx, "vehicleListings", args.listingId, args.sessionToken
+    );
+    const id = listing._id;
 
     await ctx.db.patch(id, {
       status: args.status,
@@ -426,8 +394,9 @@ export const createVehicleListing = mutation({
     pricePerDay: v.optional(v.number()),
     salePrice: v.optional(v.number()),
     currency: v.optional(v.string()),
-    latitude: v.number(),
-    longitude: v.number(),
+    // Optional & PRIVATE (never returned publicly).
+    latitude: v.optional(v.number()),
+    longitude: v.optional(v.number()),
     imageStorageIds: v.array(v.string()),
     privateContactPhone: v.optional(v.string()),
     isPublished: v.optional(v.boolean()),
@@ -437,7 +406,7 @@ export const createVehicleListing = mutation({
   returns: v.string(),
   handler: async (ctx, args) => {
     // Enforce verified seller or dealer status
-    await requireVerifiedSeller(ctx, args.ownerId, args.sessionToken);
+    await requireVerifiedSeller(ctx, args.ownerId, args.sessionToken, "vehicle");
 
     const userId = ctx.db.normalizeId("users", args.ownerId);
     if (!userId) throw new Error("Invalid owner user ID.");
@@ -500,9 +469,9 @@ export const createVehicleListing = mutation({
       pricePerDay: args.pricePerDay,
       salePrice: args.salePrice,
       currency: args.currency ?? "SLE",
-      latitude: args.latitude,
-      longitude: args.longitude,
-      geohash: encodeGeohash(args.latitude, args.longitude, 7),
+      latitude: args.latitude ?? 0,
+      longitude: args.longitude ?? 0,
+      geohash: args.latitude !== undefined && args.longitude !== undefined ? encodeGeohash(args.latitude, args.longitude, 7) : "",
       privateContactPhone: args.privateContactPhone,
       availabilityStatus: "available",
       isPublished: args.isPublished ?? true,
@@ -519,8 +488,8 @@ export const getMyVehicleListings = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.db.normalizeId("users", args.ownerId);
-    if (!userId) return [];
+    // Owner only: this returns private fields (street address, coordinates, contact phone).
+    const { userId } = await requireSelf(ctx, args.sessionToken, args.ownerId);
 
     const listings = await ctx.db
       .query("vehicleListings")
@@ -559,16 +528,14 @@ export const updateVehicleListing = mutation({
     isPublished: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const id = ctx.db.normalizeId("vehicleListings", args.listingId);
-    if (!id) throw new Error("Vehicle listing not found");
-
-    const listing = await ctx.db.get(id);
-    if (!listing) throw new Error("Vehicle listing not found");
-
-    const userId = ctx.db.normalizeId("users", args.ownerId);
-    if (!userId || listing.ownerId !== userId) {
-      throw new Error("You do not have permission to edit this listing");
+    const { doc: listing, auth } = await requireOwnedDoc(
+      ctx, "vehicleListings", args.listingId, args.sessionToken
+    );
+    if (args.isPublished === true && listing.isPublished === false) {
+      const permission = await postingPermission(ctx, auth.user, "vehicle");
+      if (!permission.allowed) throw new Error(permission.reason);
     }
+    const id = listing._id;
 
     const updates: Record<string, any> = { updatedAt: Date.now() };
     if (args.title !== undefined) updates.title = args.title;
@@ -595,16 +562,10 @@ export const deleteVehicleListing = mutation({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const id = ctx.db.normalizeId("vehicleListings", args.listingId);
-    if (!id) throw new Error("Vehicle listing not found");
-
-    const listing = await ctx.db.get(id);
-    if (!listing) throw new Error("Vehicle listing not found");
-
-    const userId = ctx.db.normalizeId("users", args.ownerId);
-    if (!userId || listing.ownerId !== userId) {
-      throw new Error("You do not have permission to delete this listing");
-    }
+    const { doc: listing } = await requireOwnedDoc(
+      ctx, "vehicleListings", args.listingId, args.sessionToken
+    );
+    const id = listing._id;
 
     await ctx.db.delete(id);
 

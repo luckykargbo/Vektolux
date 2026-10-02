@@ -17,6 +17,7 @@ import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
 import 'login_screen.dart';
 import 'pending_verification_screen.dart';
+import '../../../../core/widgets/sl_location_picker.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -542,34 +543,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Optional Area / District Dropdown
-            DropdownButtonFormField<String>(
-              initialValue: _selectedRegion,
-              dropdownColor: Colors.white,
-              iconEnabledColor: const Color(0xFF1E293B),
-              style: const TextStyle(
-                color: Color(0xFF1E293B),
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-              ),
-              decoration: const InputDecoration(
-                labelText: 'Area / District (Optional)',
-                labelStyle: TextStyle(color: Color(0xFF475569)),
-                hintText: 'Select your general area',
-                hintStyle: TextStyle(color: Color(0xFF94A3B8)),
-                prefixIcon: Icon(Icons.location_city_outlined, color: Color(0xFF64748B)),
-              ),
-              items: const [
-                DropdownMenuItem(value: 'Freetown Central', child: Text('Freetown Central (Western Urban)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                DropdownMenuItem(value: 'Lumley & Aberdeen', child: Text('Lumley & Aberdeen (Beachfront)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                DropdownMenuItem(value: 'Wilkinson Road & Congo Cross', child: Text('Wilkinson Road & Congo Cross', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                DropdownMenuItem(value: 'Hill Station & Regent', child: Text('Hill Station & Regent (Mountain)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                DropdownMenuItem(value: 'Waterloo & Goderich', child: Text('Waterloo & Goderich (Western Rural)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                DropdownMenuItem(value: 'Bo City', child: Text('Bo City (Southern Province)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                DropdownMenuItem(value: 'Kenema', child: Text('Kenema (Eastern Province)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                DropdownMenuItem(value: 'Makeni', child: Text('Makeni (Northern Province)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-              ],
-              onChanged: (val) => setState(() => _selectedRegion = val),
+            // General area (district → town) across all of Sierra Leone.
+            SierraLeoneLocationPicker(
+              onChanged: (district, town) => setState(() => _selectedRegion = town ?? district),
             ),
             const SizedBox(height: 16),
 
@@ -583,8 +559,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 fontWeight: FontWeight.w500,
               ),
               decoration: const InputDecoration(
-                labelText: 'Street Address (Optional)',
-                hintText: 'e.g. 14 Wilkinson Road, Freetown',
+                labelText: 'Street Address (Optional, private)',
+                hintText: 'Kept private — never shown to other users',
                 prefixIcon: Icon(Icons.home_outlined),
               ),
             ),

@@ -94,7 +94,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
             ),
           ),
           content: Text(
-            'Are you sure you want to cancel "${booking.listingTitle}"?',
+            booking.isEscrowHeld
+                ? 'Cancel "${booking.listingTitle}"? Your payment will be refunded to your wallet in full.'
+                : 'Are you sure you want to cancel "${booking.listingTitle}"?',
             style: TextStyle(
               color: isDark ? const Color(0xFFCBD5E1) : const Color(0xFF475569),
               fontSize: 14,
@@ -140,10 +142,15 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
       );
 
       if (res.success) {
+        final refunded = res.value is Map
+            ? ((res.value as Map)['refunded'] as num?)?.toDouble() ?? 0
+            : 0.0;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Booking successfully cancelled'),
+            SnackBar(
+              content: Text(refunded > 0
+                  ? 'Booking cancelled. SLE ${_currencyFormat.format(refunded)} was refunded to your wallet.'
+                  : 'Booking cancelled.'),
               behavior: SnackBarBehavior.floating,
             ),
           );
@@ -163,6 +170,72 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
         );
       }
     }
+  }
+
+  /// The buyer confirms the service took place: the server releases the escrow to the vendor.
+  Future<void> _confirmCompleted(BookingEntity booking) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm completed?'),
+        content: Text(
+            'Confirm that "${booking.listingTitle}" took place as booked. The payment held in escrow will be released to the host.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Not yet')),
+          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Confirm')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final res = await widget.convexClient.mutation(
+      'bookings:confirmBookingCompletion',
+      args: {'bookingId': booking.id},
+    );
+    _showResult(res.success, res.success ? 'Thank you! The payment was released to the host.' : res.errorMessage);
+    if (res.success) _fetchBookingsFromConvex();
+  }
+
+  /// Either party reports a problem: the escrow is frozen until Vektolux resolves it.
+  Future<void> _reportProblem(BookingEntity booking) async {
+    final controller = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Report a problem'),
+        content: TextField(
+          controller: controller,
+          maxLines: 3,
+          decoration: const InputDecoration(hintText: 'What went wrong?'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (reason == null || reason.isEmpty) return;
+    final res = await widget.convexClient.mutation(
+      'bookings:raiseBookingDispute',
+      args: {'bookingId': booking.id, 'reason': reason},
+    );
+    _showResult(res.success,
+        res.success ? 'Reported. The payment is on hold until Vektolux reviews it.' : res.errorMessage);
+    if (res.success) _fetchBookingsFromConvex();
+  }
+
+  void _showResult(bool success, String? message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message ?? (success ? 'Done.' : 'Something went wrong.')),
+        backgroundColor: success ? null : AppColors.error,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   @override
@@ -401,18 +474,53 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
                   ),
                 ],
               ),
-              if (booking.status != BookingStatus.cancelled &&
-                  booking.status != BookingStatus.completed) ...[
-                TextButton(
-                  onPressed: () => _cancelBooking(booking),
-                  style: TextButton.styleFrom(
-                    foregroundColor: AppColors.error,
-                  ),
-                  child: const Text('Cancel', style: TextStyle(fontSize: 12)),
-                ),
-              ],
+              Wrap(
+                spacing: 4,
+                children: [
+                  // Paid & held: after the start the buyer confirms or reports a problem.
+                  if (booking.isEscrowHeld && DateTime.now().millisecondsSinceEpoch >= booking.startTime) ...[
+                    TextButton(
+                      onPressed: () => _reportProblem(booking),
+                      child: const Text('Report a problem', style: TextStyle(fontSize: 12)),
+                    ),
+                    TextButton(
+                      onPressed: () => _confirmCompleted(booking),
+                      style: TextButton.styleFrom(foregroundColor: AppColors.emeraldDark),
+                      child: const Text('Confirm completed', style: TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                  // Unpaid, or paid and not started yet (full refund).
+                  if (booking.status != BookingStatus.cancelled &&
+                      booking.status != BookingStatus.completed &&
+                      booking.status != BookingStatus.disputed &&
+                      (!booking.isEscrowHeld || DateTime.now().millisecondsSinceEpoch < booking.startTime))
+                    TextButton(
+                      onPressed: () => _cancelBooking(booking),
+                      style: TextButton.styleFrom(foregroundColor: AppColors.error),
+                      child: const Text('Cancel', style: TextStyle(fontSize: 12)),
+                    ),
+                ],
+              ),
             ],
           ),
+          if (booking.status == BookingStatus.disputed)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'A problem was reported. The payment is on hold until Vektolux reviews it.',
+                style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+              ),
+            )
+          else if (booking.isEscrowHeld && booking.releaseEligibleAt != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'Payment held in escrow. Released to the host on '
+                '${DateFormat('MMM d, h:mm a').format(DateTime.fromMillisecondsSinceEpoch(booking.releaseEligibleAt!))} '
+                'unless you report a problem.',
+                style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+              ),
+            ),
         ],
       ),
     );
@@ -443,6 +551,10 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
       case BookingStatus.inProgress:
         bg = AppColors.emeraldSurface;
         fg = AppColors.emerald;
+        break;
+      case BookingStatus.disputed:
+        bg = AppColors.amberSurface;
+        fg = AppColors.amber;
         break;
     }
 

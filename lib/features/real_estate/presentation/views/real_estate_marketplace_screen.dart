@@ -67,15 +67,24 @@ class _RealEstateMarketplaceScreenState
     'Bo',
     'Kenema',
     'Makeni',
+    'Koidu',
     'Kailahun',
-    'Pujehun',
-    'Bombali',
-    'Kono',
     'Port Loko',
+    'Pujehun',
+    'Waterloo',
+    'Lumley',
+    'Aberdeen',
+    'Goderich',
+    'Hill Station',
+    'Wilberforce',
     'Kambia',
     'Moyamba',
-    'Tonkolili',
     'Bonthe',
+    'Magburaka',
+    'Kabala',
+    'Kono',
+    'Bombali',
+    'Tonkolili',
     'Koinadugu',
     'Falaba',
     'Karene',
@@ -87,16 +96,20 @@ class _RealEstateMarketplaceScreenState
     'For Rent',
     'For Sale',
     'Guest Houses',
+    'Hotels',
   ];
 
-  // Property type filter chips
-  static const List<String> _propertyTypes = [
-    'All Types',
-    'House',
-    'Apartment',
-    'Guest House',
-    'Land',
-    'Commercial',
+  // Property type filter chips with icons matching visual reference
+  static const List<Map<String, dynamic>> _propertyTypeOptions = [
+    {'label': 'All Types', 'icon': null},
+    {'label': 'Houses', 'icon': Icons.home_outlined},
+    {'label': 'Apartments', 'icon': Icons.apartment_outlined},
+    {'label': 'Guest Houses', 'icon': Icons.bed_outlined},
+    {'label': 'Hotels', 'icon': Icons.business_outlined},
+    {'label': 'Villas', 'icon': Icons.villa_outlined},
+    {'label': 'Commercial', 'icon': Icons.storefront_outlined},
+    {'label': 'Land', 'icon': Icons.landscape_outlined},
+    {'label': 'Offices', 'icon': Icons.meeting_room_outlined},
   ];
 
   @override
@@ -184,7 +197,18 @@ class _RealEstateMarketplaceScreenState
         if (category != 'sale') return false;
       } else if (_selectedTabIndex == 3) {
         // Guest Houses
-        if (category != 'hourly_guesthouse' && category != 'guesthouse') {
+        if (category != 'hourly_guesthouse' &&
+            category != 'guesthouse' &&
+            !propertyType.contains('guest') &&
+            !title.contains('guest')) {
+          return false;
+        }
+      } else if (_selectedTabIndex == 4) {
+        // Hotels
+        if (category != 'hotel' &&
+            !propertyType.contains('hotel') &&
+            !title.contains('hotel') &&
+            !description.contains('hotel')) {
           return false;
         }
       }
@@ -202,24 +226,37 @@ class _RealEstateMarketplaceScreenState
       // 3. Property type filter chips
       if (_selectedPropertyType != 'All Types') {
         final typeLower = _selectedPropertyType.toLowerCase();
-        if (typeLower == 'house') {
+        if (typeLower == 'houses') {
           if (!propertyType.contains('house') &&
               !title.contains('house') &&
               !title.contains('bedroom') &&
               !title.contains('family')) {
             return false;
           }
-        } else if (typeLower == 'apartment') {
+        } else if (typeLower == 'apartments') {
           if (!propertyType.contains('apartment') &&
               !title.contains('apartment') &&
               !title.contains('flat') &&
               !title.contains('studio')) {
             return false;
           }
-        } else if (typeLower == 'guest house') {
+        } else if (typeLower == 'guest houses') {
           if (category != 'hourly_guesthouse' &&
               category != 'guesthouse' &&
+              !propertyType.contains('guest') &&
               !title.contains('guest')) {
+            return false;
+          }
+        } else if (typeLower == 'hotels') {
+          if (category != 'hotel' &&
+              !propertyType.contains('hotel') &&
+              !title.contains('hotel')) {
+            return false;
+          }
+        } else if (typeLower == 'villas') {
+          if (!propertyType.contains('villa') &&
+              !title.contains('villa') &&
+              !description.contains('villa')) {
             return false;
           }
         } else if (typeLower == 'land') {
@@ -231,8 +268,14 @@ class _RealEstateMarketplaceScreenState
         } else if (typeLower == 'commercial') {
           if (!propertyType.contains('commercial') &&
               !title.contains('commercial') &&
+              !title.contains('shop') &&
+              !title.contains('retail')) {
+            return false;
+          }
+        } else if (typeLower == 'offices') {
+          if (!propertyType.contains('office') &&
               !title.contains('office') &&
-              !title.contains('shop')) {
+              !title.contains('commercial')) {
             return false;
           }
         }
@@ -378,174 +421,141 @@ class _RealEstateMarketplaceScreenState
               onPressed: _openCreateListing,
             )
           : null,
-      body: SafeArea(
-        bottom: false,
-        child: Column(
-          children: [
-            // ── 1. HEADER ──────────────────────────────────────────
-            _buildHeader(user),
+      body: Column(
+        children: [
+          // ── 1. HEADER (Dark Navy matching visual reference) ──────
+          _buildHeader(user),
 
-            // ── Agent Verification Status Banners ──────────────────
-            if (user != null && user.role == UserRole.agent) ...[
-              if (user.isPendingVerification) _buildPendingBanner(),
-              if (user.isRejectedVerification)
-                _buildRejectedBanner(user.rejectionReason),
-            ],
+          // ── Agent Verification Status Banners ──────────────────
+          if (user != null && user.role == UserRole.agent) ...[
+            if (user.isPendingVerification) _buildPendingBanner(),
+            if (user.isRejectedVerification)
+              _buildRejectedBanner(user.rejectionReason),
+          ],
 
-            // ── 2. CATEGORY TABS ───────────────────────────────────
-            _buildCategoryTabs(),
+          // ── 2. CATEGORY TABS ───────────────────────────────────
+          _buildCategoryTabs(),
 
-            // ── SCROLLABLE BODY ────────────────────────────────────
-            Expanded(
-              child: RefreshIndicator(
-                color: AppColors.emerald,
-                backgroundColor: Colors.white,
-                onRefresh: _fetchProperties,
-                child: CustomScrollView(
-                  controller: _scrollController,
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  slivers: [
-                    // ── 3. SEARCH BAR ──────────────────────────────
-                    SliverToBoxAdapter(child: _buildSearchRow()),
+          // ── SCROLLABLE BODY ────────────────────────────────────
+          Expanded(
+            child: RefreshIndicator(
+              color: AppColors.emerald,
+              backgroundColor: Colors.white,
+              onRefresh: _fetchProperties,
+              child: CustomScrollView(
+                controller: _scrollController,
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  // ── 3. SEARCH BAR ──────────────────────────────
+                  SliverToBoxAdapter(child: _buildSearchRow()),
 
-                    // ── 4. LOCATION SELECTOR ───────────────────────
-                    SliverToBoxAdapter(child: _buildLocationSelector()),
+                  // ── 4. LOCATION SELECTOR ───────────────────────
+                  SliverToBoxAdapter(child: _buildLocationSelector()),
 
-                    // ── 5. PROPERTY TYPE CHIPS ─────────────────────
-                    SliverToBoxAdapter(child: _buildPropertyTypeChips()),
+                  // ── 5. PROPERTY TYPE CHIPS ─────────────────────
+                  SliverToBoxAdapter(child: _buildPropertyTypeChips()),
 
-                    const SliverToBoxAdapter(child: SizedBox(height: 10)),
+                  const SliverToBoxAdapter(child: SizedBox(height: 10)),
 
-                    // ── 6. FEATURED PROPERTIES SECTION HEADER ──────
-                    SliverToBoxAdapter(child: _buildFeaturedSectionHeader()),
+                  // ── 6. FEATURED PROPERTIES SECTION HEADER ──────
+                  SliverToBoxAdapter(child: _buildFeaturedSectionHeader()),
 
-                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                  const SliverToBoxAdapter(child: SizedBox(height: 12)),
 
-                    // ── 7. PROPERTY CARDS GRID / EMPTY STATE ───────
-                    if (_loadError != null)
-                      SliverToBoxAdapter(child: _buildErrorState())
-                    else if (_isLoading)
-                      SliverToBoxAdapter(child: _buildLoadingSkeletons())
-                    else if (filtered.isEmpty)
-                      SliverToBoxAdapter(child: _buildEmptyState())
-                    else
-                      SliverPadding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        sliver: SliverGrid(
-                          delegate: SliverChildBuilderDelegate(
-                            (context, index) {
-                              return _buildPropertyCard(filtered[index]);
-                            },
-                            childCount: filtered.length,
-                          ),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            mainAxisSpacing: 14,
-                            crossAxisSpacing: 12,
-                            childAspectRatio: 0.54,
-                          ),
+                  // ── 7. PROPERTY CARDS GRID / EMPTY STATE ───────
+                  if (_loadError != null)
+                    SliverToBoxAdapter(child: _buildErrorState())
+                  else if (_isLoading)
+                    SliverToBoxAdapter(child: _buildLoadingSkeletons())
+                  else if (filtered.isEmpty)
+                    SliverToBoxAdapter(child: _buildEmptyState())
+                  else
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      sliver: SliverGrid(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            return _buildPropertyCard(filtered[index]);
+                          },
+                          childCount: filtered.length,
+                        ),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 14,
+                          crossAxisSpacing: 12,
+                          childAspectRatio: 0.54,
                         ),
                       ),
+                    ),
 
-                    const SliverToBoxAdapter(child: SizedBox(height: 90)),
-                  ],
-                ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 90)),
+                ],
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ═════════════════════════════════════════════════════════════════════
-  // 1. HEADER
-  // ═════════════════════════════════════════════════════════════════════
-  Widget _buildHeader(UserEntity? user) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-      child: Row(
-        children: [
-          // Shield Logo
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: AppColors.emeraldSurface,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.emerald.withValues(alpha: 0.3)),
-            ),
-            child: const Icon(
-              Icons.shield_outlined,
-              size: 22,
-              color: AppColors.emerald,
-            ),
-          ),
-          const SizedBox(width: 10),
-          // Title
-          const Expanded(
-            child: Text(
-              'Real Estate',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.5,
-                color: AppColors.obsidian,
-              ),
-            ),
-          ),
-          // Notification Icon
-          _buildHeaderIconButton(
-            icon: Icons.notifications_none_rounded,
-            tooltip: 'Notifications',
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Notifications are up to date.'),
-                  behavior: SnackBarBehavior.floating,
-                  duration: Duration(seconds: 2),
-                ),
-              );
-            },
-          ),
-          const SizedBox(width: 8),
-          // Profile / Escrows
-          _buildHeaderIconButton(
-            icon: Icons.person_outline_rounded,
-            tooltip: 'My Escrows',
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const MyRealEstateEscrowsScreen(),
-                ),
-              );
-            },
           ),
         ],
       ),
     );
   }
 
-  Widget _buildHeaderIconButton({
-    required IconData icon,
-    required String tooltip,
-    required VoidCallback onTap,
-  }) {
+  // ═════════════════════════════════════════════════════════════════════
+  // 1. HEADER (Dark Navy #0D172D with Green Security Shield)
+  // ═════════════════════════════════════════════════════════════════════
+  Widget _buildHeader(UserEntity? user) {
     return Container(
-      width: 42,
-      height: 42,
-      decoration: BoxDecoration(
-        color: AppColors.gray50,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border, width: 1),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Icon(icon, size: 20, color: AppColors.obsidian),
+      color: const Color(0xFF0D172D),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 16, 14),
+          child: Row(
+            children: [
+              // Title matching visual reference
+              const Expanded(
+                child: Text(
+                  'Real Estate',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.4,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              // Escrows / Deals button
+              IconButton(
+                icon: const Icon(Icons.assignment_outlined, color: Colors.white70, size: 21),
+                tooltip: 'My Escrows',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const MyRealEstateEscrowsScreen(),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(width: 4),
+              // Green Security Shield icon matching visual reference
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF10B981).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: const Color(0xFF10B981).withValues(alpha: 0.4),
+                    width: 1.5,
+                  ),
+                ),
+                child: const Icon(
+                  Icons.shield_outlined,
+                  size: 20,
+                  color: Color(0xFF10B981),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -659,15 +669,15 @@ class _RealEstateMarketplaceScreenState
         children: [
           Expanded(
             child: Container(
-              height: 50,
+              height: 48,
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.border, width: 1),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.03),
-                    blurRadius: 8,
+                    blurRadius: 6,
                     offset: const Offset(0, 2),
                   ),
                 ],
@@ -677,13 +687,13 @@ class _RealEstateMarketplaceScreenState
                 onChanged: _onSearchChanged,
                 textInputAction: TextInputAction.search,
                 decoration: InputDecoration(
-                  hintText: 'Search homes, apartments, guest houses...',
-                  hintStyle: TextStyle(
+                  hintText: 'Search homes, hotels, or locations...',
+                  hintStyle: const TextStyle(
                     fontSize: 13.5,
-                    color: AppColors.gray400,
+                    color: Color(0xFF94A3B8),
                     fontWeight: FontWeight.w400,
                   ),
-                  prefixIcon: const Icon(Icons.search_rounded, color: AppColors.gray400, size: 22),
+                  prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF94A3B8), size: 22),
                   suffixIcon: _searchQuery.isNotEmpty
                       ? IconButton(
                           icon: const Icon(Icons.close_rounded, size: 18, color: AppColors.gray500),
@@ -694,16 +704,16 @@ class _RealEstateMarketplaceScreenState
                         )
                       : null,
                   border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 13),
                 ),
               ),
             ),
           ),
           const SizedBox(width: 10),
-          // Green Filter Button
+          // Filter Button
           Container(
-            width: 50,
-            height: 50,
+            width: 48,
+            height: 48,
             decoration: BoxDecoration(
               color: AppColors.obsidian,
               borderRadius: BorderRadius.circular(16),
@@ -714,7 +724,7 @@ class _RealEstateMarketplaceScreenState
                 borderRadius: BorderRadius.circular(16),
                 onTap: _showAdvancedFilterSheet,
                 child: const Center(
-                  child: Icon(Icons.tune_rounded, color: Colors.white, size: 22),
+                  child: Icon(Icons.tune_rounded, color: Colors.white, size: 20),
                 ),
               ),
             ),
@@ -725,29 +735,36 @@ class _RealEstateMarketplaceScreenState
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // 4. LOCATION SELECTOR
+  // 4. LOCATION SELECTOR BANNER (Matches Reference Image)
   // ═════════════════════════════════════════════════════════════════════
   Widget _buildLocationSelector() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFFF0FDF4), // Very light emerald
+          color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFD1FAE5), width: 1),
+          border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.02),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: Row(
           children: [
-            // Location Pin Icon
+            // Location Pin Icon in Circle
             Container(
               width: 38,
               height: 38,
               decoration: BoxDecoration(
-                color: AppColors.emerald,
-                borderRadius: BorderRadius.circular(12),
+                color: const Color(0xFFE6F4EA),
+                shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.place_rounded, color: Colors.white, size: 20),
+              child: const Icon(Icons.place_rounded, color: Color(0xFF00A86B), size: 22),
             ),
             const SizedBox(width: 12),
             // Text Column
@@ -756,50 +773,42 @@ class _RealEstateMarketplaceScreenState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
+                  const Text(
                     'Showing properties in',
                     style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w400,
-                      color: AppColors.textSecondary,
+                      color: Color(0xFF64748B),
                     ),
                   ),
                   const SizedBox(height: 2),
                   GestureDetector(
                     onTap: _showLocationPicker,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          '$_selectedLocation, Sierra Leone',
-                          style: const TextStyle(
-                            fontSize: 15.5,
-                            fontWeight: FontWeight.w800,
-                            color: AppColors.obsidian,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        const Icon(Icons.keyboard_arrow_down_rounded,
-                            size: 20, color: AppColors.obsidian),
-                      ],
+                    child: Text(
+                      '$_selectedLocation, Sierra Leone',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF0F172A),
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
-            // Change Location Button
+            // Change Location Pill Button
             OutlinedButton.icon(
               onPressed: _showLocationPicker,
-              icon: const Icon(Icons.swap_horiz_rounded, size: 16),
+              icon: const Icon(Icons.my_location_rounded, size: 14),
               label: const Text('Change Location'),
               style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.emerald,
-                side: const BorderSide(color: AppColors.emerald, width: 1.2),
+                foregroundColor: const Color(0xFF00A86B),
+                side: const BorderSide(color: Color(0xFF00A86B), width: 1.2),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(20),
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                textStyle: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
               ),
             ),
           ],
@@ -809,51 +818,64 @@ class _RealEstateMarketplaceScreenState
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // 5. PROPERTY TYPE FILTER CHIPS
+  // 5. PROPERTY TYPE FILTER CHIPS (With Icons Matching Reference)
   // ═════════════════════════════════════════════════════════════════════
   Widget _buildPropertyTypeChips() {
     return SizedBox(
-      height: 40,
+      height: 38,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: _propertyTypes.length,
+        itemCount: _propertyTypeOptions.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
-          final type = _propertyTypes[index];
-          final isSelected = _selectedPropertyType == type;
+          final opt = _propertyTypeOptions[index];
+          final label = opt['label'] as String;
+          final icon = opt['icon'] as IconData?;
+          final isSelected = _selectedPropertyType == label;
 
           return GestureDetector(
-            onTap: () => setState(() => _selectedPropertyType = type),
+            onTap: () => setState(() => _selectedPropertyType = label),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               decoration: BoxDecoration(
-                color: isSelected ? AppColors.emerald : Colors.white,
+                color: isSelected ? const Color(0xFF00A86B) : Colors.white,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: isSelected ? AppColors.emerald : AppColors.border,
+                  color: isSelected ? const Color(0xFF00A86B) : const Color(0xFFE2E8F0),
                   width: 1,
                 ),
                 boxShadow: isSelected
                     ? [
                         BoxShadow(
-                          color: AppColors.emerald.withValues(alpha: 0.25),
-                          blurRadius: 8,
+                          color: const Color(0xFF00A86B).withValues(alpha: 0.25),
+                          blurRadius: 6,
                           offset: const Offset(0, 2),
                         ),
                       ]
                     : null,
               ),
-              child: Center(
-                child: Text(
-                  type,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                    color: isSelected ? Colors.white : AppColors.obsidian,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (icon != null) ...[
+                    Icon(
+                      icon,
+                      size: 15,
+                      color: isSelected ? Colors.white : const Color(0xFF475569),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                      color: isSelected ? Colors.white : const Color(0xFF0F172A),
+                    ),
                   ),
-                ),
+                ],
               ),
             ),
           );
@@ -871,29 +893,29 @@ class _RealEstateMarketplaceScreenState
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          const Icon(Icons.auto_awesome, size: 20, color: AppColors.emerald),
+          const Icon(Icons.auto_awesome, size: 20, color: Color(0xFF00A86B)),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
+              children: const [
+                Text(
                   'Featured Properties',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
-                    color: AppColors.obsidian,
+                    color: Color(0xFF0F172A),
                     letterSpacing: -0.3,
                   ),
                 ),
-                const SizedBox(height: 1),
+                SizedBox(height: 1),
                 Text(
-                  'Verified and trusted properties from across Sierra Leone.',
+                  'Top quality properties from verified agents and owners.',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w400,
-                    color: AppColors.textSecondary,
+                    color: Color(0xFF64748B),
                   ),
                 ),
               ],
@@ -955,20 +977,33 @@ class _RealEstateMarketplaceScreenState
     // Determine listing type label
     final isGuesthouse =
         category == 'hourly_guesthouse' || category == 'guesthouse';
+    final isHotel = category == 'hotel' ||
+        title.toLowerCase().contains('hotel') ||
+        (item['propertyType'] as String? ?? '').toLowerCase().contains('hotel');
     final isSale = category == 'sale';
-    final listingLabel = isGuesthouse
-        ? 'Guest House'
-        : isSale
-            ? 'For Sale'
-            : 'For Rent';
+    final listingLabel = isHotel
+        ? 'Hotel'
+        : isGuesthouse
+            ? 'Guest House'
+            : isSale
+                ? 'For Sale'
+                : 'For Rent';
     final listingLabelColor = isSale
         ? const Color(0xFFEA580C) // Warm orange for sale
-        : AppColors.emerald;
+        : isHotel
+            ? const Color(0xFF2563EB) // Blue for hotel
+            : isGuesthouse
+                ? const Color(0xFF0D9488) // Teal for guest house
+                : const Color(0xFF00A86B); // Emerald for rent
 
     // Determine property type label
     String propertyTypeLabel = 'House';
-    if (isGuesthouse) {
+    if (isHotel) {
+      propertyTypeLabel = 'Hotel';
+    } else if (isGuesthouse) {
       propertyTypeLabel = 'Guest House';
+    } else if (title.toLowerCase().contains('villa')) {
+      propertyTypeLabel = 'Villa';
     } else if (title.toLowerCase().contains('apartment') ||
         title.toLowerCase().contains('flat')) {
       propertyTypeLabel = 'Apartment';
@@ -976,20 +1011,23 @@ class _RealEstateMarketplaceScreenState
         title.toLowerCase().contains('plot')) {
       propertyTypeLabel = 'Land';
     } else if (title.toLowerCase().contains('commercial') ||
-        title.toLowerCase().contains('office')) {
+        title.toLowerCase().contains('office') ||
+        title.toLowerCase().contains('shop')) {
       propertyTypeLabel = 'Commercial';
     }
 
-    // Price display
+    // Price display matching reference screenshot format
     String priceDisplay;
     if (price <= 0) {
       priceDisplay = 'Price on request';
     } else if (isGuesthouse && hourlyRate != null && hourlyRate > 0) {
       priceDisplay = '$currency ${_currencyFormat.format(hourlyRate)} / hour';
+    } else if (isHotel) {
+      priceDisplay = '$currency ${_currencyFormat.format(price)} / night';
     } else if (isSale) {
       priceDisplay = '$currency ${_currencyFormat.format(price)}';
     } else {
-      priceDisplay = '$currency ${_currencyFormat.format(price)} / year';
+      priceDisplay = '$currency ${_currencyFormat.format(price)} / month';
     }
 
     // PRIVACY: Broad location only
@@ -1514,9 +1552,11 @@ class _RealEstateMarketplaceScreenState
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // LOCATION PICKER (Bottom Sheet)
+  // LOCATION PICKER (Bottom Sheet with Privacy Protection)
   // ═════════════════════════════════════════════════════════════════════
   void _showLocationPicker() {
+    String searchFilter = '';
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
@@ -1525,109 +1565,207 @@ class _RealEstateMarketplaceScreenState
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.65,
-          maxChildSize: 0.85,
-          minChildSize: 0.4,
-          expand: false,
-          builder: (context, scrollController) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: AppColors.gray300,
-                          borderRadius: BorderRadius.circular(2),
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final filteredTowns = _sierraLeoneTowns.where((t) {
+              if (searchFilter.isEmpty) return true;
+              return t.toLowerCase().contains(searchFilter.toLowerCase());
+            }).toList();
+
+            return DraggableScrollableSheet(
+              initialChildSize: 0.75,
+              maxChildSize: 0.92,
+              minChildSize: 0.5,
+              expand: false,
+              builder: (context, scrollController) {
+                return SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 40,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: AppColors.gray300,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    const Text(
-                      'Choose Property Location',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.obsidian,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Select a town or district to browse properties.',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: ListView.separated(
-                        controller: scrollController,
-                        itemCount: _sierraLeoneTowns.length,
-                        separatorBuilder: (_, __) =>
-                            Divider(height: 1, color: AppColors.gray100),
-                        itemBuilder: (context, index) {
-                          final town = _sierraLeoneTowns[index];
-                          final isSelected = _selectedLocation == town ||
-                              (town == 'All Sierra Leone' &&
-                                  _selectedLocation == 'All Sierra Leone');
-                          return ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 4, vertical: 2),
-                            leading: Container(
-                              width: 36,
-                              height: 36,
-                              decoration: BoxDecoration(
-                                color: isSelected
-                                    ? AppColors.emeraldSurface
-                                    : AppColors.gray50,
-                                borderRadius: BorderRadius.circular(10),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Choose Property Location',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Select a general town or district in Sierra Leone.',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        // Privacy Badge
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0FDF4),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFFBBF7D0)),
+                          ),
+                          child: Row(
+                            children: const [
+                              Icon(Icons.shield_outlined, size: 16, color: Color(0xFF00A86B)),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Location Privacy Protected: Only broad areas are shown. Exact coordinates or addresses are never published.',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w500,
+                                    color: Color(0xFF166534),
+                                  ),
+                                ),
                               ),
-                              child: Icon(
-                                town == 'All Sierra Leone'
-                                    ? Icons.public_rounded
-                                    : Icons.place_rounded,
-                                size: 18,
-                                color: isSelected
-                                    ? AppColors.emerald
-                                    : AppColors.gray400,
-                              ),
-                            ),
-                            title: Text(
-                              town == 'All Sierra Leone'
-                                  ? town
-                                  : '$town, Sierra Leone',
-                              style: TextStyle(
-                                fontSize: 14.5,
-                                fontWeight: isSelected
-                                    ? FontWeight.w700
-                                    : FontWeight.w500,
-                                color: isSelected
-                                    ? AppColors.emerald
-                                    : AppColors.obsidian,
-                              ),
-                            ),
-                            trailing: isSelected
-                                ? const Icon(Icons.check_circle_rounded,
-                                    color: AppColors.emerald, size: 22)
-                                : null,
-                            onTap: () {
-                              setState(() => _selectedLocation = town);
-                              Navigator.pop(ctx);
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        // Search Input
+                        Container(
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: TextField(
+                            onChanged: (val) {
+                              setSheetState(() => searchFilter = val.trim());
                             },
-                          );
-                        },
-                      ),
+                            decoration: const InputDecoration(
+                              hintText: 'Search city, town, or district...',
+                              hintStyle: TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                              prefixIcon: Icon(Icons.search_rounded, size: 20, color: Color(0xFF94A3B8)),
+                              border: InputBorder.none,
+                              contentPadding: EdgeInsets.symmetric(vertical: 12),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        // Quick Select Chips
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              'All Sierra Leone',
+                              'Freetown',
+                              'Bo',
+                              'Kenema',
+                              'Makeni',
+                              'Koidu',
+                              'Port Loko',
+                            ].map((city) {
+                              final isSelected = _selectedLocation == city;
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 6),
+                                child: ChoiceChip(
+                                  label: Text(city, style: const TextStyle(fontSize: 11.5)),
+                                  selected: isSelected,
+                                  selectedColor: const Color(0xFF00A86B),
+                                  backgroundColor: const Color(0xFFF1F5F9),
+                                  labelStyle: TextStyle(
+                                    color: isSelected ? Colors.white : const Color(0xFF0F172A),
+                                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                  ),
+                                  onSelected: (_) {
+                                    setState(() => _selectedLocation = city);
+                                    Navigator.pop(ctx);
+                                  },
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+
+                        // Towns List
+                        Expanded(
+                          child: ListView.separated(
+                            controller: scrollController,
+                            itemCount: filteredTowns.length,
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                            itemBuilder: (context, index) {
+                              final town = filteredTowns[index];
+                              final isSelected = _selectedLocation == town ||
+                                  (town == 'All Sierra Leone' &&
+                                      _selectedLocation == 'All Sierra Leone');
+                              return ListTile(
+                                dense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 4, vertical: 2),
+                                leading: Container(
+                                  width: 34,
+                                  height: 34,
+                                  decoration: BoxDecoration(
+                                    color: isSelected
+                                        ? const Color(0xFFE6F4EA)
+                                        : const Color(0xFFF8FAFC),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Icon(
+                                    town == 'All Sierra Leone'
+                                        ? Icons.public_rounded
+                                        : Icons.place_rounded,
+                                    size: 18,
+                                    color: isSelected
+                                        ? const Color(0xFF00A86B)
+                                        : const Color(0xFF94A3B8),
+                                  ),
+                                ),
+                                title: Text(
+                                  town == 'All Sierra Leone'
+                                      ? town
+                                      : '$town, Sierra Leone',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: isSelected
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                    color: isSelected
+                                        ? const Color(0xFF00A86B)
+                                        : const Color(0xFF0F172A),
+                                  ),
+                                ),
+                                trailing: isSelected
+                                    ? const Icon(Icons.check_circle_rounded,
+                                        color: Color(0xFF00A86B), size: 20)
+                                    : null,
+                                onTap: () {
+                                  setState(() => _selectedLocation = town);
+                                  Navigator.pop(ctx);
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
+                  ),
+                );
+              },
             );
           },
         );
@@ -1729,10 +1867,11 @@ class _RealEstateMarketplaceScreenState
                     Wrap(
                       spacing: 6,
                       runSpacing: 6,
-                      children: _propertyTypes.map((t) {
+                      children: _propertyTypeOptions.map((opt) {
+                        final t = opt['label'] as String;
                         final isSel = _selectedPropertyType == t;
                         return ChoiceChip(
-                          label: Text(t, style: TextStyle(fontSize: 11)),
+                          label: Text(t, style: const TextStyle(fontSize: 11)),
                           selected: isSel,
                           selectedColor: AppColors.emerald,
                           backgroundColor: AppColors.gray50,

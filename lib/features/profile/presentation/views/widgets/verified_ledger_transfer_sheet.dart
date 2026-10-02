@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../../../core/network/convex_client_wrapper.dart';
 import '../../../../../core/services/carrier_detection_service.dart';
@@ -144,28 +145,8 @@ class _VerifiedLedgerTransferSheetState
         if (parsed is Map) {
           final phone = parsed['phone'] ?? parsed['customerPhone'] ?? parsed['phoneNumber'];
           final userId = parsed['userId'] ?? parsed['id'];
-          final name = parsed['name'] ?? parsed['recipientName'];
-          final qrAmt = parsed['amount']?.toString();
-
-          if (qrAmt != null && qrAmt.isNotEmpty && _amountCtrl.text.isEmpty) {
-            _amountCtrl.text = qrAmt;
-            _validateAmount(qrAmt);
-          }
-
-          if (userId != null && name != null) {
-            setState(() {
-              _resolvedRecipient = {
-                'found': true,
-                'recipientId': userId.toString(),
-                'name': name.toString(),
-                'phone': phone?.toString() ?? '',
-              };
-              _recipientError = null;
-              _isResolving = false;
-            });
-            return;
-          }
-
+          // SECURITY: a scanned/pasted payload is never trusted for the recipient's display
+          // name or an amount. Only the identifier is used, and the SERVER resolves who it is.
           if (phone != null) {
             queryParam = phone.toString();
           } else if (userId != null) {
@@ -184,28 +165,8 @@ class _VerifiedLedgerTransferSheetState
       if (uri != null) {
         final phone = uri.queryParameters['phone'] ?? uri.queryParameters['customerPhone'];
         final userId = uri.queryParameters['userId'] ?? uri.queryParameters['id'];
-        final name = uri.queryParameters['name'];
-        final qrAmt = uri.queryParameters['amount'];
 
-        if (qrAmt != null && qrAmt.isNotEmpty && _amountCtrl.text.isEmpty) {
-          _amountCtrl.text = qrAmt;
-          _validateAmount(qrAmt);
-        }
-
-        if (userId != null && name != null) {
-          setState(() {
-            _resolvedRecipient = {
-              'found': true,
-              'recipientId': userId,
-              'name': Uri.decodeComponent(name),
-              'phone': phone ?? '',
-            };
-            _recipientError = null;
-            _isResolving = false;
-          });
-          return;
-        }
-
+        // SECURITY: ignore any name/amount embedded in the link; resolve the recipient on the server.
         if (phone != null && phone.isNotEmpty) {
           queryParam = phone;
         } else if (userId != null && userId.isNotEmpty) {
@@ -274,6 +235,9 @@ class _VerifiedLedgerTransferSheetState
     });
   }
 
+  // One idempotency key per transfer attempt: a retry can never send the money twice.
+  String? _attemptKey;
+
   Future<void> _handleTransferSubmit() async {
     final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0;
     if (amount <= 0) {
@@ -334,6 +298,8 @@ class _VerifiedLedgerTransferSheetState
             'amount': amount,
             'pin': pin,
             'note': 'P2P Transfer via Vektolux Verified QR',
+            'idempotencyKey': (_attemptKey ??= const Uuid().v4()),
+            if (widget.user.sessionToken != null) 'sessionToken': widget.user.sessionToken,
           },
         );
 
@@ -442,6 +408,8 @@ class _VerifiedLedgerTransferSheetState
                 'amount': amount,
                 'pin': pin,
                 'note': 'P2P Transfer via Vektolux (Top-up + Transfer)',
+                'idempotencyKey': (_attemptKey ??= const Uuid().v4()),
+                if (widget.user.sessionToken != null) 'sessionToken': widget.user.sessionToken,
               },
             );
 

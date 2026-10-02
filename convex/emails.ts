@@ -63,14 +63,15 @@ export const sendOtpEmail = internalAction({
 
       const data = await response.json();
       if (!response.ok) {
-        console.error("[Vektolux Mailer] Resend API error:", data);
+        console.error("[Vektolux Mailer] Resend API error:", data?.name ?? data?.statusCode ?? "unknown");
         return { success: false, error: data };
       }
 
-      console.log(`[Vektolux Mailer] Dispatched OTP ${args.otpCode} to ${args.to} (ID: ${data.id})`);
+      // Never log the code or the full address (anyone with log access could reset the account).
+      console.log(`[Vektolux Mailer] Verification email dispatched (ID: ${data.id})`);
       return { success: true, id: data.id };
     } catch (error) {
-      console.error("[Vektolux Mailer] Network error sending email:", error);
+      console.error("[Vektolux Mailer] Network error sending email:", (error as any)?.message ?? "unknown");
       return { success: false, error: String(error) };
     }
   },

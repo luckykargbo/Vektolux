@@ -3,10 +3,16 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 
+import { isAuthError, sessionFromRequest } from "@/lib/apiAuth";
 import { CONVEX_URL } from "@/lib/convex";
 
 function getClient() {
   return new ConvexHttpClient(CONVEX_URL);
+}
+
+/** Never send internal error text to the browser. */
+function publicMessage(err: unknown, fallback: string): string {
+  return isAuthError(err) ? "Administrator access required. Please sign in again." : fallback;
 }
 
 export async function POST(request: Request) {
@@ -14,12 +20,13 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       action: "verify" | "status" | "delete" | "purge_mock";
       adminId: string;
-      sessionToken?: string;
       userId?: string;
       status?: "ACTIVE" | "SUSPENDED" | "BANNED";
     };
 
-    const { action, adminId, sessionToken, userId, status } = body;
+    const { action, adminId, userId, status } = body;
+
+    const sessionToken = sessionFromRequest(request);
 
     if (!adminId) {
       return NextResponse.json(
@@ -92,9 +99,9 @@ export async function POST(request: Request) {
         );
     }
   } catch (err: any) {
-    console.error("[user moderate POST] error:", err);
+    console.error("[user moderate POST] request failed");
     return NextResponse.json(
-      { success: false, error: err?.message ?? "Failed to perform user moderation action." },
+      { success: false, error: publicMessage(err, "Failed to perform user moderation action.") },
       { status: 500 }
     );
   }

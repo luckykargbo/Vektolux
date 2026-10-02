@@ -51,10 +51,8 @@ class _IdentityVerificationScreenState
   Uint8List? _idCardImageBytes;
   Uint8List? _selfieImageBytes;
 
-  final bool _livenessPassed = true;
-  final bool _faceMatchPassed = true;
-  final double _livenessScore = 98.4;
-  final double _faceMatchScore = 96.8;
+  // No liveness / face-match check runs on the device. The ID photo and selfie are reviewed by
+  // Vektolux (manual review); the app never invents scores or a "passed" result.
 
   String? _processingStageText;
   String? _errorMessage;
@@ -182,7 +180,7 @@ class _IdentityVerificationScreenState
     setState(() {
       _errorMessage = null;
       _currentStep = 3;
-      _processingStageText = 'Encrypting & uploading biometric telemetry to Convex...';
+      _processingStageText = 'Uploading your ID photo...';
     });
 
     try {
@@ -194,7 +192,7 @@ class _IdentityVerificationScreenState
 
       if (!mounted) return;
       setState(() {
-        _processingStageText = 'Performing 3D facial mesh & anti-spoofing analysis...';
+        _processingStageText = 'Uploading your selfie...';
       });
 
       final selfieUpload = await ImageUploadService.uploadImageBinaryWithStorageId(
@@ -205,7 +203,7 @@ class _IdentityVerificationScreenState
 
       if (!mounted) return;
       setState(() {
-        _processingStageText = 'Verifying face match against National ID card...';
+        _processingStageText = 'Submitting for review...';
       });
 
       final result = await widget.convexClient.mutation(
@@ -224,10 +222,6 @@ class _IdentityVerificationScreenState
           'tin': _accountType == AccountType.business
               ? _tinController.text.trim()
               : null,
-          'livenessScore': _livenessScore,
-          'faceMatchScore': _faceMatchScore,
-          'livenessPassed': _livenessPassed,
-          'faceMatchPassed': _faceMatchPassed,
         },
       );
 
@@ -243,7 +237,7 @@ class _IdentityVerificationScreenState
 
       if (!mounted) return;
       setState(() {
-        _processingStageText = 'Verification submitted! Your Green Tick audit is queued.';
+        _processingStageText = 'Submitted. Your identity is now pending review by Vektolux.';
       });
       await Future.delayed(const Duration(milliseconds: 900));
 
@@ -543,7 +537,7 @@ class _IdentityVerificationScreenState
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Individual Tier: No business registration or TIN required. Verification is verified via your National ID and Biometric Face Scan.',
+                      'Individual Tier: No business registration or TIN required. Your National ID and selfie are reviewed by the Vektolux team.',
                       style: TextStyle(
                         fontSize: 12,
                         color: Color(0xFF1E40AF),
@@ -912,14 +906,14 @@ class _IdentityVerificationScreenState
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.verified_rounded, color: AppColors.emerald, size: 24),
+                  const Icon(Icons.photo_camera_front_rounded, color: AppColors.emerald, size: 24),
                   const SizedBox(width: 12),
-                  Expanded(
+                  const Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Biometric Liveness Passed',
+                        Text(
+                          'Selfie captured',
                           style: TextStyle(
                             fontWeight: FontWeight.w700,
                             fontSize: 13,
@@ -927,8 +921,8 @@ class _IdentityVerificationScreenState
                           ),
                         ),
                         Text(
-                          '3D Liveness: $_livenessScore% · Face Match: $_faceMatchScore%',
-                          style: const TextStyle(
+                          'It will be compared with your ID by the Vektolux review team.',
+                          style: TextStyle(
                             fontSize: 11.5,
                             color: Color(0xFF047857),
                           ),
@@ -994,7 +988,7 @@ class _IdentityVerificationScreenState
             ),
             const SizedBox(height: 8),
             const Text(
-              'Securely transmitting your encrypted biometric face scan and ID card to the Convex escrow vault.',
+              'Uploading your ID photo and selfie securely for review.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 13,

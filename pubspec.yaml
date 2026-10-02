@@ -1,7 +1,7 @@
 name: vektolux
 description: Vektolux Multi-Vertical Marketplace — Real Estate & Mobility
 publish_to: 'none'
-version: 1.0.24+25
+version: 1.0.25+26
 
 
 environment:
@@ -63,6 +63,7 @@ dependencies:
   url_launcher: ^6.3.2
   share_plus: ^10.1.4
   mobile_scanner: ^7.4.2
+  qr_flutter: ^4.1.0
 
   # ── Social Authentication ──────────────────────────────────────────
   google_sign_in: ^6.2.1
@@ -84,3 +85,5 @@ flutter:
   uses-material-design: true
   assets:
     - assets/sqlite3.wasm
+    - assets/images/wallet/
+

@@ -9,11 +9,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
+import '../../../profile/presentation/views/widgets/ussd_payment_sheet.dart';
 import '../../domain/entities/property_listing_entity.dart';
 import '../views/my_real_estate_escrows_screen.dart';
 
@@ -101,10 +103,16 @@ class _InspectionPassModalState extends State<InspectionPassModal> {
       );
 
       if (res.success && res.value != null) {
+        final pass = Map<String, dynamic>.from(res.value as Map);
         setState(() {
           _isSubmitting = false;
-          _issuedPass = Map<String, dynamic>.from(res.value as Map);
+          _issuedPass = pass;
         });
+        // The pass is only active once the fee is really held. Pay it through Monime when it was
+        // not paid from the wallet; the server confirms the payment with Monime itself.
+        if (pass['status']?.toString() == 'CREATED' && mounted) {
+          await _payPassWithMobileMoney(client, pass);
+        }
       } else {
         setState(() => _isSubmitting = false);
         if (mounted) {
@@ -480,11 +488,56 @@ class _InspectionPassModalState extends State<InspectionPassModal> {
     });
   }
 
+  Future<void> _payPassWithMobileMoney(ConvexClientWrapper client, Map<String, dynamic> pass) async {
+    final slug = _selectedProvider == 'AFRICELL_AFRIMONEY_SL' ? 'africell' : 'orange';
+    final res = await client.action(
+      'payments:initiateMoniMePayment',
+      args: {
+        // The server charges the pass's own fee; this value is only informational.
+        'amount': (pass['tourFee'] as num?)?.toDouble() ?? 0.0,
+        'inspectionPassId': pass['passId'],
+        'phoneNumber': _phoneController.text.trim(),
+        'provider': slug,
+        'description': 'Viewing tour pass',
+      },
+    );
+    if (!mounted) return;
+    final data = res.value is Map ? Map<String, dynamic>.from(res.value as Map) : <String, dynamic>{};
+    if (!res.success || data['success'] == false) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res.errorMessage ?? data['message']?.toString() ?? 'Could not start the payment.'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
+    final checkoutUrl = data['checkoutUrl']?.toString() ?? '';
+    if (checkoutUrl.startsWith('https://')) {
+      final uri = Uri.tryParse(checkoutUrl);
+      if (uri != null && await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    }
+    if (!mounted) return;
+    final dial = data['ussdCode']?.toString() ?? '';
+    await UssdPaymentSheet.show(
+      context,
+      dialCode: dial,
+      reference: data['reference']?.toString() ?? '',
+      amount: (pass['tourFee'] as num?)?.toDouble() ?? 0.0,
+      serviceFee: 0.0,
+      serviceProvider: slug == 'africell' ? 'Africell Money' : 'Orange Money',
+      recipient: _phoneController.text.trim(),
+      transactionType: 'Viewing Tour Pass',
+    );
+  }
+
   Widget _buildSuccessView() {
     final pass = _issuedPass!;
+    final isFunded = pass['status']?.toString() == 'FUNDS_LOCKED';
     final otp = pass['otpCode']?.toString() ?? '----';
     final agentName = pass['assignedAgentName']?.toString() ?? 'Vektolux Field Agent';
-    final agentPhone = pass['assignedAgentPhone']?.toString() ?? '+232-xx-xxx-xxx';
     final neighborhood = pass['maskedNeighborhood']?.toString() ?? 'Masked Location';
     final qrHash = pass['qrHash']?.toString() ?? '';
 
@@ -516,7 +569,9 @@ class _InspectionPassModalState extends State<InspectionPassModal> {
         const SizedBox(height: 4),
         Center(
           child: Text(
-            'Micro-escrow locked: SLE ${pass['tourFee'] ?? _selectedTourFee}',
+            isFunded
+                ? 'Micro-escrow locked: SLE ${pass['tourFee'] ?? _selectedTourFee}'
+                : 'Awaiting payment confirmation: SLE ${pass['tourFee'] ?? _selectedTourFee}',
             style: const TextStyle(fontSize: 13, color: AppColors.gray600, fontWeight: FontWeight.w600),
           ),
         ),
@@ -604,9 +659,9 @@ class _InspectionPassModalState extends State<InspectionPassModal> {
                           agentName,
                           style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.obsidian),
                         ),
-                        Text(
-                          agentPhone,
-                          style: const TextStyle(fontSize: 12, color: AppColors.gray600),
+                        const Text(
+                          'Contact details are shared by Vektolux.',
+                          style: TextStyle(fontSize: 12, color: AppColors.gray600),
                         ),
                       ],
                     ),

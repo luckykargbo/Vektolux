@@ -11,16 +11,20 @@ import '../../domain/entities/property_listing_entity.dart';
 
 class PropertyStickyHeader extends StatelessWidget {
   final PropertyListingEntity listing;
-  final VoidCallback? onMapPreviewTap;
 
   const PropertyStickyHeader({
     super.key,
     required this.listing,
-    this.onMapPreviewTap,
+    VoidCallback? onMapPreviewTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final broadCity = listing.city.isNotEmpty ? listing.city : 'Sierra Leone';
+    final broadLocation = broadCity.toLowerCase().contains('sierra leone')
+        ? broadCity
+        : '$broadCity, Sierra Leone';
+
     return Container(
       color: AppColors.white,
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
@@ -107,94 +111,87 @@ class PropertyStickyHeader extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // ── Location Map Preview Card ─────────────────────────────
-          GestureDetector(
-            onTap: onMapPreviewTap,
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.gray50,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Row(
-                children: [
-                  // Map pin icon container
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: AppColors.emeraldSurface,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.location_on_rounded,
-                      color: AppColors.emeraldDark,
-                      size: 24,
-                    ),
+          // ── General Location Privacy Card (Zero Map / Zero Coordinates) ──
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.gray50,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.emeraldSurface,
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  const SizedBox(width: 12),
-                  // Address details
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          listing.address.isNotEmpty
-                              ? listing.address
-                              : '${listing.city}, ${listing.country}',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.obsidian,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${listing.city}, ${listing.country} • Lat: ${listing.latitude.toStringAsFixed(4)}, Lng: ${listing.longitude.toStringAsFixed(4)}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.gray500,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
+                  child: const Icon(
+                    Icons.location_city_rounded,
+                    color: AppColors.emeraldDark,
+                    size: 24,
                   ),
-                  const SizedBox(width: 8),
-                  // View Map Indicator
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: AppColors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Map',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.obsidian,
-                          ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        broadLocation,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.obsidian,
                         ),
-                        SizedBox(width: 4),
-                        Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          size: 10,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'Broad Area Only • Location Protected',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
                           color: AppColors.gray500,
                         ),
-                      ],
-                    ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.shield_outlined,
+                        size: 14,
+                        color: AppColors.emeraldDark,
+                      ),
+                      SizedBox(width: 4),
+                      Text(
+                        'Verified Area',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.obsidian,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         ],

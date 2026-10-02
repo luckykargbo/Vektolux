@@ -5,15 +5,17 @@
 // private draft/published visibility management.
 // ═══════════════════════════════════════════════════════════════════════
 
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { encodeGeohash } from "./lib/geo";
+import { requireSelf } from "./lib/auth";
 
 // ═══════════════════════════════════════════════════════════════════════
 //                   QUICK SEED LISTINGS (DEV/ADMIN)
 // ═══════════════════════════════════════════════════════════════════════
 
-export const quickSeedListings = mutation({
+// INTERNAL ONLY (dashboard/CLI): seeds sample listings. Was public + unauthenticated.
+export const quickSeedListings = internalMutation({
   args: {
     vertical: v.union(v.literal("property"), v.literal("vehicle"), v.literal("both")),
     city: v.optional(v.string()),
@@ -365,6 +367,7 @@ export const quickSeedListings = mutation({
 
 export const getAdminListings = query({
   args: {
+    sessionToken: v.optional(v.string()),
     vertical: v.optional(v.string()),
   },
   returns: v.array(
@@ -382,6 +385,8 @@ export const getAdminListings = query({
     })
   ),
   handler: async (ctx, args) => {
+    const __admin = await requireSelf(ctx, args.sessionToken);
+    if (__admin.user.role !== "admin") throw new Error("Unauthorized: Administrator privileges required.");
     const results: Array<{
       id: string;
       type: string;
@@ -456,7 +461,8 @@ export const getAdminListings = query({
 //                   TOGGLE LISTING PUBLISHED STATUS
 // ═══════════════════════════════════════════════════════════════════════
 
-export const toggleListingPublished = mutation({
+// INTERNAL ONLY: was public + unauthenticated. Expose via an admin-authenticated wrapper if needed.
+export const toggleListingPublished = internalMutation({
   args: {
     listingType: v.union(v.literal("property"), v.literal("vehicle")),
     listingId: v.string(),
@@ -487,7 +493,8 @@ export const toggleListingPublished = mutation({
 //                      DELETE ADMIN TEST LISTING
 // ═══════════════════════════════════════════════════════════════════════
 
-export const deleteAdminListing = mutation({
+// INTERNAL ONLY: was public + unauthenticated (anyone could delete any listing).
+export const deleteAdminListing = internalMutation({
   args: {
     listingType: v.union(v.literal("property"), v.literal("vehicle")),
     listingId: v.string(),
@@ -514,7 +521,8 @@ export const deleteAdminListing = mutation({
 //                   CLEAR ALL IMAGE POSTS & LISTINGS
 // ═══════════════════════════════════════════════════════════════════════
 
-export const clearAllListings = mutation({
+// INTERNAL ONLY: destructive. Was public + unauthenticated.
+export const clearAllListings = internalMutation({
   args: {},
   returns: v.object({
     success: v.boolean(),
@@ -550,7 +558,8 @@ export const clearAllListings = mutation({
 //                    BATCH GENERATE UPLOAD URLS
 // ═══════════════════════════════════════════════════════════════════════
 
-export const batchGenerateUploadUrls = mutation({
+// INTERNAL ONLY: was public + unauthenticated (free storage upload URLs for anyone).
+export const batchGenerateUploadUrls = internalMutation({
   args: {
     count: v.number(),
   },
@@ -570,18 +579,12 @@ export const batchGenerateUploadUrls = mutation({
  * Resolves user, confirms role === "admin", and safely checks session token if provided.
  */
 async function validateAdminSession(ctx: any, adminId: string, sessionToken?: string) {
-  const adminDocId = ctx.db.normalizeId("users", adminId);
-  if (!adminDocId) {
-    throw new Error("Unauthorized: Invalid administrator credentials.");
-  }
-  const adminUser = await ctx.db.get(adminDocId);
-  if (!adminUser || adminUser.role !== "admin") {
+  // The session token is mandatory: an admin user id alone proves nothing.
+  const { userId, user } = await requireSelf(ctx, sessionToken, adminId);
+  if (user.role !== "admin") {
     throw new Error("Forbidden: Access restricted to platform administrators.");
   }
-  if (sessionToken && adminUser.sessionToken && adminUser.sessionToken !== sessionToken) {
-    throw new Error("Unauthorized: Session token expired. Please sign in again.");
-  }
-  return { adminDocId, adminUser };
+  return { adminDocId: userId, adminUser: user };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1038,184 +1041,15 @@ export const purgeMockUsers = mutation({
   },
 });
 
-// ═══════════════════════════════════════════════════════════════════════
-//      PURGE ALL MOCK USERS & ENFORCE SINGLE PRODUCTION USER
-// ═══════════════════════════════════════════════════════════════════════
-
-export const purgeAllMockUsersAndEnforceSingleUser = mutation({
-  args: {
-    adminId: v.optional(v.string()),
-    sessionToken: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    if (args.adminId) {
-      await validateAdminSession(ctx, args.adminId, args.sessionToken);
-    }
-
-    const now = Date.now();
-    const TARGET_EMAIL = "alfred.kargbo@vektolux.com";
-    const TARGET_NAME = "Alfred Manso Kargbo";
-    const TARGET_PHONE = "+232688577868";
-    const TARGET_PASSWORD_HASH =
-      "8f26796073cec5b2d34a862b351b7c15:519b4b98224792d0f7e3236126d0993b05b4f4b701da3f0d63d2661d8366f4bd"; // password123
-
-    // 1. Locate primary production user
-    let primaryUser = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", TARGET_EMAIL))
-      .first();
-
-    if (!primaryUser) {
-      primaryUser = await ctx.db
-        .query("users")
-        .withIndex("by_phone", (q) => q.eq("phone", TARGET_PHONE))
-        .first();
-    }
-
-    if (!primaryUser) {
-      const newId = await ctx.db.insert("users", {
-        name: TARGET_NAME,
-        email: TARGET_EMAIL,
-        phone: TARGET_PHONE,
-        role: "admin",
-        activeRole: "admin",
-        passwordHash: TARGET_PASSWORD_HASH,
-        sessionToken: `vktlx_session_${now}`,
-        isVerified: true,
-        isVerifiedAgent: true,
-        isVerifiedMerchant: true,
-        isVerifiedDriver: true,
-        verificationBadge: "GREEN_TICK",
-        verificationStatus: "verified",
-        kycStatus: "VERIFIED",
-        isActive: true,
-        updatedAt: now,
-      });
-      primaryUser = (await ctx.db.get(newId))!;
-    } else {
-      await ctx.db.patch(primaryUser._id, {
-        name: TARGET_NAME,
-        email: TARGET_EMAIL,
-        phone: TARGET_PHONE,
-        role: "admin",
-        activeRole: "admin",
-        passwordHash: TARGET_PASSWORD_HASH,
-        isVerified: true,
-        isVerifiedAgent: true,
-        isVerifiedMerchant: true,
-        isVerifiedDriver: true,
-        verificationBadge: "GREEN_TICK",
-        verificationStatus: "verified",
-        kycStatus: "VERIFIED",
-        isActive: true,
-        updatedAt: now,
-      });
-      primaryUser = (await ctx.db.get(primaryUser._id))!;
-    }
-
-    const primaryUserId = primaryUser._id;
-
-    // 2. Re-assign all existing properties and vehicles to primary user so they are NOT orphaned
-    const allProperties = await ctx.db.query("realEstateListings").collect();
-    let reallocatedProperties = 0;
-    for (const prop of allProperties) {
-      if (prop.ownerId !== primaryUserId) {
-        await ctx.db.patch(prop._id, {
-          ownerId: primaryUserId,
-          updatedAt: now,
-        });
-        reallocatedProperties++;
-      }
-    }
-
-    const allVehicles = await ctx.db.query("vehicleListings").collect();
-    let reallocatedVehicles = 0;
-    for (const veh of allVehicles) {
-      if (veh.ownerId !== primaryUserId) {
-        await ctx.db.patch(veh._id, {
-          ownerId: primaryUserId,
-          updatedAt: now,
-        });
-        reallocatedVehicles++;
-      }
-    }
-
-    // 3. Purge all other users from the database
-    const allUsers = await ctx.db.query("users").collect();
-    let deletedUsersCount = 0;
-
-    for (const u of allUsers) {
-      if (u._id === primaryUserId) continue;
-
-      const wallets = await ctx.db
-        .query("walletBalances")
-        .withIndex("by_user", (q) => q.eq("userId", u._id))
-        .collect();
-      for (const w of wallets) {
-        await ctx.db.delete(w._id);
-      }
-
-      const follows = await ctx.db
-        .query("follows")
-        .withIndex("by_follower", (q) => q.eq("followerId", u._id))
-        .collect();
-      for (const f of follows) {
-        await ctx.db.delete(f._id);
-      }
-
-      const merchantProfiles = await ctx.db
-        .query("merchant_profiles")
-        .withIndex("by_user", (q) => q.eq("userId", u._id))
-        .collect();
-      for (const mp of merchantProfiles) {
-        await ctx.db.delete(mp._id);
-      }
-
-      await ctx.db.delete(u._id);
-      deletedUsersCount++;
-    }
-
-    // 4. Ensure primary user has a valid active wallet balance
-    let primaryWallet = await ctx.db
-      .query("walletBalances")
-      .withIndex("by_user_currency", (q) =>
-        q.eq("userId", primaryUserId).eq("currency", "SLE")
-      )
-      .first();
-
-    if (!primaryWallet) {
-      await ctx.db.insert("walletBalances", {
-        userId: primaryUserId,
-        availableBalance: 50000,
-        pendingBalance: 0,
-        escrowBalance: 0,
-        currency: "SLE",
-        updatedAt: now,
-      });
-    }
-
-    return {
-      success: true,
-      preservedUser: {
-        id: primaryUserId as string,
-        name: primaryUser.name,
-        email: primaryUser.email,
-        phone: primaryUser.phone,
-        role: primaryUser.role,
-      },
-      deletedUsersCount,
-      reallocatedProperties,
-      reallocatedVehicles,
-      message: `Successfully enforced single-user mode. Purged ${deletedUsersCount} mock/demo accounts. Retained ${primaryUser.name} (${primaryUser.email}).`,
-    };
-  },
-});
+// (purgeAllMockUsersAndEnforceSingleUser removed: it contained a real person's details and a hard-coded
+// credential, and deleted every user.)
 
 // ═══════════════════════════════════════════════════════════════════════
 //               CLEAN MOCK DATA (ONE-TIME PURGE & SINGLE-USER)
 // ═══════════════════════════════════════════════════════════════════════
 
-export const cleanMockData = mutation({
+// INTERNAL ONLY: destructive one-off maintenance. Was public + unauthenticated.
+export const cleanMockData = internalMutation({
   args: {
     dryRun: v.optional(v.boolean()),
   },
@@ -1591,9 +1425,10 @@ export const purgeMockNotifications = mutation({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    if (args.adminId) {
-      await validateAdminSession(ctx, args.adminId, args.sessionToken);
+    if (!args.adminId) {
+      throw new Error("Unauthorized: administrator credentials required.");
     }
+    await validateAdminSession(ctx, args.adminId, args.sessionToken);
 
     const allNotifications = await ctx.db.query("user_notifications").collect();
     let deletedCount = 0;

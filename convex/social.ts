@@ -1,6 +1,8 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
+import { toPublicProperty, toPublicVehicle } from "./lib/publicListing";
+import { requireSelf } from "./lib/auth";
 
 export const toggleFollow = mutation({
   args: {
@@ -9,11 +11,7 @@ export const toggleFollow = mutation({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    if (!args.sessionToken) throw new Error("Unauthorized");
-    const user = await ctx.db.get(args.currentUserId);
-    if (!user || user.sessionToken !== args.sessionToken) {
-      throw new Error("Unauthorized");
-    }
+    const { user } = await requireSelf(ctx, args.sessionToken, args.currentUserId);
 
     if (args.currentUserId === args.targetUserId) {
       throw new Error("Cannot follow yourself");
@@ -154,7 +152,7 @@ export const getSocialFeed = query({
         // Privacy Guard: Strip phone fields from public feed
         const { privateContactPhone: _p, contactPhone: _c, ...safeItem } =
           item as typeof item & { privateContactPhone?: string; contactPhone?: string };
-        allListings.push({ ...safeItem, type: "property" });
+        allListings.push({ ...toPublicProperty(safeItem), type: "property" });
       }
       
       const vehicles = await ctx.db
@@ -168,7 +166,7 @@ export const getSocialFeed = query({
         // Privacy Guard: Strip phone fields from public feed
         const { privateContactPhone: _p, contactPhone: _c, ...safeItem } =
           item as typeof item & { privateContactPhone?: string; contactPhone?: string };
-        allListings.push({ ...safeItem, type: "vehicle" });
+        allListings.push({ ...toPublicVehicle(safeItem), type: "vehicle" });
       }
     }
     

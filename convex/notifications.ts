@@ -6,6 +6,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import { mutation, query } from "./_generated/server";
+import { requireAdminSession, requireSelf } from "./lib/auth";
 import { v } from "convex/values";
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -17,6 +18,7 @@ import { v } from "convex/values";
  */
 export const registerDeviceToken = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.string(),
     fcmToken: v.string(),
     deviceType: v.string(), // "android" | "ios" | "web"
@@ -27,6 +29,8 @@ export const registerDeviceToken = mutation({
     tokenId: v.string(),
   }),
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     const now = Date.now();
     const existing = await ctx.db
       .query("user_fcm_tokens")
@@ -60,6 +64,7 @@ export const registerDeviceToken = mutation({
  */
 export const getUserTokens = query({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.string(),
   },
   returns: v.array(
@@ -71,6 +76,7 @@ export const getUserTokens = query({
     })
   ),
   handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
     const tokens = await ctx.db
       .query("user_fcm_tokens")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
@@ -95,6 +101,7 @@ export const getUserTokens = query({
  */
 export const getUserNotifications = query({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.string(),
     limit: v.optional(v.number()),
   },
@@ -112,6 +119,8 @@ export const getUserNotifications = query({
     })
   ),
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     const takeCount = args.limit ?? 30;
 
     // 1. Fetch targeted direct notifications
@@ -168,10 +177,13 @@ export const getUserNotifications = query({
  */
 export const getUnreadNotificationCount = query({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.string(),
   },
   returns: v.number(),
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     // 1. Direct unread notifications
     const directNotifs = await ctx.db
       .query("user_notifications")
@@ -197,11 +209,18 @@ export const getUnreadNotificationCount = query({
  */
 export const markAsRead = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     notificationId: v.id("user_notifications"),
     userId: v.string(),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
+    const __n = await ctx.db.get(args.notificationId);
+    if (__n && __n.targetType === "single_user" && __n.userId !== String(args.userId)) {
+      throw new Error("Notification not found.");
+    }
     const notif = await ctx.db.get(args.notificationId);
     if (!notif) return false;
 
@@ -224,10 +243,13 @@ export const markAsRead = mutation({
  */
 export const markAllAsRead = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.string(),
   },
   returns: v.number(),
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     let count = 0;
 
     // 1. Mark direct notifications
@@ -272,6 +294,7 @@ export const markAllAsRead = mutation({
  */
 export const createNotificationRecord = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     targetType: v.union(v.literal("all_users"), v.literal("single_user")),
     userId: v.optional(v.string()),
     title: v.string(),
@@ -285,6 +308,7 @@ export const createNotificationRecord = mutation({
     createdAt: v.number(),
   }),
   handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
     const now = Date.now();
     const id = await ctx.db.insert("user_notifications", {
       targetType: args.targetType,
@@ -308,6 +332,7 @@ export const createNotificationRecord = mutation({
  */
 export const getAllNotificationsAdmin = query({
   args: {
+    sessionToken: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
   returns: v.array(
@@ -325,6 +350,7 @@ export const getAllNotificationsAdmin = query({
     })
   ),
   handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
     const takeCount = args.limit ?? 50;
     const notifs = await ctx.db
       .query("user_notifications")

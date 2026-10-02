@@ -7,6 +7,7 @@
 import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { idDocumentTypeEnum, verificationStatusEnum, verificationBadgeEnum } from "./schema";
+import { requireSelf, resolveOptionalUser } from "./lib/auth";
 
 const PEPPER = "VKT_EIDV_PEPPER_2026_SLE";
 const MAX_ATTEMPTS_PER_24H = 3;
@@ -41,10 +42,8 @@ export const initiateVerification = mutation({
     errorMessage: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
-    const userId = ctx.db.normalizeId("users", args.userId);
-    if (!userId) throw new Error("Invalid user account.");
-    const user = await ctx.db.get(userId);
-    if (!user || user.sessionToken !== args.sessionToken) {
+    const { userId, user } = await requireSelf(ctx, args.sessionToken, args.userId);
+    if (!user) {
       throw new Error("Unauthorized session.");
     }
 
@@ -120,7 +119,9 @@ export const initiateVerification = mutation({
   },
 });
 
-// ─── MOCK / SIMULATED VERIFICATION (DEVELOPMENT & TEST MODE) ──────────
+// ─── SUBMIT AN ID FOR MANUAL REVIEW ───────────────────────────────────
+// (Historical name: this approves NOTHING. It records a PENDING_REVIEW check; an administrator or the
+// real eIDV provider webhook decides. It is kept under this name so existing app builds keep working.)
 export const mockCompleteVerification = mutation({
   args: {
     userId: v.string(),
@@ -135,52 +136,45 @@ export const mockCompleteVerification = mutation({
     referenceId: v.string(),
   }),
   handler: async (ctx, args) => {
-    const userId = ctx.db.normalizeId("users", args.userId);
-    if (!userId) throw new Error("Invalid user account.");
-    const user = await ctx.db.get(userId);
-    if (!user || user.sessionToken !== args.sessionToken) {
+    const { userId, user } = await requireSelf(ctx, args.sessionToken, args.userId);
+    if (!user) {
       throw new Error("Unauthorized session.");
     }
 
     const now = Date.now();
     const idHash = await computeSaltedHash(args.idNumber);
-    const referenceId = `vkt_mock_${now}_${Math.random().toString(36).substring(2, 8)}`;
+    const referenceId = `vkt_review_${now}_${Math.random().toString(36).substring(2, 8)}`;
 
     const checkId = await ctx.db.insert("identity_checks", {
       userId,
       referenceId,
       documentType: args.documentType,
       idNumberHash: idHash,
-      status: "verified",
-      provider: "mock_simulation",
+      status: "PENDING_REVIEW",
+      provider: "manual_review",
       attemptNumber: 1,
-      livenessScore: 99.8,
-      faceMatchScore: 99.2,
-      mrzValidated: true,
-      tamperingPassed: true,
-      completedAt: now,
       createdAt: now,
     });
 
+    // NO automatic approval and NO badge: an administrator (admin.verifyUser) or the real eIDV
+    // provider webhook decides. (This used to write fabricated liveness/face-match scores and a
+    // GREEN_TICK for every caller.)
     await ctx.db.patch(userId, {
-      isVerified: true,
-      verificationStatus: "verified",
-      verificationBadge: "GREEN_TICK",
-      verifiedAt: now,
+      verificationStatus: "pending",
       verificationReferenceId: referenceId,
       updatedAt: now,
     });
 
     await ctx.db.insert("verifications_log", {
-      idempotencyKey: `mock_${referenceId}`,
+      idempotencyKey: `review_${referenceId}`,
       checkId,
       userId,
-      event: "approved",
-      provider: "mock_simulation",
-      signatureVerified: true,
-      rawResultCode: "MOCK_SIM_APPROVED",
+      event: "submitted",
+      provider: "manual_review",
+      signatureVerified: false,
+      rawResultCode: "SUBMITTED_FOR_REVIEW",
       diagnosticPayload: JSON.stringify({
-        type: "development_simulated_eIDV",
+        type: "manual_review_request",
         docType: args.documentType,
         timestamp: now,
       }),
@@ -189,8 +183,8 @@ export const mockCompleteVerification = mutation({
 
     return {
       success: true,
-      status: "verified",
-      badge: "GREEN_TICK",
+      status: "pending",
+      badge: "NONE",
       referenceId,
     };
   },
@@ -198,7 +192,7 @@ export const mockCompleteVerification = mutation({
 
 // ─── GET CURRENT USER VERIFICATION STATUS ─────────────────────────────
 export const getVerificationStatus = query({
-  args: { userId: v.string() },
+  args: { userId: v.string(), sessionToken: v.optional(v.string()) },
   returns: v.object({
     isVerified: v.boolean(),
     status: verificationStatusEnum,
@@ -236,7 +230,8 @@ export const getVerificationStatus = query({
       status,
       badge,
       verifiedAt: user.verifiedAt,
-      rejectionReason: user.rejectionReason,
+      // the rejection reason is private to the user
+      rejectionReason: (await resolveOptionalUser(ctx, { sessionToken: args.sessionToken }))?.userId === user._id ? user.rejectionReason : undefined,
     };
   },
 });

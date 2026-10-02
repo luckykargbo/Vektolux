@@ -363,7 +363,7 @@ class _ApiHealthTabState extends State<ApiHealthTab> {
                     ),
                     const SizedBox(height: 6),
                     const Text(
-                      'Click "Seed Gateways" to register Orange, Afrimoney, Moneroo & SMS.',
+                      'Click "Seed Gateways" to register Orange, Afrimoney & SMS.',
                       textAlign: TextAlign.center,
                       style: TextStyle(fontSize: 12, color: AppColors.obsidianSoft),
                     ),

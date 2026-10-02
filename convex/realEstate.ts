@@ -10,6 +10,10 @@ import { Id } from "./_generated/dataModel";
 import { realEstateCategory } from "./schema";
 import { encodeGeohash } from "./lib/geo";
 import { requireVerifiedSeller } from "./middleware";
+import { requireOwnedDoc, requireSelf } from "./lib/auth";
+import { postingPermission } from "./lib/permissions";
+import { toPublicProperty } from "./lib/publicListing";
+import { findDistrict, findTown } from "./lib/slLocations";
 
 // ═══════════════════════════════════════════════════════════════════════
 //                     CREATE PROPERTY LISTING
@@ -27,9 +31,11 @@ export const createPropertyListing = mutation({
     currency: v.optional(v.string()),
     address: v.string(),
     city: v.optional(v.string()),
+    district: v.optional(v.string()),
     country: v.optional(v.string()),
-    latitude: v.number(),
-    longitude: v.number(),
+    // Optional & PRIVATE (never returned publicly). Absent = unknown (stored as 0 / empty geohash).
+    latitude: v.optional(v.number()),
+    longitude: v.optional(v.number()),
     imageStorageIds: v.array(v.string()),
     bedrooms: v.optional(v.number()),
     bathrooms: v.optional(v.number()),
@@ -41,7 +47,7 @@ export const createPropertyListing = mutation({
   returns: v.string(), // Returns listing _id
   handler: async (ctx, args) => {
     // 1. Seller Trust Guard: Enforce identity verification before listing
-    await requireVerifiedSeller(ctx, args.ownerId, args.sessionToken);
+    await requireVerifiedSeller(ctx, args.ownerId, args.sessionToken, "property");
 
     // 2. Verify user exists and is active
     const userId = ctx.db.normalizeId("users", args.ownerId);
@@ -78,7 +84,8 @@ export const createPropertyListing = mutation({
     }
 
     // 4. Calculate geohash for spatial indexing
-    const geohash = encodeGeohash(args.latitude, args.longitude, 7);
+    const hasCoords = args.latitude !== undefined && args.longitude !== undefined;
+    const geohash = hasCoords ? encodeGeohash(args.latitude!, args.longitude!, 7) : "";
     const now = Date.now();
 
     // 5. Insert listing record
@@ -92,9 +99,11 @@ export const createPropertyListing = mutation({
       currency: args.currency ?? "SLE",
       address: args.address,
       city: args.city ?? "Freetown",
+      // Store a recognised district when given (public location is derived from the allow-list).
+      district: findDistrict(args.district)?.district ?? findTown(args.city)?.district,
       country: args.country ?? "Sierra Leone",
-      latitude: args.latitude,
-      longitude: args.longitude,
+      latitude: args.latitude ?? 0,
+      longitude: args.longitude ?? 0,
       geohash,
       bedrooms: args.bedrooms,
       bathrooms: args.bathrooms,
@@ -179,16 +188,14 @@ export const listProperties = query({
           )
         ).filter((u): u is string => Boolean(u));
 
-        // Privacy Guard: Strip privateContactPhone from public response
-        const { privateContactPhone: _strip, ...cleanListing } = listing;
+        // Privacy: no private phone, street address, coordinates or geohash in public responses.
+        const cleanListing = toPublicProperty(listing);
 
         return {
           ...cleanListing,
           _id: listing._id as string,
           ownerId: String(listing.ownerId ?? ""),
           title: listing.title || "Untitled Property",
-          address: listing.address || "Location Unavailable",
-          city: listing.city || "Freetown",
           price: listing.price ?? 0,
           currency: listing.currency ?? "SLE",
           imageUrls: resolvedUrls,
@@ -210,8 +217,8 @@ export const getMyPropertyListings = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.db.normalizeId("users", args.ownerId);
-    if (!userId) return [];
+    // Owner only: this returns private fields (street address, coordinates, contact phone).
+    const { userId } = await requireSelf(ctx, args.sessionToken, args.ownerId);
 
     const listings = await ctx.db
       .query("realEstateListings")
@@ -247,15 +254,15 @@ export const updatePropertyListing = mutation({
     isPublished: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const id = ctx.db.normalizeId("realEstateListings", args.listingId);
-    if (!id) throw new Error("Listing not found");
-
-    const listing = await ctx.db.get(id);
-    if (!listing) throw new Error("Listing not found");
-
-    const userId = ctx.db.normalizeId("users", args.ownerId);
-    if (!userId || listing.ownerId !== userId) {
-      throw new Error("You do not have permission to edit this listing");
+    const { doc: listing, auth } = await requireOwnedDoc(
+      ctx, "realEstateListings", args.listingId, args.sessionToken
+    );
+    const id = listing._id;
+    // (Re)publishing is publishing: it needs the same server-side permission as creating a listing
+    // (approved role + active subscription, or a legacy agent inside the fixed grace window).
+    if (args.isPublished === true && listing.isPublished === false) {
+      const permission = await postingPermission(ctx, auth.user, "property");
+      if (!permission.allowed) throw new Error(permission.reason);
     }
 
     const updates: Record<string, any> = { updatedAt: Date.now() };
@@ -283,16 +290,10 @@ export const deletePropertyListing = mutation({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const id = ctx.db.normalizeId("realEstateListings", args.listingId);
-    if (!id) throw new Error("Listing not found");
-
-    const listing = await ctx.db.get(id);
-    if (!listing) throw new Error("Listing not found");
-
-    const userId = ctx.db.normalizeId("users", args.ownerId);
-    if (!userId || listing.ownerId !== userId) {
-      throw new Error("You do not have permission to delete this listing");
-    }
+    const { doc: listing } = await requireOwnedDoc(
+      ctx, "realEstateListings", args.listingId, args.sessionToken
+    );
+    const id = listing._id;
 
     // Capture full data payload for local SQLite archival
     const archivedSnapshot = {
@@ -342,8 +343,8 @@ export const getPropertyById = query({
     // Fetch owner details
     const owner = await ctx.db.get(listing.ownerId);
 
-    // Privacy Guard: Strip privateContactPhone from response
-    const { privateContactPhone: _strip, ...cleanListing } = listing;
+    // Privacy: no private phone, street address, coordinates or geohash in public responses.
+    const cleanListing = toPublicProperty(listing) as typeof listing;
 
     // Resolve media storage URLs
     const rawImages = Array.isArray(cleanListing.imageUrls) ? cleanListing.imageUrls : [];

@@ -47,7 +47,11 @@ extension UserRoleX on UserRole {
 
   /// Parse from Convex string value.
   static UserRole fromConvex(String value) {
-    final normalized = value.toLowerCase().trim();
+    var normalized = value.toLowerCase().trim();
+    // Roles granted by admin approval map onto the existing app workspaces. Privileges are
+    // always decided by the server; this only selects which screens are shown.
+    if (normalized == 'property_owner') normalized = 'agent';
+    if (normalized == 'dealer') normalized = 'merchant';
     return UserRole.values.firstWhere(
       (r) => r.name == normalized,
       orElse: () => UserRole.client,

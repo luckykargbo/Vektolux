@@ -4,11 +4,12 @@
 // Seeds properties across Freetown, Waterloo, Bo & vehicles for sale/rent.
 // ═══════════════════════════════════════════════════════════════════════
 
-import { mutation } from "./_generated/server";
+import { mutation, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { encodeGeohash } from "./lib/geo";
 
-export const seedDiscoveryData = mutation({
+// INTERNAL ONLY: inserts sample listings; must never be callable by clients in production.
+export const seedDiscoveryData = internalMutation({
   args: {
     force: v.optional(v.boolean()),
   },
@@ -362,7 +363,8 @@ export const seedDiscoveryData = mutation({
 //                 PURGE STATIC MOCK LISTINGS & IMAGES
 // ═══════════════════════════════════════════════════════════════════════
 
-export const purgeStaticMockListings = mutation({
+// INTERNAL ONLY: destructive maintenance; dashboard/CLI only.
+export const purgeStaticMockListings = internalMutation({
   args: {},
   returns: v.object({
     propertiesPurged: v.number(),

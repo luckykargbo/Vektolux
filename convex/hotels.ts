@@ -6,7 +6,13 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import { mutation, query } from "./_generated/server";
+import { requireSelf } from "./lib/auth";
+import { businessRole, isRoleApproved } from "./lib/permissions";
+import { hotelIsVerified, hotelOperatingPermission } from "./lib/hotelAccess";
+import { logHotelEvent } from "./hotelVerification";
 import { v } from "convex/values";
+import { toPublicHotel } from "./lib/publicListing";
+import { publicLocation } from "./lib/slLocations";
 
 // ═══════════════════════════════════════════════════════════════════════
 // 1. CREATE HOTEL / GUEST HOUSE PROFILE
@@ -14,6 +20,7 @@ import { v } from "convex/values";
 
 export const createHotelProfile = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.id("users"),
     businessName: v.string(),
     operationalType: v.union(v.literal("hotel"), v.literal("guest_house")),
@@ -34,17 +41,15 @@ export const createHotelProfile = mutation({
     longitude: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    // 1. Verify user exists and upgrade role to hotel_operator if needed
-    const user = await ctx.db.get(args.userId);
-    if (!user) {
-      throw new Error("User does not exist.");
-    }
-
-    if (user.role !== "hotel_operator" && user.role !== "admin") {
-      await ctx.db.patch(args.userId, {
-        role: "hotel_operator",
-        updatedAt: Date.now(),
-      });
+    // Only the account owner (valid session) may act on this account.
+    const { user } = await requireSelf(ctx, args.sessionToken, String(args.userId));
+    // A role is NEVER self-assigned here (it used to upgrade the caller to hotel_operator). Only an
+    // admin-approved Hotel / Guest House Owner can SUBMIT a hotel, and it starts as PENDING: it is not
+    // listed, cannot gain rooms and cannot take bookings until an admin verifies it. (A paid
+    // subscription is a separate requirement for rooms and bookings, not for submitting.)
+    if (!user.isActive) throw new Error("Your account is not active.");
+    if (businessRole(user) !== "hotel_owner" || !isRoleApproved(user)) {
+      throw new Error("Posting requires an approved Hotel / Guest House Owner account. Apply from your account and wait for review.");
     }
 
     // 2. Prevent duplicate hotel profile for the same user
@@ -65,6 +70,7 @@ export const createHotelProfile = mutation({
       operationalType: args.operationalType,
       isVerified: false,
       verificationStatus: "pending",
+      submittedAt: now,
       tinNumber: args.tinNumber,
       commercialLicenseUrl: args.commercialLicenseUrl,
       address: args.address,
@@ -84,9 +90,10 @@ export const createHotelProfile = mutation({
       updatedAt: now,
     });
 
+    await logHotelEvent(ctx, hotelId, "SUBMITTED", undefined, "pending", { id: args.userId, role: "owner" });
     return {
       hotelId,
-      message: "Hotel profile created successfully. Submit subscription to activate verified status.",
+      message: "Application submitted. Vektolux will review it; you can add rooms once it is verified and your subscription is active.",
     };
   },
 });
@@ -97,6 +104,7 @@ export const createHotelProfile = mutation({
 
 export const updateHotelProfile = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     hotelId: v.id("hotel_profiles"),
     businessName: v.optional(v.string()),
     description: v.optional(v.string()),
@@ -112,6 +120,9 @@ export const updateHotelProfile = mutation({
     supportsHourlyStays: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
+    const { userId: __caller } = await requireSelf(ctx, args.sessionToken);
+    const __hotel = await ctx.db.get(args.hotelId);
+    if (!__hotel || __hotel.userId !== __caller) throw new Error("You do not have permission to manage this property.");
     const hotel = await ctx.db.get(args.hotelId);
     if (!hotel) {
       throw new Error("Hotel profile not found.");
@@ -142,6 +153,7 @@ export const updateHotelProfile = mutation({
 
 export const addRoom = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     hotelId: v.id("hotel_profiles"),
     name: v.string(),
     roomType: v.union(
@@ -161,10 +173,16 @@ export const addRoom = mutation({
     totalRoomUnits: v.number(),
   },
   handler: async (ctx, args) => {
+    const { userId: __caller } = await requireSelf(ctx, args.sessionToken);
+    const __hotel = await ctx.db.get(args.hotelId);
+    if (!__hotel || __hotel.userId !== __caller) throw new Error("You do not have permission to manage this property.");
     const hotel = await ctx.db.get(args.hotelId);
     if (!hotel) {
       throw new Error("Hotel not found.");
     }
+    // New inventory needs ALL of: approved owner role, a verified property, an active subscription.
+    const permission = await hotelOperatingPermission(ctx, hotel);
+    if (!permission.allowed) throw new Error(permission.reason);
 
     if (!args.pricePerNight && !args.pricePerHour) {
       throw new Error("Must provide either a price per night or a price per hour.");
@@ -204,9 +222,12 @@ export const getHotels = query({
   },
   handler: async (ctx, args) => {
     const max = args.limit ?? 25;
-    const hotels = await ctx.db.query("hotel_profiles").take(max * 2);
+    // Only admin-VERIFIED properties are ever listed publicly (pending, rejected, suspended and
+    // legacy unreviewed rows are invisible).
+    const hotels = await ctx.db.query("hotel_profiles").withIndex("by_isVerified", (q) => q.eq("isVerified", true)).take(max * 3);
 
     const filtered = hotels.filter((h) => {
+      if (!hotelIsVerified(h)) return false;
       if (args.city && h.city.toLowerCase() !== args.city.toLowerCase()) return false;
       if (args.operationalType && h.operationalType !== args.operationalType) return false;
       if (args.onlyHourly && !h.supportsHourlyStays) return false;
@@ -228,7 +249,7 @@ export const getHotels = query({
       isVerified: h.isVerified,
       starRating: h.starRating,
       city: h.city,
-      address: h.address,
+      address: publicLocation(h.city),
       phone: h.phone,
       coverImageUrl: h.coverImageUrl,
       mediaUrls: h.mediaUrls,
@@ -251,7 +272,7 @@ export const getHotelDetails = query({
   },
   handler: async (ctx, args) => {
     const hotel = await ctx.db.get(args.hotelId);
-    if (!hotel) return null;
+    if (!hotel || !hotelIsVerified(hotel)) return null; // not public until an admin verifies it
 
     const rooms = await ctx.db
       .query("hotel_rooms")
@@ -261,7 +282,7 @@ export const getHotelDetails = query({
       .collect();
 
     return {
-      hotel,
+      hotel: toPublicHotel(hotel),
       rooms,
     };
   },
@@ -273,9 +294,12 @@ export const getHotelDetails = query({
 
 export const getOperatorDashboardData = query({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.id("users"),
   },
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     const hotel = await ctx.db
       .query("hotel_profiles")
       .withIndex("by_userId", (q) => q.eq("userId", args.userId))

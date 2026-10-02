@@ -13,6 +13,7 @@ import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/theme/components/vx_button.dart';
+import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../domain/entities/property_listing_entity.dart';
 import '../bloc/real_estate_detail_bloc.dart';
 import '../bloc/real_estate_detail_event.dart';
@@ -316,11 +317,10 @@ class _RealEstateListingDetailScreenState
                       ),
                     ),
 
-                  // ── 2. Sticky Header with Map Preview ─────────────
+                  // ── 2. Sticky Header with Broad Location ─────────
                   SliverToBoxAdapter(
                     child: PropertyStickyHeader(
                       listing: listing,
-                      onMapPreviewTap: () => _openLocationMap(listing),
                     ),
                   ),
 
@@ -829,57 +829,6 @@ class _RealEstateListingDetailScreenState
     );
   }
 
-  void _openLocationMap(PropertyListingEntity listing) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) {
-        return Container(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.pin_drop_rounded, color: AppColors.emerald, size: 28),
-                  const SizedBox(width: 10),
-                  const Text(
-                    'Property Coordinates',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(ctx).pop(),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Text(
-                listing.address,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Geohash: ${listing.geohash} • Lat: ${listing.latitude} • Lng: ${listing.longitude}',
-                style: const TextStyle(fontSize: 12, color: AppColors.gray600),
-              ),
-              const SizedBox(height: 20),
-              VxButton(
-                label: 'Get Navigation Directions',
-                icon: Icons.directions_rounded,
-                onPressed: () => Navigator.of(ctx).pop(),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   // ═══════════════════════════════════════════════════════════════════
   //              OWNER ACTION: UPDATE PRICE & LISTING DETAILS
   // ═══════════════════════════════════════════════════════════════════
@@ -1082,6 +1031,8 @@ class _RealEstateListingDetailScreenState
                                     args: {
                                       'listingId': listing.id,
                                       'ownerId': widget.currentUserId,
+                                      if (context.read<AuthBloc>().state.user?.sessionToken != null)
+                                        'sessionToken': context.read<AuthBloc>().state.user!.sessionToken!,
                                       'price': newPrice,
                                       'title': titleController.text.trim(),
                                       'description': descController.text.trim(),
@@ -1257,6 +1208,8 @@ class _RealEstateListingDetailScreenState
         args: {
           'listingId': listing.id,
           'ownerId': widget.currentUserId,
+          if (context.read<AuthBloc>().state.user?.sessionToken != null)
+            'sessionToken': context.read<AuthBloc>().state.user!.sessionToken!,
         },
       );
 

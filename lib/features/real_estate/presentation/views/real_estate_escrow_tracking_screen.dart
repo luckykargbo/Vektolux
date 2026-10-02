@@ -224,12 +224,14 @@ class _RealEstateEscrowTrackingScreenState
       final client = context.read<ConvexClientWrapper>();
       final deductions = double.tryParse(deductionController.text) ?? 0.0;
 
+      // A damage claim (> 0) is NOT paid to the host: the deposit stays held until Vektolux decides.
       final res = await client.mutation(
         'realEstateEscrow:refundCautionDeposit',
         args: {
           'contractId': widget.contractId,
-          'deductions': deductions,
-          if (reasonController.text.isNotEmpty) 'deductionReason': reasonController.text,
+          'inspectionPassedClean': deductions <= 0,
+          if (deductions > 0) 'damageDeductionAmount': deductions,
+          if (reasonController.text.isNotEmpty) 'notes': reasonController.text,
         },
       );
 
@@ -237,8 +239,13 @@ class _RealEstateEscrowTrackingScreenState
 
       if (!mounted) return;
       if (res.success) {
+        final status = res.value is Map ? (res.value as Map)['status']?.toString() : null;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Caution deposit processed and refunded to client!')),
+          SnackBar(
+            content: Text(status == 'CAUTION_CLAIM_PENDING'
+                ? 'Your damage claim was sent to Vektolux for review. The deposit stays held until a decision is made.'
+                : 'Caution deposit refunded to the client.'),
+          ),
         );
         _loadContractDetails();
       } else {

@@ -37,7 +37,7 @@ const DEAL_TYPE_MAP: Record<string, number> = {
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
- * Called by `payments.processVerifiedPayment` via `ctx.scheduler.runAfter(0, ...)`.
+ * Was scheduled by the (removed) `payments.processVerifiedPayment`; currently has no caller.
  *
  * This action:
  * 1. Constructs a deterministic deal hash from transaction data

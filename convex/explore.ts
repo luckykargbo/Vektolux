@@ -8,6 +8,26 @@
 
 import { query } from "./_generated/server";
 import { v } from "convex/values";
+import { publicLocation } from "./lib/slLocations";
+import { Doc } from "./_generated/dataModel";
+import { businessRole, isRoleApproved, professionalBadge } from "./lib/permissions";
+
+/**
+ * Public professional card for discovery. Only APPROVED professionals are listed; a Real Estate
+ * Agent / Hotel Owner is shown only while their subscription is active (computed, never a flag).
+ */
+async function publicProfessional(ctx: { db: any }, u: Doc<"users">): Promise<{ label: string; verified: boolean } | null> {
+  if (u.isActive === false || !isRoleApproved(u)) return null;
+  const role = businessRole(u);
+  if (role === "vehicle_dealer") return { label: "Vehicle Dealer", verified: true };
+  if (role === "real_estate_owner") return { label: "Property Owner", verified: true };
+  if (role === "real_estate_agent" || role === "hotel_owner") {
+    const b = await professionalBadge(ctx, u);
+    if (role === "real_estate_agent" && b.verifiedAgent) return { label: "Real Estate Agent", verified: true };
+    if (role === "hotel_owner" && b.verifiedHotel) return { label: "Hotel / Guest House", verified: true };
+  }
+  return null;
+}
 
 export const getExploreFeed = query({
   args: {
@@ -59,7 +79,7 @@ export const getExploreFeed = query({
         if (owner) {
           ownerName = owner.name;
           ownerAvatar = owner.avatarUrl;
-          isVerified = owner.isVerified || owner.isVerifiedAgent === true;
+          isVerified = (await publicProfessional(ctx, owner))?.verified === true;
         }
 
         const firstImage =
@@ -143,7 +163,7 @@ export const getExploreFeed = query({
           pricingType: vDoc.pricingType,
           currency: vDoc.currency ?? "SLE",
           imageUrl: firstImage,
-          location: vDoc.location ?? "Sierra Leone",
+          location: publicLocation(vDoc.location),
           ownerId: vDoc.ownerId as string,
           ownerName,
           ownerAvatar,
@@ -171,17 +191,13 @@ export const getExploreFeed = query({
         .order("desc")
         .take(50);
 
-      const agentUsers = allUsers.filter(
-        (u) =>
-          u.isActive !== false &&
-          (u.role === "agent" ||
-            u.role === "merchant" ||
-            u.isVerifiedAgent === true ||
-            u.isVerifiedMerchant === true ||
-            u.isVerifiedSeller === true)
-      );
+      const agentUsers: Array<{ u: Doc<"users">; pro: { label: string; verified: boolean } }> = [];
+      for (const u of allUsers) {
+        const pro = await publicProfessional(ctx, u);
+        if (pro) agentUsers.push({ u, pro });
+      }
 
-      for (const u of agentUsers.slice(0, limit)) {
+      for (const { u, pro } of agentUsers.slice(0, limit)) {
         // Count listings
         const reCount = await ctx.db
           .query("realEstateListings")
@@ -197,12 +213,12 @@ export const getExploreFeed = query({
         topAgents.push({
           id: u._id as string,
           name: u.name,
-          role: u.role === "merchant" ? "Vehicle Dealer" : "Real Estate Agent",
+          role: pro.label,
           businessName: u.businessName,
           avatarUrl: u.avatarUrl,
-          isVerified: u.isVerified || u.isVerifiedAgent === true || u.isVerifiedMerchant === true,
+          isVerified: pro.verified,
           listingsCount: totalListings,
-          rating: 5.0,
+          // no rating system exists yet — never show an invented score
         });
       }
     }
@@ -234,7 +250,7 @@ export const getExploreFeed = query({
         price: p.price,
         currency: p.currency,
         imageUrl: p.imageUrl,
-        location: p.city,
+        location: publicLocation(p.city),
         ownerName: p.ownerName,
         ownerAvatar: p.ownerAvatar,
         isVerified: p.isVerified,
@@ -250,7 +266,7 @@ export const getExploreFeed = query({
         price: vItem.price,
         currency: vItem.currency,
         imageUrl: vItem.imageUrl,
-        location: vItem.location,
+        location: publicLocation(vItem.location),
         ownerName: vItem.ownerName,
         ownerAvatar: vItem.ownerAvatar,
         isVerified: vItem.isVerified,
@@ -292,7 +308,7 @@ export const searchExplore = query({
           p.isPublished !== false &&
           (p.title.toLowerCase().includes(q) ||
             (p.city && p.city.toLowerCase().includes(q)) ||
-            (p.address && p.address.toLowerCase().includes(q)) ||
+            // (Street addresses are private and are NOT searchable.)
             p.category.toLowerCase().includes(q))
       )
       .slice(0, maxItems)
@@ -335,7 +351,7 @@ export const searchExplore = query({
             : vDoc.imageUrls && vDoc.imageUrls.length > 0
               ? vDoc.imageUrls[0]
               : undefined,
-        location: vDoc.location ?? "Sierra Leone",
+        location: publicLocation(vDoc.location),
       }));
 
     // Search agents / dealers
@@ -343,26 +359,21 @@ export const searchExplore = query({
       .query("users")
       .order("desc")
       .take(50);
-    const agents = users
-      .filter(
-        (u) =>
-          u.isActive !== false &&
-          (u.role === "agent" ||
-            u.role === "merchant" ||
-            u.isVerifiedAgent === true ||
-            u.isVerifiedMerchant === true) &&
-          (u.name.toLowerCase().includes(q) ||
-            (u.businessName && u.businessName.toLowerCase().includes(q)))
-      )
-      .slice(0, maxItems)
-      .map((u) => ({
+    const agents: Array<{ id: string; name: string; role: string; businessName?: string; avatarUrl?: string; isVerified: boolean }> = [];
+    for (const u of users) {
+      if (agents.length >= maxItems) break;
+      if (!(u.name.toLowerCase().includes(q) || (u.businessName && u.businessName.toLowerCase().includes(q)))) continue;
+      const pro = await publicProfessional(ctx, u);
+      if (!pro) continue;
+      agents.push({
         id: u._id as string,
         name: u.name,
-        role: u.role === "merchant" ? "Vehicle Dealer" : "Real Estate Agent",
+        role: pro.label,
         businessName: u.businessName,
         avatarUrl: u.avatarUrl,
-        isVerified: u.isVerified || u.isVerifiedAgent === true || u.isVerifiedMerchant === true,
-      }));
+        isVerified: pro.verified,
+      });
+    }
 
     return { properties, vehicles, agents };
   },

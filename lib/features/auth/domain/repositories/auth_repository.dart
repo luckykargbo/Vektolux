@@ -56,22 +56,6 @@ abstract class AuthRepository {
     String? region,
   });
 
-  /// Switch user active mode ('passenger' vs 'driver') and update backend & cache.
-  Future<UserEntity> switchUserMode({
-    required String userId,
-    required String targetMode,
-  });
-
-  /// Authenticate via Google or Apple OAuth.
-  /// Looks up existing account by email; creates a new one if absent.
-  Future<UserEntity> authenticateWithOAuth({
-    required String provider,
-    required String token,
-    required String email,
-    String? name,
-    String? avatarUrl,
-  });
-
   /// Social sign-in returning user + hasPhone flag.
   Future<({UserEntity user, bool hasPhone})> socialSignIn({
     required String email,

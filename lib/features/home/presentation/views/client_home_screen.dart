@@ -26,6 +26,12 @@ import '../../../notifications/presentation/views/notifications_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
 import '../../../profile/presentation/views/widgets/camera_qr_scanner_view.dart';
 import '../../../profile/presentation/views/widgets/ussd_payment_sheet.dart';
+import '../../../wallet_payments/presentation/bloc/wallet_cubit.dart';
+import '../../../wallet_payments/presentation/views/transaction_history_screen.dart';
+import '../../../wallet_payments/presentation/widgets/qr_pay_sheet.dart';
+import '../../../wallet_payments/presentation/widgets/receive_payment_sheet.dart';
+import '../../../wallet_payments/presentation/widgets/withdraw_sheet.dart';
+import '../widgets/security_wallet_graphic.dart';
 
 class ClientHomeScreen extends StatefulWidget {
   final ConvexClientWrapper convexClient;
@@ -44,7 +50,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   final NumberFormat _currencyFormat = NumberFormat('#,##0.00', 'en_US');
 
   // ── Live Backend States ───────────────────────────────────────────
-  double _walletBalance = 0.0;
+  double? _walletBalance; // AVAILABLE (spendable / withdrawable) — from the server
+  double? _escrowBalance; // protected in active escrow deals — from the server
+  double? _pendingBalance; // reserved for in-flight withdrawals — from the server
+  String? _walletOwnerId; // whose numbers these are (never show another user's)
+  Timer? _walletPoll;
   bool _isLoadingBalance = true;
   String? _walletError;
   int _activeEscrowDeals = 0;
@@ -110,11 +120,15 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     super.initState();
     _startPromoAutoSlide();
     _loadAllData();
+    _walletPoll = Timer.periodic(const Duration(seconds: 12), (_) {
+      if (mounted) _fetchWalletData(context.read<AuthBloc>().state.user?.id, silent: true);
+    });
   }
 
   @override
   void dispose() {
     _promoTimer?.cancel();
+    _walletPoll?.cancel();
     _promoPageController.dispose();
     _searchController.dispose();
     _momoPhoneController.dispose();
@@ -157,38 +171,55 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     ]);
   }
 
-  // ── Fetch Escrow Wallet Balance ───────────────────────────────────
-  Future<void> _fetchWalletData(String? userId) async {
+  // ── Fetch the authenticated user's wallet (server is the only source) ─
+  Future<void> _fetchWalletData(String? userId, {bool silent = false}) async {
     if (userId == null || userId.isEmpty) {
-      if (mounted) setState(() => _isLoadingBalance = false);
+      if (mounted) {
+        setState(() {
+          _walletBalance = null;
+          _escrowBalance = null;
+          _pendingBalance = null;
+          _walletOwnerId = null;
+          _isLoadingBalance = false;
+        });
+      }
       return;
     }
 
-    try {
-      final res = await widget.convexClient.query(
-        'payments:getWalletBalance',
-        args: {'userId': userId},
-      );
+    // A different account signed in: drop the previous user's numbers immediately.
+    if (_walletOwnerId != null && _walletOwnerId != userId && mounted) {
+      setState(() {
+        _walletBalance = null;
+        _escrowBalance = null;
+        _pendingBalance = null;
+        _isLoadingBalance = true;
+      });
+    }
 
-      if (mounted) {
-        if (res.success && res.value != null && res.value is Map) {
-          final data = Map<String, dynamic>.from(res.value as Map);
-          final bal = (data['availableBalance'] as num?)?.toDouble() ?? 0.0;
-          setState(() {
-            _walletBalance = bal;
-            _isLoadingBalance = false;
-            _walletError = null;
-          });
-        } else {
-          setState(() {
-            _walletBalance = 0.0;
-            _isLoadingBalance = false;
-            _walletError = null;
-          });
-        }
+    try {
+      // sessionToken is attached by the client for this function; identity is the session.
+      final res = await widget.convexClient.query('wallet:getUserBalance', args: {'userId': userId});
+      if (!mounted) return;
+
+      if (res.success && res.value is Map) {
+        final data = Map<String, dynamic>.from(res.value as Map);
+        setState(() {
+          _walletOwnerId = userId;
+          _walletBalance = (data['availableBalance'] as num?)?.toDouble() ?? 0.0;
+          _escrowBalance = (data['escrowBalance'] as num?)?.toDouble() ?? 0.0;
+          _pendingBalance = (data['pendingBalance'] as num?)?.toDouble() ?? 0.0;
+          _isLoadingBalance = false;
+          _walletError = null;
+        });
+      } else if (!silent || _walletBalance == null) {
+        // A failed load is an ERROR state — never an invented zero.
+        setState(() {
+          _isLoadingBalance = false;
+          _walletError = 'Unable to load wallet';
+        });
       }
-    } catch (e) {
-      if (mounted) {
+    } catch (_) {
+      if (mounted && (!silent || _walletBalance == null)) {
         setState(() {
           _isLoadingBalance = false;
           _walletError = 'Unable to load wallet';
@@ -383,7 +414,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     required String subtitle,
     required Function(double amount) onConfirmed,
   }) {
-    final amtController = TextEditingController(text: '100');
+    final amtController = TextEditingController();
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1064,6 +1095,24 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   // 3. ESCROW WALLET CARD COMPONENT
   // ═══════════════════════════════════════════════════════════════════
 
+  Widget _walletFigure(String label, double amount) => Padding(
+        padding: const EdgeInsets.only(top: 1),
+        child: Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(
+                text: '$label  ',
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF065F46)),
+              ),
+              TextSpan(
+                text: 'SLE ${_currencyFormat.format(amount)}',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+              ),
+            ],
+          ),
+        ),
+      );
+
   Widget _buildEscrowWalletCard(UserEntity? user) {
     return Container(
       width: double.infinity,
@@ -1094,31 +1143,72 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Container(
-                      width: 32,
-                      height: 32,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF047857),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.shield_rounded,
-                        color: Colors.white,
-                        size: 18,
-                      ),
+                    Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF047857),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.shield_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Escrow Wallet',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF064E3B),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    const Text(
-                      'Escrow Wallet Balance',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF064E3B),
+                    InkWell(
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => BlocProvider(
+                              create: (_) => WalletCubit(convexClient: widget.convexClient),
+                              child: TransactionHistoryScreen(convexClient: widget.convexClient),
+                            ),
+                          ),
+                        );
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF047857).withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'History',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF047857),
+                              ),
+                            ),
+                            SizedBox(width: 2),
+                            Icon(Icons.chevron_right, size: 14, color: Color(0xFF047857)),
+                          ],
+                        ),
                       ),
                     ),
                   ],
                 ),
+
                 const SizedBox(height: 10),
                 if (_isLoadingBalance)
                   Container(
@@ -1127,6 +1217,15 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.6),
                       borderRadius: BorderRadius.circular(8),
+                    ),
+                  )
+                else if (user == null)
+                  const Text(
+                    'Sign in for Escrow',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0F172A),
                     ),
                   )
                 else if (_walletError != null)
@@ -1142,19 +1241,38 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       ),
                       const SizedBox(width: 8),
                       GestureDetector(
-                        onTap: () => _fetchWalletData(user?.id),
+                        onTap: () => _fetchWalletData(user.id),
                         child: const Icon(Icons.refresh, size: 16, color: Color(0xFF047857)),
                       ),
                     ],
                   )
+                else if (_walletBalance != null)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'SLE ${_currencyFormat.format(_walletBalance! + (_escrowBalance ?? 0) + (_pendingBalance ?? 0))}',
+                        style: const TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF0F172A),
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      _walletFigure('Escrow Protected', _escrowBalance ?? 0),
+                      _walletFigure('Available', _walletBalance!),
+                      if ((_pendingBalance ?? 0) > 0)
+                        _walletFigure('Pending withdrawal', _pendingBalance!),
+                    ],
+                  )
                 else
-                  Text(
-                    'SLE ${_currencyFormat.format(_walletBalance)}',
-                    style: const TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w900,
+                  const Text(
+                    'Activate Wallet',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
                       color: Color(0xFF0F172A),
-                      letterSpacing: -0.5,
                     ),
                   ),
                 const SizedBox(height: 10),
@@ -1178,7 +1296,9 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        'Escrow Protected • $_activeEscrowDeals Active Deal${_activeEscrowDeals == 1 ? '' : 's'}',
+                        _activeEscrowDeals > 0
+                            ? 'Escrow Protected • $_activeEscrowDeals Active Deal${_activeEscrowDeals == 1 ? '' : 's'}'
+                            : 'Escrow Protected • Ready for Deals',
                         style: const TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
@@ -1193,154 +1313,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           ),
           const SizedBox(width: 8),
 
-          // 3D Emerald Wallet Graphic
-          _build3DWalletGraphic(),
-        ],
-      ),
-    );
-  }
-
-  /// High-fidelity 3D emerald wallet illustration matching reference image
-  Widget _build3DWalletGraphic() {
-    return SizedBox(
-      width: 110,
-      height: 85,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          // Background soft emerald glow aura
-          Positioned(
-            bottom: 0,
-            right: 0,
-            child: Container(
-              width: 90,
-              height: 60,
-              decoration: BoxDecoration(
-                color: const Color(0xFF10B981).withValues(alpha: 0.25),
-                borderRadius: BorderRadius.circular(30),
-              ),
-            ),
-          ),
-          // Sticking-out cash notes
-          Positioned(
-            top: 2,
-            right: 14,
-            child: Transform.rotate(
-              angle: 0.15,
-              child: Container(
-                width: 64,
-                height: 38,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF86EFAC), Color(0xFF34D399)],
-                  ),
-                  borderRadius: BorderRadius.circular(6),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.1),
-                      blurRadius: 4,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          // Sticking-out card
-          Positioned(
-            top: 10,
-            right: 24,
-            child: Transform.rotate(
-              angle: -0.08,
-              child: Container(
-                width: 60,
-                height: 34,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF6EE7B7), Color(0xFF10B981)],
-                  ),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-              ),
-            ),
-          ),
-          // Main 3D Emerald Wallet Body
-          Positioned(
-            bottom: 4,
-            right: 4,
-            child: Container(
-              width: 88,
-              height: 58,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [
-                    Color(0xFF064E3B), // Deep forest
-                    Color(0xFF047857), // Emerald
-                    Color(0xFF065F46),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: const Color(0xFF34D399).withValues(alpha: 0.5),
-                  width: 1.2,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF064E3B).withValues(alpha: 0.4),
-                    blurRadius: 10,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Stack(
-                children: [
-                  // Wallet Flap Accent
-                  Positioned(
-                    top: 12,
-                    left: 0,
-                    right: 28,
-                    height: 32,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF065F46),
-                        borderRadius: const BorderRadius.horizontal(
-                          right: Radius.circular(8),
-                        ),
-                        border: Border.all(
-                          color: const Color(0xFF6EE7B7).withValues(alpha: 0.3),
-                        ),
-                      ),
-                    ),
-                  ),
-                  // Glowing Center Shield Emblem
-                  Center(
-                    child: Container(
-                      width: 28,
-                      height: 28,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF34D399), Color(0xFF059669)],
-                        ),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF34D399).withValues(alpha: 0.5),
-                            blurRadius: 6,
-                          ),
-                        ],
-                      ),
-                      child: const Icon(
-                        Icons.shield_rounded,
-                        color: Colors.white,
-                        size: 16,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          // 3D Emerald Security Wallet Graphic with periodic subtle verification pulse
+          const SecurityWalletGraphic(),
         ],
       ),
     );
@@ -1373,9 +1347,21 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         const SizedBox(width: 8),
         Expanded(
           child: _buildWalletActionTile(
+            icon: Icons.qr_code_2_rounded,
+            title: 'Receive',
+            subtitle: 'Get paid',
+            onTap: () => ReceivePaymentSheet.show(
+              context,
+              onPaymentReceived: () => _fetchWalletData(user?.id),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _buildWalletActionTile(
             icon: Icons.qr_code_scanner_rounded,
-            title: 'Scan QR',
-            subtitle: 'Pay or receive',
+            title: 'Scan & Pay',
+            subtitle: 'Pay a QR code',
             onTap: () => _openQrScanner(context),
           ),
         ),
@@ -2234,7 +2220,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               imageUrls: images.map((e) => e.toString()).toList(),
               bedrooms: bedrooms,
               bathrooms: bathrooms,
-              isVerified: prop['isVerified'] as bool? ?? true,
+              isVerified: prop['isVerified'] == true,
             ),
           ),
         );
@@ -2511,7 +2497,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       imageUrls: (p['images'] as List?)?.map((e) => e.toString()).toList() ?? [],
                       bedrooms: p['bedrooms'] as int?,
                       bathrooms: p['bathrooms'] as int?,
-                      isVerified: p['isVerified'] as bool? ?? true,
+                      isVerified: p['isVerified'] == true,
                     ),
                   ),
                 );
@@ -2560,92 +2546,40 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   }
 
   void _showWithdrawalSheet(BuildContext context, UserEntity? user) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.gray300,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Withdraw Funds from Wallet',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.obsidian),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Available Balance: SLE ${_currencyFormat.format(_walletBalance)}',
-              style: const TextStyle(fontSize: 13, color: Color(0xFF047857), fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 16),
-            const TextField(
-              decoration: InputDecoration(
-                labelText: 'Withdrawal Amount (SLE)',
-                border: OutlineInputBorder(),
-              ),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 14),
-            const TextField(
-              decoration: InputDecoration(
-                labelText: 'Recipient Phone or Account Number',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.obsidian,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Withdrawal request submitted for compliance processing.'),
-                      backgroundColor: AppColors.emeraldDark,
-                    ),
-                  );
-                },
-                child: const Text('Submit Withdrawal Request', style: TextStyle(fontWeight: FontWeight.w700)),
-              ),
-            ),
-          ],
-        ),
-      ),
+    final available = _walletBalance;
+    if (user == null || available == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Your wallet is still loading. Please try again in a moment.')),
+      );
+      return;
+    }
+    WithdrawSheet.show(
+      context,
+      availableBalance: available,
+      onCompleted: () => _fetchWalletData(user.id),
     );
   }
 
   Future<void> _openQrScanner(BuildContext context) async {
     final code = await CameraQrScannerView.show(context);
-    if (code != null && context.mounted) {
+    if (code == null || !context.mounted) return;
+    if (code == '__MANUAL__' || !isVektoluxPaymentCode(code)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Scanned payment QR: $code'),
-          backgroundColor: AppColors.emeraldDark,
+        const SnackBar(
+          content: Text('That is not a Vektolux payment code.'),
+          backgroundColor: AppColors.error,
         ),
       );
+      return;
     }
+    // Scanning only PREPARES the payment: the server resolves the recipient/amount and the
+    // user must confirm with their PIN before any money moves.
+    final userId = context.read<AuthBloc>().state.user?.id;
+    await QrPaySheet.show(
+      context,
+      payload: code,
+      onPaid: () => _fetchWalletData(userId),
+    );
   }
 }
 

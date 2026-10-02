@@ -5,7 +5,8 @@
 // admin approval/rejection queues, and verification badge activation.
 // ═══════════════════════════════════════════════════════════════════════
 
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalMutation } from "./_generated/server";
+import { requireAdminSession, requireSelf } from "./lib/auth";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 
@@ -15,6 +16,7 @@ import { Id } from "./_generated/dataModel";
 
 export const submitVerification = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.id("users"),
     roleCategory: v.string(), // "real_estate_agent" | "vehicle_dealer" | "dual"
     businessName: v.string(),
@@ -40,6 +42,8 @@ export const submitVerification = mutation({
     ),
   },
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     const user = await ctx.db.get(args.userId);
     if (!user) {
       throw new Error("User does not exist.");
@@ -189,9 +193,12 @@ export const submitVerification = mutation({
 
 export const getVerificationStatus = query({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.id("users"),
   },
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     const request = await ctx.db
       .query("verification_requests")
       .withIndex("by_userId", (q) => q.eq("userId", args.userId))
@@ -260,6 +267,7 @@ export const getVerificationStatus = query({
 
 export const reuploadDocument = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     documentId: v.id("verification_documents"),
     fileUrl: v.string(),
     fileStorageId: v.optional(v.id("_storage")),
@@ -267,6 +275,10 @@ export const reuploadDocument = mutation({
     fileSizeBytes: v.number(),
   },
   handler: async (ctx, args) => {
+    const { userId: __caller } = await requireSelf(ctx, args.sessionToken);
+    const __doc = await ctx.db.get(args.documentId);
+    const __req = __doc ? await ctx.db.get(__doc.verificationRequestId) : null;
+    if (!__req || __req.userId !== __caller) throw new Error("Document not found.");
     const doc = await ctx.db.get(args.documentId);
     if (!doc) throw new Error("Document not found.");
 
@@ -311,6 +323,7 @@ export const reuploadDocument = mutation({
 
 export const adminGetVerificationQueue = query({
   args: {
+    sessionToken: v.optional(v.string()),
     statusFilter: v.optional(
       v.union(
         v.literal("pending_review"),
@@ -324,6 +337,7 @@ export const adminGetVerificationQueue = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
     const max = args.limit ?? 25;
     const requests = await ctx.db
       .query("verification_requests")
@@ -397,11 +411,13 @@ export const adminGetVerificationQueue = query({
 
 export const adminReviewDocument = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     documentId: v.id("verification_documents"),
     status: v.union(v.literal("approved"), v.literal("rejected")),
     rejectionComment: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
     const doc = await ctx.db.get(args.documentId);
     if (!doc) throw new Error("Document not found.");
 
@@ -423,6 +439,7 @@ export const adminReviewDocument = mutation({
 
 export const adminRequestAction = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     requestId: v.id("verification_requests"),
     adminUserId: v.id("users"),
     notes: v.string(),
@@ -434,6 +451,10 @@ export const adminRequestAction = mutation({
     ),
   },
   handler: async (ctx, args) => {
+    const __admin = await requireAdminSession(ctx, args.sessionToken);
+    if (args.adminUserId && String(args.adminUserId) !== String(__admin.userId)) {
+      throw new Error("Unauthorized: administrator mismatch.");
+    }
     const request = await ctx.db.get(args.requestId);
     if (!request) throw new Error("Request not found.");
 
@@ -477,11 +498,16 @@ export const adminRequestAction = mutation({
 
 export const adminApproveApplication = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     requestId: v.id("verification_requests"),
     adminUserId: v.id("users"),
     reviewerNotes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const __admin = await requireAdminSession(ctx, args.sessionToken);
+    if (args.adminUserId && String(args.adminUserId) !== String(__admin.userId)) {
+      throw new Error("Unauthorized: administrator mismatch.");
+    }
     const request = await ctx.db.get(args.requestId);
     if (!request) throw new Error("Request not found.");
 
@@ -537,11 +563,16 @@ export const adminApproveApplication = mutation({
 
 export const adminRevokeVerification = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     agentProfileId: v.id("agent_profiles"),
     adminUserId: v.id("users"),
     reason: v.string(),
   },
   handler: async (ctx, args) => {
+    const __admin = await requireAdminSession(ctx, args.sessionToken);
+    if (args.adminUserId && String(args.adminUserId) !== String(__admin.userId)) {
+      throw new Error("Unauthorized: administrator mismatch.");
+    }
     const profile = await ctx.db.get(args.agentProfileId);
     if (!profile) throw new Error("Agent profile not found.");
 
@@ -591,7 +622,8 @@ export const adminRevokeVerification = mutation({
 // 9. ACTIVATE VERIFIED BADGE (After Paid Subscription)
 // ═══════════════════════════════════════════════════════════════════════
 
-export const activateVerifiedBadge = mutation({
+// INTERNAL ONLY: granted the verified badge to any caller with no payment or review. Call only after a verified subscription payment.
+export const activateVerifiedBadge = internalMutation({
   args: {
     userId: v.id("users"),
     subscriptionId: v.id("vendor_subscriptions"),

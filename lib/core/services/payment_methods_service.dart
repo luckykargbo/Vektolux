@@ -50,7 +50,6 @@ class PaymentMethod {
 
   /// Returns the appropriate icon name for this provider.
   String get iconHint {
-    if (providerId.contains('moneroo')) return 'credit_card';
     if (providerId.contains('qmoney')) return 'phone_android';
     if (providerId.contains('afrimoney')) return 'phone_android';
     if (providerId.contains('bank')) return 'account_balance';
@@ -203,83 +202,6 @@ class PaymentMethodsService {
       debugPrint('[PaymentMethodsService] Error fetching claims: $e');
     }
     return [];
-  }
-
-  /// Initialize an automated Moneroo sandbox payment session.
-  /// Calls payments:initializeMonerooPayment action and returns checkoutUrl & paymentId.
-  Future<Map<String, dynamic>> initializeMonerooPayment({
-    required double amount,
-    String currency = 'SLE',
-    required String customerEmail,
-    required String customerFirstName,
-    required String customerLastName,
-    String? customerPhone,
-    required String userId,
-    String? bookingId,
-    String? escrowOrderId,
-    String? reContractId,
-    String? returnUrl,
-    String? description,
-  }) async {
-    try {
-      final res = await _client.action(
-        'payments:initializeMonerooPayment',
-        args: {
-          'amount': amount,
-          'currency': currency,
-          'customerEmail': customerEmail,
-          'customerFirstName': customerFirstName,
-          'customerLastName': customerLastName,
-          if (customerPhone != null && customerPhone.isNotEmpty) 'customerPhone': customerPhone,
-          'userId': userId,
-          if (bookingId != null) 'bookingId': bookingId,
-          if (escrowOrderId != null) 'escrowOrderId': escrowOrderId,
-          if (reContractId != null) 'reContractId': reContractId,
-          if (returnUrl != null) 'returnUrl': returnUrl,
-          if (description != null) 'description': description,
-        },
-      );
-
-      if (res.success && res.value is Map) {
-        final val = res.value as Map;
-        final bool isSuccess = val['success'] == true;
-        if (isSuccess) {
-          return {
-            'success': true,
-            'code': val['code']?.toString() ?? 'PAYMENT_INITIATED',
-            'message': val['message']?.toString() ?? 'Push prompt sent. Please approve on your phone.',
-            'transactionId': val['transactionId']?.toString() ?? val['paymentId']?.toString() ?? '',
-            'checkoutUrl': val['checkout_url']?.toString() ?? val['checkoutUrl']?.toString() ?? '',
-            'paymentId': val['paymentId']?.toString() ?? '',
-            'reference': val['reference']?.toString() ?? '',
-          };
-        } else {
-          return {
-            'success': false,
-            'code': val['code']?.toString() ?? 'PAYMENT_FAILED',
-            'message': val['message']?.toString() ?? val['error']?.toString() ?? 'Payment initialization failed',
-            'error': val['message']?.toString() ?? val['error']?.toString() ?? 'Payment initialization failed',
-            'rawError': val['rawError'],
-          };
-        }
-      } else {
-        final errMsg = res.errorMessage ?? 'Failed to initialize Moneroo payment';
-        return {
-          'success': false,
-          'code': 'GATEWAY_ERROR',
-          'message': errMsg,
-          'error': errMsg,
-        };
-      }
-    } catch (e) {
-      debugPrint('[PaymentMethodsService] Moneroo init error: $e');
-      return {
-        'success': false,
-        'code': 'NETWORK_ERROR',
-        'message': e.toString(),
-        'error': e.toString(),
-      };
-    }
   }
 
   /// Initialize an automated MoniMe payment session for Sierra Leone

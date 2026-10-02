@@ -4,6 +4,7 @@ import { RefreshCcw, Trash2, PackageSearch, Building2, Car, MapPin, Banknote, Us
 import { useEffect, useState, useCallback } from "react";
 import type { AdminSession } from "@/lib/types";
 import styles from "./listings.module.css";
+import { adminFetch } from "@/lib/adminSession";
 
 interface Listing {
   id: string;
@@ -35,7 +36,7 @@ export default function ListingsPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`/api/listings?vertical=${filter}`);
+      const res = await adminFetch(`/api/listings?vertical=${filter}`);
       const data = await res.json();
       if (data.success) setListings(data.data ?? []);
       else setError(data.error ?? "Failed to load.");
@@ -49,7 +50,7 @@ export default function ListingsPage() {
     if (!confirm("This will permanently delete ALL properties and vehicles from the database. Are you absolutely sure?")) return;
     setClearing(true);
     try {
-      const res = await fetch("/api/listings", { method: "DELETE" });
+      const res = await adminFetch("/api/listings", { method: "DELETE" });
       const data = await res.json();
       if (data.success) { setListings([]); alert("All listings cleared!"); }
       else alert("Failed: " + (data.error ?? "Unknown error"));
@@ -64,12 +65,11 @@ export default function ListingsPage() {
     
     setTakingDown(listingId);
     try {
-      const res = await fetch("/api/listings/takedown", {
+      const res = await adminFetch("/api/listings/takedown", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           adminId: session.user.id,
-          sessionToken: session.user.sessionToken,
           listingId,
           listingType,
           reason: reason || "Violation of terms"

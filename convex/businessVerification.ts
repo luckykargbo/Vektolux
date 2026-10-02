@@ -8,17 +8,15 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { accountTypeEnum, idTypeEnum } from "./schema";
+import { requireAdminSession, requireSelf } from "./lib/auth";
+import { markPrivateFile, validateUpload } from "./lib/uploads";
 
 // ═══════════════════════════════════════════════════════════════════════
 //                     GENERATE UPLOAD URL (STORAGE)
 // ═══════════════════════════════════════════════════════════════════════
 
-export const generateUploadUrl = mutation({
-  args: {},
-  handler: async (ctx) => {
-    return await ctx.storage.generateUploadUrl();
-  },
-});
+// (businessVerification:generateUploadUrl removed — unused and unauthenticated; see files.ts.)
+
 
 // ═══════════════════════════════════════════════════════════════════════
 //            SUBMIT TIERED VENDOR VERIFICATION & BIOMETRICS
@@ -35,10 +33,12 @@ export const submitTieredVerification = mutation({
     selfieStorageId: v.id("_storage"),
     businessName: v.optional(v.string()),
     tin: v.optional(v.string()),
+    // Accepted (older app builds send them) but IGNORED: no liveness / face-match check runs on the
+    // device, and a client-asserted result can never decide identity verification.
     livenessScore: v.optional(v.number()),
     faceMatchScore: v.optional(v.number()),
-    livenessPassed: v.boolean(),
-    faceMatchPassed: v.boolean(),
+    livenessPassed: v.optional(v.boolean()),
+    faceMatchPassed: v.optional(v.boolean()),
   },
   returns: v.object({
     success: v.boolean(),
@@ -46,18 +46,10 @@ export const submitTieredVerification = mutation({
     errorMessage: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
-    const userDocId = ctx.db.normalizeId("users", args.userId);
-    if (!userDocId) {
-      return { success: false, status: "REJECTED", errorMessage: "User not found." };
-    }
-
-    const user = await ctx.db.get(userDocId);
-    if (!user || !user.isActive) {
+    // The caller must be this user (valid, unexpired session). No session = no access.
+    const { userId: userDocId, user } = await requireSelf(ctx, args.sessionToken, args.userId);
+    if (!user.isActive) {
       return { success: false, status: "REJECTED", errorMessage: "User account is invalid or inactive." };
-    }
-
-    if (args.sessionToken && user.sessionToken && user.sessionToken !== args.sessionToken) {
-      return { success: false, status: "REJECTED", errorMessage: "Invalid session. Please authenticate again." };
     }
 
     // 1. Validate Business tier requirements
@@ -70,40 +62,18 @@ export const submitTieredVerification = mutation({
       }
     }
 
-    // 2. Resolve image URLs from storage
+    // 2. Validate the uploaded files (image/PDF, size) and keep them PRIVATE
+    for (const sid of [args.idPhotoStorageId, args.selfieStorageId]) {
+      const check = await validateUpload(ctx, sid);
+      if (!check.ok) return { success: false, status: "REJECTED", errorMessage: check.reason };
+    }
+    await markPrivateFile(ctx, args.idPhotoStorageId, "identity_document", userDocId);
+    await markPrivateFile(ctx, args.selfieStorageId, "selfie", userDocId);
     const idPhotoUrl = (await ctx.storage.getUrl(args.idPhotoStorageId)) ?? "";
     const selfieUrl = (await ctx.storage.getUrl(args.selfieStorageId)) ?? "";
     const now = Date.now();
 
-    // 3. Biometric Liveness & Face Match Check: Auto-reject if failed
-    if (!args.livenessPassed || !args.faceMatchPassed) {
-      const rejectionReason = "Automated biometric verification failed: Live face scan did not pass liveness detection or failed to match the National ID document photo. Please retake your photos in a well-lit environment.";
-      
-      await ctx.db.patch(userDocId, {
-        accountType: args.accountType,
-        idType: args.idType,
-        idNumber: args.idNumber.trim(),
-        idPhotoUrl,
-        idPhotoStorageId: args.idPhotoStorageId,
-        selfieUrl,
-        selfieStorageId: args.selfieStorageId,
-        businessName: args.businessName?.trim(),
-        tin: args.tin?.trim(),
-        tinNumber: args.tin?.trim(),
-        verificationStatus: "REJECTED",
-        isVerified: false,
-        rejectionReason,
-        updatedAt: now,
-      });
-
-      return {
-        success: false,
-        status: "REJECTED",
-        errorMessage: rejectionReason,
-      };
-    }
-
-    // 4. Biometrics Passed -> Transition to PENDING_REVIEW for Admin Audit
+    // 3. Every submission goes to MANUAL review (PENDING_REVIEW); an administrator decides.
     const cleanBusinessName = args.accountType === "BUSINESS" ? args.businessName?.trim() : undefined;
     const cleanTin = args.accountType === "BUSINESS" ? args.tin?.trim() : undefined;
 
@@ -176,18 +146,10 @@ export const submitAgentVerification = mutation({
     errorMessage: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
-    const userDocId = ctx.db.normalizeId("users", args.userId);
-    if (!userDocId) {
-      return { success: false, errorMessage: "User not found." };
-    }
-
-    const user = await ctx.db.get(userDocId);
-    if (!user || !user.isActive) {
+    // The caller must be this user (valid, unexpired session). No session = no access.
+    const { userId: userDocId, user } = await requireSelf(ctx, args.sessionToken, args.userId);
+    if (!user.isActive) {
       return { success: false, errorMessage: "User account is invalid or inactive." };
-    }
-
-    if (args.sessionToken && user.sessionToken && user.sessionToken !== args.sessionToken) {
-      return { success: false, errorMessage: "Invalid session. Please authenticate again." };
     }
 
     if (!args.businessName || !args.businessName.trim()) {
@@ -197,6 +159,9 @@ export const submitAgentVerification = mutation({
       return { success: false, errorMessage: "Tax Identification Number (TIN) is required." };
     }
 
+    const docCheck = await validateUpload(ctx, args.documentStorageId);
+    if (!docCheck.ok) return { success: false, errorMessage: docCheck.reason };
+    await markPrivateFile(ctx, args.documentStorageId, "business_document", userDocId);
     const resolvedDocumentUrl = (await ctx.storage.getUrl(args.documentStorageId)) ?? "";
     const now = Date.now();
 
@@ -280,15 +245,7 @@ export const getMyVerificationStatus = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userDocId = ctx.db.normalizeId("users", args.userId);
-    if (!userDocId) return null;
-
-    const user = await ctx.db.get(userDocId);
-    if (!user) return null;
-
-    if (args.sessionToken && user.sessionToken && user.sessionToken !== args.sessionToken) {
-      return null;
-    }
+    const { user } = await requireSelf(ctx, args.sessionToken, args.userId);
 
     let resolvedDocumentUrl = user.documentUrl;
     if (!resolvedDocumentUrl && user.documentStorageId) {
@@ -328,18 +285,8 @@ export const getVerificationQueue = query({
     ),
   },
   handler: async (ctx, args) => {
-    // 1. Authenticate admin
-    const adminDocId = ctx.db.normalizeId("users", args.adminId);
-    if (!adminDocId) {
-      throw new Error("Unauthorized: Invalid administrator credentials.");
-    }
-    const adminUser = await ctx.db.get(adminDocId);
-    if (!adminUser || adminUser.role !== "admin") {
-      throw new Error("Forbidden: Access restricted to platform administrators.");
-    }
-    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
-      throw new Error("Unauthorized: Invalid session token.");
-    }
+    // Administrator session required; a client-supplied adminId is never trusted.
+    const { userId: adminDocId } = await requireAdminSession(ctx, args.sessionToken);
 
     // 2. Fetch users based on filter
     const filter = args.statusFilter ?? "pending";
@@ -448,18 +395,8 @@ export const approveAgent = mutation({
     errorMessage: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
-    // 1. Verify Admin
-    const adminDocId = ctx.db.normalizeId("users", args.adminId);
-    if (!adminDocId) {
-      return { success: false, errorMessage: "Unauthorized: Admin account not found." };
-    }
-    const adminUser = await ctx.db.get(adminDocId);
-    if (!adminUser || adminUser.role !== "admin") {
-      return { success: false, errorMessage: "Forbidden: Only administrators can approve verifications." };
-    }
-    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
-      return { success: false, errorMessage: "Session expired." };
-    }
+    // Administrator session required; a client-supplied adminId is never trusted.
+    const { userId: adminDocId } = await requireAdminSession(ctx, args.sessionToken);
 
     // 2. Fetch Agent
     const targetAgentId = ctx.db.normalizeId("users", args.agentId);
@@ -473,12 +410,12 @@ export const approveAgent = mutation({
 
     const now = Date.now();
 
-    // 3. Set approved status and log audit metadata
+    // 3. Identity (KYC) approval only. Business roles (agent, dealer, …) are approved separately
+    //    through roles:adminDecideRoleApplication; professional badges also need a subscription.
     await ctx.db.patch(targetAgentId, {
       verificationStatus: "approved",
       verificationBadge: "GREEN_TICK",
       isVerified: true,
-      isVerifiedAgent: true,
       verifiedAt: now,
       verifiedBy: adminDocId,
       rejectionReason: undefined,
@@ -500,21 +437,14 @@ export const approveAgent = mutation({
       });
     }
 
-    // 5. Update role_applications
-    const roleApp = await ctx.db
-      .query("role_applications")
-      .withIndex("by_user", (q) => q.eq("userId", targetAgentId))
-      .filter((q) => q.eq(q.field("targetRole"), "agent"))
-      .first();
-
-    if (roleApp) {
-      await ctx.db.patch(roleApp._id, {
-        status: "approved",
-        reviewedAt: now,
-        reviewNotes: "Approved by administrator",
-        updatedAt: now,
-      });
-    }
+    // 5. Audit trail (who decided what, when)
+    await ctx.db.insert("audit_logs", {
+      adminUserId: adminDocId,
+      action: "VERIFICATION_DECISION",
+      targetTransactionId: targetAgentId as string,
+      snapshot: JSON.stringify({ decision: "identity_approved" }),
+      timestamp: now,
+    });
 
     return { success: true };
   },
@@ -536,18 +466,8 @@ export const rejectAgent = mutation({
     errorMessage: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
-    // 1. Verify Admin
-    const adminDocId = ctx.db.normalizeId("users", args.adminId);
-    if (!adminDocId) {
-      return { success: false, errorMessage: "Unauthorized: Admin account not found." };
-    }
-    const adminUser = await ctx.db.get(adminDocId);
-    if (!adminUser || adminUser.role !== "admin") {
-      return { success: false, errorMessage: "Forbidden: Only administrators can reject verifications." };
-    }
-    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
-      return { success: false, errorMessage: "Session expired." };
-    }
+    // Administrator session required; a client-supplied adminId is never trusted.
+    const { userId: adminDocId } = await requireAdminSession(ctx, args.sessionToken);
 
     if (!args.reason || !args.reason.trim()) {
       return { success: false, errorMessage: "A rejection reason is required." };
@@ -569,7 +489,7 @@ export const rejectAgent = mutation({
     await ctx.db.patch(targetAgentId, {
       verificationStatus: "rejected",
       isVerified: false,
-      isVerifiedAgent: false,
+      verificationBadge: "NONE",
       rejectionReason: args.reason.trim(),
       verifiedAt: undefined,
       updatedAt: now,
@@ -589,21 +509,14 @@ export const rejectAgent = mutation({
       });
     }
 
-    // 5. Update role_applications
-    const roleApp = await ctx.db
-      .query("role_applications")
-      .withIndex("by_user", (q) => q.eq("userId", targetAgentId))
-      .filter((q) => q.eq(q.field("targetRole"), "agent"))
-      .first();
-
-    if (roleApp) {
-      await ctx.db.patch(roleApp._id, {
-        status: "rejected",
-        reviewedAt: now,
-        reviewNotes: args.reason.trim(),
-        updatedAt: now,
-      });
-    }
+    // 5. Audit trail (who decided what, when)
+    await ctx.db.insert("audit_logs", {
+      adminUserId: adminDocId,
+      action: "VERIFICATION_DECISION",
+      targetTransactionId: targetAgentId as string,
+      snapshot: JSON.stringify({ decision: "identity_rejected", reason: args.reason.trim() }),
+      timestamp: now,
+    });
 
     return { success: true };
   },
@@ -620,15 +533,8 @@ export const getSignedDocumentUrl = query({
     storageId: v.id("_storage"),
   },
   handler: async (ctx, args) => {
-    const adminDocId = ctx.db.normalizeId("users", args.adminId);
-    if (!adminDocId) throw new Error("Unauthorized.");
-    const adminUser = await ctx.db.get(adminDocId);
-    if (!adminUser || adminUser.role !== "admin") {
-      throw new Error("Forbidden: Administrator access required.");
-    }
-    if (args.sessionToken && adminUser.sessionToken && adminUser.sessionToken !== args.sessionToken) {
-      throw new Error("Invalid session.");
-    }
+    // Administrator session required; a client-supplied adminId is never trusted.
+    const { userId: adminDocId } = await requireAdminSession(ctx, args.sessionToken);
 
     return await ctx.storage.getUrl(args.storageId);
   },

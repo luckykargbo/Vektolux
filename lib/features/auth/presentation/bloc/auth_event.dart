@@ -131,16 +131,6 @@ class RefreshUserSessionEvent extends AuthEvent {
 }
 
 
-/// User switches between passenger and driver mode.
-class SwitchUserModeEvent extends AuthEvent {
-  final String targetMode; // 'passenger' | 'driver'
-
-  const SwitchUserModeEvent(this.targetMode);
-
-  @override
-  List<Object?> get props => [targetMode];
-}
-
 /// Authenticate via Google or Apple (zero-cost social auth).
 class SocialAuthEvent extends AuthEvent {
   /// "google" or "apple"

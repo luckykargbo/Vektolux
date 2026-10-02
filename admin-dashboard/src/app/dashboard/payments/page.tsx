@@ -15,7 +15,19 @@ import {
   AlertCircle
 } from "lucide-react";
 
-const CONVEX_URL = "https://ideal-poodle-813.convex.cloud";
+import { CONVEX_URL } from "@/lib/convexPublic";
+
+/** Every payments:* admin function authorises the admin's own session token (sent in the POST body). */
+function withSession<T extends Record<string, unknown>>(args: T): T & { sessionToken?: string } {
+  try {
+    const raw = typeof window !== "undefined" ? window.sessionStorage.getItem("adminSession") : null;
+    const token = raw ? JSON.parse(raw)?.user?.sessionToken : undefined;
+    return token ? { ...args, sessionToken: token } : args;
+  } catch {
+    return args;
+  }
+}
+
 
 export default function PaymentsPage() {
   const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
@@ -54,7 +66,7 @@ export default function PaymentsPage() {
       const res = await fetch(`${CONVEX_URL}/api/query/payments:getAllPaymentMethods`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: {} })
+        body: JSON.stringify({ args: withSession({}) })
       });
       const data = await res.json();
       if (data.status === "success") {
@@ -84,7 +96,7 @@ export default function PaymentsPage() {
       const res = await fetch(`${CONVEX_URL}/api/query/payments:getPendingApprovalClaims`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: {} })
+        body: JSON.stringify({ args: withSession({}) })
       });
       const data = await res.json();
       if (data.status === "success") {
@@ -102,7 +114,7 @@ export default function PaymentsPage() {
       const res = await fetch(`${CONVEX_URL}/api/mutation/payments:seedDefaultPaymentMethods`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: {} })
+        body: JSON.stringify({ args: withSession({}) })
       });
       const data = await res.json();
       if (data.status === "success") {
@@ -122,7 +134,7 @@ export default function PaymentsPage() {
       const res = await fetch(`${CONVEX_URL}/api/mutation/payments:updatePaymentMethod`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: { settingsId: id, isEnabled: !currentEnabled } })
+        body: JSON.stringify({ args: withSession({ settingsId: id, isEnabled: !currentEnabled }) })
       });
       const data = await res.json();
       if (data.status === "success") {
@@ -144,7 +156,7 @@ export default function PaymentsPage() {
       const res = await fetch(`${CONVEX_URL}/api/mutation/payments:updatePaymentMethod`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: { settingsId: id, ...updates } })
+        body: JSON.stringify({ args: withSession({ settingsId: id, ...updates }) })
       });
       const data = await res.json();
       if (data.status === "success") {
@@ -165,14 +177,14 @@ export default function PaymentsPage() {
       const res = await fetch(`${CONVEX_URL}/api/mutation/payments:approvePaymentClaim`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: { claimId, adminUserId: adminId } })
+        body: JSON.stringify({ args: withSession({ claimId, adminUserId: adminId }) })
       });
       const data = await res.json();
       if (data.status === "success") {
         showAlert("success", "Claim approved and locked successfully.");
         fetchClaims();
       } else {
-        showAlert("error", "Failed to approve claim.");
+        showAlert("error", "Could not approve this claim. An automated (aggregator) payment can be approved only after the provider has confirmed the exact amount; a manual claim must be for the claimant's own order.");
       }
     } catch (e) {
       console.error(e);
@@ -199,7 +211,7 @@ export default function PaymentsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          args: { claimId: selectedClaimId, adminUserId: adminId, rejectionReason }
+          args: withSession({ claimId: selectedClaimId, adminUserId: adminId, rejectionReason })
         })
       });
       const data = await res.json();

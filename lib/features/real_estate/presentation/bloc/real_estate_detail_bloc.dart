@@ -252,11 +252,15 @@ class RealEstateDetailBloc
           successMessage: 'Payment session created. Complete payment to secure booking.',
         ));
       } else {
+        // Only a server-confirmed payment is reported as confirmed.
+        final paid = result['paymentStatus']?.toString() == 'completed';
         emit(state.copyWith(
           status: RealEstateDetailStatus.bookingSuccess,
           bookingId: bookingId,
           paymentReference: reference,
-          successMessage: 'Instant booking confirmed! Enjoy your stay.',
+          successMessage: paid
+              ? 'Booking confirmed and paid.'
+              : 'Booking reserved. Pay from your wallet or with Mobile Money to confirm it.',
         ));
       }
     } catch (e) {

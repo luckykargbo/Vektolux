@@ -20,7 +20,7 @@ import {
 import { TrendingUp, PieChart as PieChartIcon, BarChart3 } from "lucide-react";
 import styles from "@/app/dashboard/overview.module.css";
 
-interface DailyVolumePoint {
+export interface DailyVolumePoint {
   date: string;
   day: string;
   label: string;
@@ -28,44 +28,41 @@ interface DailyVolumePoint {
   transactions: number;
 }
 
-interface GenderPoint {
+export interface GenderPoint {
   name: string;
   value: number;
   percentage: number;
   color: string;
 }
 
-interface RolePoint {
+export interface RolePoint {
   name: string;
   group: string;
-  count: number;
+  value: number;
   percentage: number;
+  color: string;
 }
 
-interface AnalyticsData {
-  summary: {
-    totalUsers: number;
-    activeUsers: number;
-    totalListings: number;
-    publishedListings: number;
-    totalProperties: number;
-    totalVehicles: number;
-    pendingVerifications: number;
-    activeEscrowHolds: number;
-    unreadNotifications: number;
-  };
+// Shape returned by adminPortal:getAdminAnalytics (live Convex data).
+export interface AnalyticsData {
   financialVolume: {
-    grossVolumeSLE: number;
+    currency: string;
+    grossVolume: number;
+    totalTransactions: number;
     completedCount: number;
     pendingCount: number;
     failedCount: number;
-    avgTransactionSize: number;
     volumeTimeline: DailyVolumePoint[];
   };
   userDemographics: {
+    totalUsers: number;
+    activeUsers: number;
+    verifiedUsers: number;
     genderDemographics: GenderPoint[];
     roleDistribution: RolePoint[];
+    rawRoleCounts: Record<string, number>;
   };
+  timestamp: number;
 }
 
 interface Props {
@@ -77,9 +74,9 @@ interface Props {
 export default function AnalyticsCharts({ analytics, loading, formatSLE }: Props) {
   const [chartView, setChartView] = useState<"curve" | "bar">("curve");
 
-  const grossVolume = analytics?.financialVolume?.grossVolumeSLE ?? 0;
+  const grossVolume = analytics?.financialVolume?.grossVolume ?? 0;
   const completedTxCount = analytics?.financialVolume?.completedCount ?? 0;
-  const avgTxSize = analytics?.financialVolume?.avgTransactionSize ?? 0;
+  const avgTxSize = completedTxCount > 0 ? grossVolume / completedTxCount : 0;
 
   // Custom tooltips
   const CustomVolumeTooltip = ({ active, payload, label }: any) => {
@@ -358,7 +355,7 @@ export default function AnalyticsCharts({ analytics, loading, formatSLE }: Props
                   }}
                 />
                 <Bar
-                  dataKey="count"
+                  dataKey="value"
                   fill="#6366f1"
                   radius={[0, 4, 4, 0]}
                 />
@@ -379,7 +376,7 @@ export default function AnalyticsCharts({ analytics, loading, formatSLE }: Props
                   </div>
                   <div className={styles.legendRight}>
                     <span className={styles.legendCount}>
-                      {role.count} {role.count === 1 ? "user" : "users"}
+                      {role.value} {role.value === 1 ? "user" : "users"}
                     </span>
                     <span className={styles.legendPercent}>
                       {role.percentage}%

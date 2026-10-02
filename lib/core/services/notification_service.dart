@@ -7,9 +7,8 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
-
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
@@ -70,12 +69,12 @@ class NotificationService {
     if (kIsWeb) return false;
 
     try {
-      if (Platform.isAndroid) {
+      if (defaultTargetPlatform == TargetPlatform.android) {
         final androidImpl = _localNotifications
             .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
         final granted = await androidImpl?.requestNotificationsPermission();
         return granted ?? false;
-      } else if (Platform.isIOS) {
+      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
         final iosImpl = _localNotifications
             .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
         final granted = await iosImpl?.requestPermissions(
@@ -162,7 +161,7 @@ class NotificationService {
     );
 
     // Create high-importance notification channel on Android
-    if (Platform.isAndroid) {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       final androidImplementation = _localNotifications
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
       if (androidImplementation != null) {

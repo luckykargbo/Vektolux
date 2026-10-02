@@ -118,10 +118,7 @@ class _DeliveryVanBookingScreenState extends State<DeliveryVanBookingScreen> {
           'startTime': _startDate!.millisecondsSinceEpoch,
           'endTime': _endDate!.millisecondsSinceEpoch,
           'days': _totalDays,
-          'subtotal': _subtotal,
-          'serviceFee': _serviceFee,
-          'totalAmount': _totalAmount,
-          'currency': _currency,
+          // Price, vendor and buyer are decided by the server from the listing and session.
           'notes': _notesController.text.trim(),
         },
       );

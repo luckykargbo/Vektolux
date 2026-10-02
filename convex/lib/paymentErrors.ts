@@ -150,7 +150,7 @@ export function resolveCarrier(
 
 /**
  * Parses raw HTTP status code and response payload from payment gateways
- * (Moneroo, Flutterwave, Paystack, Carrier direct) into structured error codes.
+ * (Monime, carrier direct) into structured error codes.
  */
 export function parseCarrierResponse(
   statusCode: number,
@@ -286,13 +286,13 @@ export function logGatewayError(
   responseData: any,
   sentPayload: any
 ): void {
+  // No personal data, credentials or full payloads in logs: only the status, the provider's error
+  // code/message and the NAMES of the fields that were sent.
+  const err = responseData?.error ?? responseData;
   console.error("Payment Gateway Error:", {
     statusCode,
-    responseData,
-    sentPayload: {
-      ...sentPayload,
-      // Redact sensitive authorization if any
-      secret_key: sentPayload?.secret_key ? "REDACTED" : undefined,
-    },
+    providerCode: typeof err?.code === "string" ? err.code : undefined,
+    providerMessage: typeof err?.message === "string" ? err.message.slice(0, 200) : undefined,
+    sentFields: sentPayload && typeof sentPayload === "object" ? Object.keys(sentPayload) : [],
   });
 }

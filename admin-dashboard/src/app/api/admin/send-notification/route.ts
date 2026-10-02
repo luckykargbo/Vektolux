@@ -9,10 +9,16 @@ import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { sendPushNotification } from "@/lib/firebase-admin";
 
+import { isAuthError, sessionFromRequest } from "@/lib/apiAuth";
 import { CONVEX_URL } from "@/lib/convex";
 
 function getConvexClient() {
   return new ConvexHttpClient(CONVEX_URL);
+}
+
+/** Never send internal error text to the browser. */
+function publicMessage(err: unknown, fallback: string): string {
+  return isAuthError(err) ? "Administrator access required. Please sign in again." : fallback;
 }
 
 export async function POST(request: Request) {
@@ -42,10 +48,16 @@ export async function POST(request: Request) {
       );
     }
 
+    // The Convex backend only accepts this from an authenticated administrator session.
+    const sessionToken = sessionFromRequest(request);
+    if (!sessionToken) {
+      return NextResponse.json({ success: false, error: "Administrator session required." }, { status: 401 });
+    }
     const convex = getConvexClient();
 
     // 1. Insert notification record into Convex database table `user_notifications`
     const dbRecord: any = await convex.mutation("notifications:createNotificationRecord" as any, {
+      sessionToken,
       targetType: targetType === "single_user" ? "single_user" : "all_users",
       userId: targetType === "single_user" ? userId : undefined,
       title: title.trim(),
@@ -64,6 +76,7 @@ export async function POST(request: Request) {
       try {
         const tokens: any[] = await convex.query("notifications:getUserTokens" as any, {
           userId,
+          sessionToken,
         });
         recipientTokens = (tokens || []).map((t) => t.fcmToken);
       } catch (err) {
@@ -102,25 +115,26 @@ export async function POST(request: Request) {
       },
     });
   } catch (err: any) {
-    console.error("[send-notification POST] Error:", err);
+    console.error("[send-notification POST] request failed");
     return NextResponse.json(
-      { success: false, error: err?.message || "Internal server error occurred." },
+      { success: false, error: publicMessage(err, "Internal server error occurred.") },
       { status: 500 }
     );
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const convex = getConvexClient();
     const history = await convex.query("notifications:getAllNotificationsAdmin" as any, {
       limit: 50,
+      sessionToken: sessionFromRequest(request),
     });
     return NextResponse.json({ success: true, data: history });
   } catch (err: any) {
-    console.error("[send-notification GET] Error:", err);
+    console.error("[send-notification GET] request failed");
     return NextResponse.json(
-      { success: false, error: err?.message || "Failed to fetch notification history." },
+      { success: false, error: publicMessage(err, "Failed to fetch notification history.") },
       { status: 500 }
     );
   }

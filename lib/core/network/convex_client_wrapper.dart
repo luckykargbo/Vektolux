@@ -39,6 +39,20 @@ class ConvexResult {
               errorMessage: msg,
             );
           }
+          // Money functions REPORT a refused operation (bad PIN, locked wallet, …) as a returned
+          // { success: false, errorCode, message } so server-side attempt counters persist.
+          // Surface it as a failure so no caller can mistake it for success.
+          final value = body['value'];
+          if (value is Map &&
+              value['success'] == false &&
+              value['errorCode'] != null) {
+            return ConvexResult(
+              success: false,
+              value: value,
+              errorMessage:
+                  value['message']?.toString() ?? 'The operation could not be completed.',
+            );
+          }
           return ConvexResult(
             success: true,
             value: body['value'] ?? body,
@@ -83,6 +97,10 @@ class ConvexResult {
 class ConvexClientWrapper {
   final String deploymentUrl;
   http.Client _httpClient;
+
+  /// True when this wrapper created its own HTTP client. An injected client (tests, custom
+  /// transports) belongs to the caller: it is never closed or replaced by the retry logic.
+  final bool _ownsHttpClient;
   final Logger _log = Logger(printer: PrettyPrinter(methodCount: 0));
 
   String? _authToken;
@@ -90,10 +108,14 @@ class ConvexClientWrapper {
   ConvexClientWrapper({
     required this.deploymentUrl,
     http.Client? httpClient,
-  }) : _httpClient = httpClient ?? http.Client();
+  })  : _httpClient = httpClient ?? http.Client(),
+        _ownsHttpClient = httpClient == null;
 
   /// Recreates the underlying HTTP client to flush corrupted or closed TCP socket pools.
+  /// Only a client this wrapper created is recreated; an injected client is kept (the retry
+  /// still happens, through the same injected client).
   void _resetHttpClient() {
+    if (!_ownsHttpClient) return;
     try {
       _httpClient.close();
     } catch (_) {}
@@ -234,9 +256,19 @@ class ConvexClientWrapper {
       headers['Authorization'] = 'Bearer ${_authToken!.trim()}';
     }
 
+    // Identity is proven by the session token, never by a user id in the args. For the
+    // financial / escrow / QR / withdrawal functions (which all accept `sessionToken`), attach
+    // the logged-in user's token automatically so no call site can forget it.
+    final outgoingArgs = Map<String, dynamic>.from(args);
+    if (hasAuthToken &&
+        !outgoingArgs.containsKey('sessionToken') &&
+        _acceptsSessionToken(functionPath)) {
+      outgoingArgs['sessionToken'] = _authToken!.trim();
+    }
+
     final body = jsonEncode({
       'path': functionPath,
-      'args': args,
+      'args': outgoingArgs,
       'format': 'json',
     });
 
@@ -292,6 +324,150 @@ class ConvexClientWrapper {
     }
   }
 
+  /// Backend functions that authenticate the caller via `sessionToken`.
+  /// (Convex rejects unknown args, so this must list ONLY functions that declare it.)
+  static const Set<String> _sessionTokenFunctions = {
+    // wallet / payments
+    'wallet:getUserBalance',
+    'wallet:getWalletBalance',
+    'walletCore:getUserTransactions',
+    'walletCore:getEarningsSummary',
+    'users:getWalletProfile',
+    'users:getUserById',
+    'users:updateUserProfile',
+    'users:updateAvatar',
+    'users:switchActiveRole',
+    'users:applyRoleUpgrade',
+    'users:applyForSellerVerification',
+    'users:linkPhoneNumber',
+    'users:verifyTransactionPin',
+    'payments:getWalletBalance',
+    'payments:getTransactionHistory',
+    'payments:verifyTransactionPin',
+    'payments:verifyWalletPin',
+    'payments:getUserSecurityPinStatus',
+    'payments:setWalletPin',
+    'payments:executeP2PTransfer',
+    'payments:resolveRecipient',
+    'payments:createEscrowPayment',
+    'payments:releaseEscrowWithSplit',
+    'payments:submitManualPaymentClaim',
+    'payments:getUserPaymentClaims',
+    'payments:getPaymentClaimStatus',
+    'payments:getUserPaymentAccounts',
+    'payments:addUserPaymentAccount',
+    'payments:removeUserPaymentAccount',
+    'payments:setDefaultPaymentAccount',
+    'payments:getTransactionReceipt',
+    'payments:getPaymentStatus',
+    'payments:generateBankEscrowReference',
+    'payments:initiateMoniMePayment',
+    'payments:createTopUpSession',
+    'payments:createCheckoutSession',
+    'payments:initializePayment',
+    'bookings:createBooking',
+    'agentVerification:submitVerification',
+    'agentVerification:getVerificationStatus',
+    'agentVerification:reuploadDocument',
+    'notifications:getUserNotifications',
+    'notifications:getUnreadNotificationCount',
+    'notifications:markAsRead',
+    'notifications:markAllAsRead',
+    'adminPortal:getSellerContactRequests',
+    'adminPortal:respondToContactRequest',
+    'bookings:getUserBookings',
+    'bookings:cancelBooking',
+    'bookings:confirmBookingCompletion',
+    'bookings:raiseBookingDispute',
+    'payments:verifyAndSettleMoniMePayment',
+    'payments:verifyMoniMeStatus',
+    'payments:confirmBankEscrowTransfer',
+    'payments:resolveManualPaymentClaim',
+    'payments:updatePaymentMethod',
+    'payments:seedDefaultPaymentMethods',
+    'payments:getAllPaymentMethods',
+    'payments:getPendingApprovalClaims',
+    'payments:getAllEscrowClaims',
+    'payments:getAuditLogs',
+    // vehicle escrow
+    'escrow:initiateEscrowOrder',
+    'escrow:completeVehicleInspection',
+    'escrow:releaseMilestoneHandoff60',
+    'escrow:settleVehicleReturn',
+    'escrow:confirmSlrsaTransfer',
+    'escrow:releaseDealEscrowFunds',
+    'escrow:raiseEscrowDispute',
+    'escrow:getMyEscrowOrders',
+    'escrow:getEscrowOrderById',
+    'escrow:getAdminEscrowSummary',
+    // real-estate escrow
+    'realEstateEscrow:initiateInspectionPass',
+    'realEstateEscrow:verifyInspectionPass',
+    'realEstateEscrow:initiateRealEstateEscrow',
+    'realEstateEscrow:checkInShortStay',
+    'realEstateEscrow:releaseShortStayPayout24h',
+    'realEstateEscrow:refundCautionDeposit',
+    'realEstateEscrow:verifyAndReleaseLandMilestone',
+    'realEstateEscrow:raiseRealEstateDispute',
+    'realEstateEscrow:getMyRealEstateEscrows',
+    'realEstateEscrow:getRealEstateEscrowById',
+    'realEstateEscrow:getAdminRealEstateEscrowSummary',
+    // listings, social, account and in-app admin tools (session required server-side)
+    'social:toggleFollow',
+    'mobility:updateVehicleListing',
+    'mobility:createVehicleListing',
+    'mobility:deleteVehicleListing',
+    'mobility:getMyVehicleListings',
+    'realEstate:createPropertyListing',
+    'realEstate:updatePropertyListing',
+    'realEstate:deletePropertyListing',
+    'realEstate:getMyPropertyListings',
+    'users:deleteUserAccount',
+    'verification:mockCompleteVerification',
+    'admin:getAllUsers',
+    'admin:toggleUserActiveStatus',
+    'adminPortal:getFinancialSummary',
+    'adminPortal:getTransactionHeatmap',
+    'adminPortal:getUserDemographics',
+    'adminPortal:getApiHealthIncidents',
+    'adminPortal:getApiKeysConfig',
+    'adminPortal:rotateApiKeyMask',
+    'adminPortal:seedApiKeysConfig',
+    'adminPortal:deleteMerchantTerminal',
+    'adminPortal:getMerchantTerminals',
+    'adminPortal:toggleTerminalStatus',
+    'adminPortal:upsertMerchantTerminal',
+    'adminPortal:getAdminUserAuditView',
+    'users:getUserProfile',
+    'users:updateBio',
+    'verification:getVerificationStatus',
+    'verification:initiateVerification',
+    'escrow:uploadSlrsaDocuments',
+    'files:generateUploadUrl',
+    // identity verification (KYC) — owner only
+    'businessVerification:submitTieredVerification',
+    'businessVerification:submitAgentVerification',
+    'businessVerification:getMyVerificationStatus',
+    // subscriptions
+    'subscriptions:getUserActiveSubscription',
+    'subscriptions:subscribeWithWallet',
+    'subscriptions:getMyProfessionalStatus',
+    'subscriptions:adminListSubscriptions',
+    'subscriptions:adminGrantSubscription',
+    // business-role applications (admin review)
+    'roles:adminListRoleApplications',
+    'roles:adminDecideRoleApplication',
+    'subscriptions:adminUpsertPlan',
+    'subscriptions:adminTogglePlanStatus',
+    // vehicles
+    'mobility:updateVehicleListingStatus',
+  };
+
+  static bool _acceptsSessionToken(String functionPath) =>
+      functionPath.startsWith('qrPayment:') ||
+      functionPath.startsWith('withdrawals:') ||
+      _sessionTokenFunctions.contains(functionPath);
+
   /// Checks if a token matches the standard 3-part base64 JWT format.
   static bool _isValidJwt(String token) {
     final parts = token.split('.');
@@ -305,6 +481,6 @@ class ConvexClientWrapper {
 
   /// Dispose HTTP client resources.
   void dispose() {
-    _httpClient.close();
+    if (_ownsHttpClient) _httpClient.close();
   }
 }

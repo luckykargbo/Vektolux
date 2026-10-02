@@ -2,747 +2,67 @@
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — HTTP Actions: Payment Gateway Initialization & Webhooks
 // Exposes:
-//   POST /payments/initialize  — Initialize Flutterwave/Paystack checkout
-//   POST /payments/webhook     — Receive & verify gateway webhooks
+//   Provider webhooks only (Monime, Orange Money, eIDV). The unused Paystack/Flutterwave
+//   payment-intent path (/payments/webhook) was removed: no such provider was configured and its
+//   commission was chosen by the client.
 // ═══════════════════════════════════════════════════════════════════════
 
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
+import { monimeWebhookSecrets, verifyMonimeSignature } from "./lib/monimeWebhook";
 import {
   sanitizeSierraLeonePhone,
   parseCarrierResponse,
   logGatewayError,
 } from "./lib/paymentErrors";
 
+// ─── HTTP SURFACE (audited) ───────────────────────────────────────────
+// Only provider webhooks are exposed: eIDV (/api/v1/verifications/webhook, HMAC), Orange Money
+// (secret required) and Monime (re-verified through Monime's API). App features call Convex
+// functions directly with the user's session. Unauthenticated REST duplicates — including two
+// "escrow webhooks" that let anyone mark an escrow as funded — were removed.
 const http = httpRouter();
 
 // ═══════════════════════════════════════════════════════════════════════
 //          POST /payments/initialize — Gateway Checkout Init
 // ═══════════════════════════════════════════════════════════════════════
 
-http.route({
-  path: "/payments/initialize",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    let body: any = {};
-    try {
-      // ── Parse & validate request body ─────────────────────────────
-      body = await request.json();
 
-      const {
-        paymentIntentId,
-        customerEmail,
-        customerPhone,
-        customerName,
-        redirectUrl,
-        mobileMoneyProvider,
-      } = body;
-
-      if (!paymentIntentId || !customerEmail) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            code: "INVALID_ARGUMENTS",
-            error: "paymentIntentId and customerEmail are required",
-            message: "paymentIntentId and customerEmail are required",
-          }),
-          { status: 400, headers: corsHeaders() }
-        );
-      }
-
-      // ── Fetch payment intent from Convex ──────────────────────────
-      const intent = await ctx.runQuery(api.payments.getPaymentIntent, {
-        paymentIntentId: paymentIntentId as Id<"paymentIntents">,
-      });
-
-      if (!intent) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            code: "INTENT_NOT_FOUND",
-            error: "Payment intent not found",
-            message: "Payment intent not found",
-          }),
-          { status: 404, headers: corsHeaders() }
-        );
-      }
-
-      if (intent.status !== "pending") {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            code: "INTENT_ALREADY_PROCESSED",
-            error: `Payment intent is already ${intent.status}`,
-            message: `Payment intent is already ${intent.status}`,
-          }),
-          { status: 409, headers: corsHeaders() }
-        );
-      }
-
-      const sanitizedPhone = sanitizeSierraLeonePhone(customerPhone);
-
-      // ── Route to correct gateway ──────────────────────────────────
-      let gatewayResponse: any;
-
-      if (intent.gatewayProvider === "flutterwave") {
-        gatewayResponse = await initializeFlutterwave({
-          amount: intent.amount,
-          currency: intent.currency,
-          email: customerEmail,
-          phone: sanitizedPhone,
-          name: customerName,
-          txRef: `vktlx_${paymentIntentId}_${Date.now()}`,
-          redirectUrl:
-            redirectUrl ?? "https://app.vektolux.com/payment/callback",
-          paymentMethod: intent.paymentMethod,
-          mobileMoneyProvider,
-        });
-      } else if (intent.gatewayProvider === "paystack") {
-        gatewayResponse = await initializePaystack({
-          amount: intent.amount,
-          currency: intent.currency,
-          email: customerEmail,
-          reference: `vktlx_${paymentIntentId}_${Date.now()}`,
-          callbackUrl:
-            redirectUrl ?? "https://app.vektolux.com/payment/callback",
-          channels: mapPaystackChannels(intent.paymentMethod),
-          mobileMoneyProvider,
-        });
-      } else {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            code: "UNSUPPORTED_GATEWAY",
-            error: `Unsupported gateway: ${intent.gatewayProvider}`,
-            message: `Unsupported gateway: ${intent.gatewayProvider}`,
-          }),
-          { status: 400, headers: corsHeaders() }
-        );
-      }
-
-      if (!gatewayResponse.success) {
-        logGatewayError(400, gatewayResponse, body);
-        const parsed = parseCarrierResponse(400, gatewayResponse.rawError ?? gatewayResponse.error);
-        return new Response(
-          JSON.stringify({
-            success: false,
-            code: parsed.code,
-            message: parsed.message,
-            error: parsed.message,
-          }),
-          { status: 400, headers: corsHeaders() }
-        );
-      }
-
-      // ── Update payment intent with gateway reference ──────────────
-      await ctx.runMutation(internal.payments.updateGatewayReference, {
-        paymentIntentId: paymentIntentId as Id<"paymentIntents">,
-        gatewayReference: gatewayResponse.reference ?? "",
-        gatewayPaymentLink: gatewayResponse.paymentLink,
-      });
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          code: "PAYMENT_INITIATED",
-          message: "Push prompt sent. Please approve on your phone.",
-          transactionId: gatewayResponse.reference,
-          paymentLink: gatewayResponse.paymentLink,
-          reference: gatewayResponse.reference,
-          provider: intent.gatewayProvider,
-        }),
-        { status: 200, headers: corsHeaders() }
-      );
-    } catch (error: any) {
-      logGatewayError(500, error, body);
-      return new Response(
-        JSON.stringify({
-          success: false,
-          code: "GATEWAY_ERROR",
-          error: "Internal server error during payment initialization",
-          message: error.message ?? "Internal server error during payment initialization",
-        }),
-        { status: 500, headers: corsHeaders() }
-      );
-    }
-  }),
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-//        POST /payments/webhook — Gateway Webhook Verification
-// ═══════════════════════════════════════════════════════════════════════
-
-http.route({
-  path: "/payments/webhook",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const rawBody = await request.text();
-      const verifHash = request.headers.get("verif-hash");
-      const paystackSig = request.headers.get("x-paystack-signature");
-
-      // ── Determine gateway from headers ────────────────────────────
-      const isFlutterwave = verifHash !== null && verifHash !== undefined;
-      const isPaystack = paystackSig !== null && paystackSig !== undefined;
-
-      if (!isFlutterwave && !isPaystack) {
-        console.error("Webhook: Unknown gateway — missing signature headers");
-        return new Response("Unauthorized", { status: 401 });
-      }
-
-      // ── Cryptographic signature verification ──────────────────────
-      let verified = false;
-      let parsedPayload: any;
-
-      if (isFlutterwave) {
-        verified = verifyFlutterwaveSignature(
-          verifHash!,
-          process.env.FLUTTERWAVE_WEBHOOK_SECRET!
-        );
-        parsedPayload = JSON.parse(rawBody);
-      } else if (isPaystack) {
-        verified = await verifyPaystackSignature(
-          rawBody,
-          paystackSig!,
-          process.env.PAYSTACK_SECRET_KEY!
-        );
-        parsedPayload = JSON.parse(rawBody);
-      }
-
-      if (!verified) {
-        console.error("Webhook: Signature verification FAILED");
-        return new Response("Unauthorized — Invalid signature", {
-          status: 401,
-        });
-      }
-
-      // ── Extract normalized payment data ───────────────────────────
-      let normalizedPayment: {
-        gatewayProvider: string;
-        gatewayReference: string;
-        gatewayStatus: string;
-        amountPaid: number;
-        currency: string;
-        txRef: string;
-      };
-
-      if (isFlutterwave) {
-        const data = parsedPayload.data ?? parsedPayload;
-        normalizedPayment = {
-          gatewayProvider: "flutterwave",
-          gatewayReference: String(data.id ?? data.flw_ref),
-          gatewayStatus: normalizeGatewayStatus(data.status),
-          amountPaid: data.amount ?? data.charged_amount,
-          currency: data.currency ?? "SLE",
-          txRef: data.tx_ref ?? "",
-        };
-      } else {
-        const data = parsedPayload.data;
-        normalizedPayment = {
-          gatewayProvider: "paystack",
-          gatewayReference: data.reference,
-          gatewayStatus: normalizeGatewayStatus(data.status),
-          amountPaid: data.amount / 100, // Paystack amounts are in kobo/pesewas
-          currency: data.currency ?? "SLE",
-          txRef: data.reference,
-        };
-      }
-
-      // ── Extract payment intent ID from tx_ref ─────────────────────
-      // Format: vktlx_{paymentIntentId}_{timestamp}
-      const txRefParts = normalizedPayment.txRef.split("_");
-      if (txRefParts.length < 2 || txRefParts[0] !== "vktlx") {
-        console.error(
-          "Webhook: Invalid tx_ref format:",
-          normalizedPayment.txRef
-        );
-        // Still return 200 to prevent gateway retries for non-Vektolux txns
-        return new Response("OK — Not a Vektolux transaction", { status: 200 });
-      }
-
-      const paymentIntentId = txRefParts[1] as Id<"paymentIntents">;
-
-      // ── Process payment atomically via internal mutation ───────────
-      const result = await ctx.runMutation(
-        internal.payments.processVerifiedPayment,
-        {
-          gatewayProvider: normalizedPayment.gatewayProvider,
-          gatewayReference: normalizedPayment.gatewayReference,
-          gatewayStatus: normalizedPayment.gatewayStatus,
-          amountPaid: normalizedPayment.amountPaid,
-          currency: normalizedPayment.currency,
-          paymentIntentId,
-        }
-      );
-
-      console.log(
-        `Webhook processed: ${normalizedPayment.gatewayProvider} ref=${normalizedPayment.gatewayReference} status=${normalizedPayment.gatewayStatus}`,
-        result
-      );
-
-      // Always return 200 to prevent webhook retries
-      return new Response(JSON.stringify({ received: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (error: any) {
-      console.error("Webhook processing error:", error.message ?? error);
-      // Return 200 even on error to prevent infinite webhook retries
-      // Errors are logged and can be investigated via Convex dashboard
-      return new Response(
-        JSON.stringify({ received: true, error: "Processing error logged" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    }
-  }),
-});
 
 // ── CORS preflight for /payments/* routes ────────────────────────────
-http.route({
-  path: "/payments/initialize",
-  method: "OPTIONS",
-  handler: httpAction(async () => {
-    return new Response(null, { status: 204, headers: corsHeaders() });
-  }),
-});
 
 // ═══════════════════════════════════════════════════════════════════════
 //          POST /api/payments/topup — Escrow Wallet Top-Up Endpoint
 // ═══════════════════════════════════════════════════════════════════════
 
-http.route({
-  path: "/api/payments/topup",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    let body: any = {};
-    try {
-      body = await request.json();
-      const {
-        amount,
-        currency = "SLE",
-        customerEmail,
-        customerFirstName = "Vektolux",
-        customerLastName = "User",
-        customerPhone,
-        userId,
-        description,
-      } = body;
-
-      if (!amount || typeof amount !== "number" || amount <= 0) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            code: "INVALID_AMOUNT",
-            message: "A valid positive amount is required.",
-          }),
-          { status: 400, headers: corsHeaders() }
-        );
-      }
-
-      const sanitizedPhone = sanitizeSierraLeonePhone(customerPhone);
-
-      const result: any = await ctx.runAction(api.payments.initializeMonerooPayment, {
-        amount,
-        currency,
-        customerEmail: customerEmail ?? "user@vektolux.com",
-        customerFirstName,
-        customerLastName,
-        customerPhone: sanitizedPhone,
-        userId: userId ?? "",
-        description: description ?? `Escrow Wallet Top-Up — ${amount} ${currency}`,
-      });
-
-      if (!result.success) {
-        logGatewayError(result.statusCode ?? 400, result, body);
-        return new Response(
-          JSON.stringify({
-            success: false,
-            code: result.code ?? "PAYMENT_FAILED",
-            message: result.message ?? "Payment failed",
-          }),
-          { status: result.statusCode === 500 ? 502 : 400, headers: corsHeaders() }
-        );
-      }
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          code: "PAYMENT_INITIATED",
-          message: "Push prompt sent. Please approve on your phone.",
-          transactionId: result.transactionId ?? result.paymentId,
-          checkoutUrl: result.checkout_url,
-          paymentId: result.paymentId,
-          reference: result.reference,
-        }),
-        { status: 200, headers: corsHeaders() }
-      );
-    } catch (error: any) {
-      logGatewayError(500, error, body);
-      return new Response(
-        JSON.stringify({
-          success: false,
-          code: "GATEWAY_ERROR",
-          message: "Internal server error during top-up initialization",
-        }),
-        { status: 500, headers: corsHeaders() }
-      );
-    }
-  }),
-});
-
-http.route({
-  path: "/api/payments/topup",
-  method: "OPTIONS",
-  handler: httpAction(async () => {
-    return new Response(null, { status: 204, headers: corsHeaders() });
-  }),
-});
 
 // ═══════════════════════════════════════════════════════════════════════
 //          GET /api/user/wallet-profile — Dynamic Profile & Wallet State
 // ═══════════════════════════════════════════════════════════════════════
-
-http.route({
-  path: "/api/user/wallet-profile",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const url = new URL(request.url);
-      const userId = url.searchParams.get("userId") || request.headers.get("x-user-id");
-
-      if (!userId) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "Missing userId parameter or x-user-id header",
-          }),
-          { status: 400, headers: corsHeaders() }
-        );
-      }
-
-      const profile = await ctx.runQuery(api.users.getWalletProfile, { userId });
-      if (!profile) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "User profile not found",
-          }),
-          { status: 404, headers: corsHeaders() }
-        );
-      }
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          ...profile,
-        }),
-        { status: 200, headers: corsHeaders() }
-      );
-    } catch (error: any) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: error.message ?? "Failed to fetch wallet profile",
-        }),
-        { status: 500, headers: corsHeaders() }
-      );
-    }
-  }),
-});
-
-http.route({
-  path: "/api/user/wallet-profile",
-  method: "OPTIONS",
-  handler: httpAction(async () => {
-    return new Response(null, { status: 204, headers: corsHeaders() });
-  }),
-});
 
 
 // ═══════════════════════════════════════════════════════════════════════
 //                    GATEWAY API IMPLEMENTATIONS
 // ═══════════════════════════════════════════════════════════════════════
 
-/**
- * Initialize a Flutterwave payment session.
- * Docs: https://developer.flutterwave.com/reference/endpoints/payments
- */
-async function initializeFlutterwave(params: {
-  amount: number;
-  currency: string;
-  email: string;
-  phone?: string;
-  name?: string;
-  txRef: string;
-  redirectUrl: string;
-  paymentMethod: string;
-  mobileMoneyProvider?: string;
-}): Promise<{
-  success: boolean;
-  paymentLink?: string;
-  reference?: string;
-  error?: string;
-}> {
-  const FLW_SECRET = process.env.FLUTTERWAVE_SECRET_KEY;
-  if (!FLW_SECRET) {
-    return { success: false, error: "Flutterwave secret key not configured" };
-  }
-
-  // Build payment options based on method
-  const paymentOptions: string[] = [];
-  if (params.paymentMethod === "card") paymentOptions.push("card");
-  if (params.paymentMethod === "mobile_money") {
-    paymentOptions.push("mobilemoneysle"); // Sierra Leone Mobile Money
-    // Add specific providers
-    if (params.mobileMoneyProvider === "orange_money") {
-      paymentOptions.push("mobilemoneygh"); // Mapped via Flutterwave
-    }
-    if (params.mobileMoneyProvider === "africell_money") {
-      paymentOptions.push("mobilemoneysle");
-    }
-  }
-
-  const payload = {
-    tx_ref: params.txRef,
-    amount: params.amount,
-    currency: params.currency,
-    redirect_url: params.redirectUrl,
-    payment_options: paymentOptions.join(",") || "card,mobilemoneysle",
-    customer: {
-      email: params.email,
-      phonenumber: params.phone ?? "",
-      name: params.name ?? "",
-    },
-    customizations: {
-      title: "Vektolux Marketplace",
-      logo: "https://app.vektolux.com/logo.png",
-      description: "Secure payment via Vektolux",
-    },
-    meta: {
-      source: "vektolux_app",
-      tx_ref: params.txRef,
-    },
-  };
-
-  try {
-    const response = await fetch(
-      "https://api.flutterwave.com/v3/payments",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${FLW_SECRET}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      }
-    );
-
-    const data = await response.json();
-
-    if (data.status === "success" && data.data?.link) {
-      return {
-        success: true,
-        paymentLink: data.data.link,
-        reference: params.txRef,
-      };
-    }
-
-    return {
-      success: false,
-      error: data.message ?? "Flutterwave initialization failed",
-    };
-  } catch (error: any) {
-    return {
-      success: false,
-      error: `Flutterwave API error: ${error.message}`,
-    };
-  }
-}
-
-/**
- * Initialize a Paystack payment session.
- * Docs: https://paystack.com/docs/api/transaction/#initialize
- */
-async function initializePaystack(params: {
-  amount: number;
-  currency: string;
-  email: string;
-  reference: string;
-  callbackUrl: string;
-  channels: string[];
-  mobileMoneyProvider?: string;
-}): Promise<{
-  success: boolean;
-  paymentLink?: string;
-  reference?: string;
-  error?: string;
-}> {
-  const PS_SECRET = process.env.PAYSTACK_SECRET_KEY;
-  if (!PS_SECRET) {
-    return { success: false, error: "Paystack secret key not configured" };
-  }
-
-  const payload = {
-    email: params.email,
-    amount: Math.round(params.amount * 100), // Paystack uses minor units
-    currency: params.currency,
-    reference: params.reference,
-    callback_url: params.callbackUrl,
-    channels: params.channels,
-    metadata: {
-      source: "vektolux_app",
-      custom_fields: [
-        {
-          display_name: "Platform",
-          variable_name: "platform",
-          value: "Vektolux",
-        },
-      ],
-    },
-  };
-
-  try {
-    const response = await fetch(
-      "https://api.paystack.co/transaction/initialize",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${PS_SECRET}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      }
-    );
-
-    const data = await response.json();
-
-    if (data.status === true && data.data?.authorization_url) {
-      return {
-        success: true,
-        paymentLink: data.data.authorization_url,
-        reference: data.data.reference,
-      };
-    }
-
-    return {
-      success: false,
-      error: data.message ?? "Paystack initialization failed",
-    };
-  } catch (error: any) {
-    return {
-      success: false,
-      error: `Paystack API error: ${error.message}`,
-    };
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-//                  SIGNATURE VERIFICATION
-// ═══════════════════════════════════════════════════════════════════════
-
-/**
- * Verify Flutterwave webhook signature.
- * Flutterwave sends a `verif-hash` header containing the webhook secret hash.
- */
-function verifyFlutterwaveSignature(
-  receivedHash: string,
-  webhookSecret: string
-): boolean {
-  if (!receivedHash || !webhookSecret) return false;
-  return receivedHash === webhookSecret;
-}
-
-/**
- * Verify Paystack webhook signature using HMAC SHA-512.
- * Paystack sends `x-paystack-signature` header with HMAC of the raw body.
- */
-async function verifyPaystackSignature(
-  rawBody: string,
-  signature: string,
-  secretKey: string
-): Promise<boolean> {
-  if (!signature || !secretKey) return false;
-
-  try {
-    // Use Web Crypto API (available in Convex runtime)
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      "raw",
-      encoder.encode(secretKey),
-      { name: "HMAC", hash: "SHA-512" },
-      false,
-      ["sign"]
-    );
-
-    const signatureBytes = await crypto.subtle.sign(
-      "HMAC",
-      key,
-      encoder.encode(rawBody)
-    );
-
-    const computedHash = Array.from(new Uint8Array(signatureBytes))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-
-    return computedHash === signature;
-  } catch {
-    return false;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-//                        HELPERS
-// ═══════════════════════════════════════════════════════════════════════
-
-/**
- * Normalize gateway status strings to a consistent enum.
- */
-function normalizeGatewayStatus(rawStatus: string): string {
-  const status = (rawStatus ?? "").toLowerCase();
-  if (status === "successful" || status === "success" || status === "completed")
-    return "success";
-  if (status === "failed" || status === "failure") return "failed";
-  if (status === "cancelled" || status === "abandoned") return "cancelled";
-  if (status === "pending") return "pending";
-  return status;
-}
-
-/**
- * Map Vektolux payment method to Paystack channel names.
- */
-function mapPaystackChannels(method: string): string[] {
-  switch (method) {
-    case "card":
-      return ["card"];
-    case "mobile_money":
-      return ["mobile_money"];
-    case "wallet":
-      return ["bank_transfer"];
-    default:
-      return ["card", "mobile_money", "bank_transfer"];
-  }
-}
 
 /**
  * CORS headers for cross-origin requests from the Flutter app.
  */
+// Every remaining HTTP route is a server-to-server provider webhook, so no cross-origin browser
+// access is granted (previously "Access-Control-Allow-Origin: *"). Name kept for the call sites.
 function corsHeaders(): Record<string, string> {
-  return {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-orange-signature, X-Orange-Signature",
-    "Access-Control-Max-Age": "86400",
-  };
+  return { "Content-Type": "application/json" };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 //   POST /api/v1/verifications/webhook — Cryptographically Verified eIDV
 // ═══════════════════════════════════════════════════════════════════════
 
-const EIDV_WEBHOOK_SECRET = process.env.EIDV_WEBHOOK_SECRET || "vkt_live_sec_f9823kjsd0213kd";
+// No default secret: a committed default is a public secret. Unset => every request is rejected.
+const EIDV_WEBHOOK_SECRET = process.env.EIDV_WEBHOOK_SECRET || "";
 
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -758,6 +78,7 @@ async function verifyEidvSignature(
   providedSignature: string,
   secret: string
 ): Promise<boolean> {
+  if (!secret || !providedSignature) return false;
   try {
     const encoder = new TextEncoder();
     const keyData = encoder.encode(secret);
@@ -883,505 +204,6 @@ http.route({
   }),
 });
 
-// ═══════════════════════════════════════════════════════════════════════
-//          VEHICLE ESCROW & SETTLEMENT REST API ENDPOINTS
-// ═══════════════════════════════════════════════════════════════════════
-
-// 1. POST /api/v1/vehicles/escrow/initiate
-http.route({
-  path: "/api/v1/vehicles/escrow/initiate",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const body = await request.json();
-      const result = await ctx.runMutation(api.escrow.initiateEscrowOrder, {
-        orderType: body.orderType,
-        vehicleListingId: body.vehicleListingId as Id<"vehicleListings">,
-        rentalStartDate: body.rentalPeriod?.startDate ? new Date(body.rentalPeriod.startDate).getTime() : undefined,
-        rentalEndDate: body.rentalPeriod?.endDate ? new Date(body.rentalPeriod.endDate).getTime() : undefined,
-        numberOfDays: body.rentalPeriod?.numberOfDays,
-        baseRentalAmount: body.pricing?.baseRentalAmountSLE,
-        refundableDepositAmount: body.pricing?.refundableDepositAmountSLE,
-        earnestFeeAmount: body.pricing?.earnestFeeAmountSLE,
-        fullPurchaseAmount: body.pricing?.fullPurchaseAmountSLE,
-        paymentProvider: body.paymentMethod?.provider,
-        paymentPhone: body.paymentMethod?.subscriberMsisdn,
-        payFromWallet: body.payFromWallet ?? false,
-      });
-
-      return new Response(
-        JSON.stringify({ success: true, data: result }),
-        { status: 201, headers: corsHeaders() }
-      );
-    } catch (err: any) {
-      return new Response(
-        JSON.stringify({ success: false, error: err.message }),
-        { status: 400, headers: corsHeaders() }
-      );
-    }
-  }),
-});
-
-// 2. POST /api/v1/vehicles/inspection/complete
-http.route({
-  path: "/api/v1/vehicles/inspection/complete",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const body = await request.json();
-      const result = await ctx.runMutation(api.escrow.completeVehicleInspection, {
-        escrowOrderId: body.escrowOrderId as Id<"escrow_orders">,
-        inspectionType: body.inspectionType,
-        odometerReadingKm: body.odometerReadingKm,
-        fuelTankPercentage: body.fuelTankPercentage,
-        photoFrontUrl: body.photos?.front ?? "",
-        photoRearUrl: body.photos?.rear ?? "",
-        photoLeftSideUrl: body.photos?.leftSide ?? "",
-        photoRightSideUrl: body.photos?.rightSide ?? "",
-        photoInteriorUrl: body.photos?.interior ?? "",
-        photoDashboardOdometerUrl: body.photos?.dashboardOdometer ?? "",
-        damagesDetected: body.damagesDetected ? body.damagesDetected.map((d: any) => typeof d === "string" ? d : JSON.stringify(d)) : undefined,
-        notes: body.notes,
-        qrTokenHash: body.handoffVerification?.scannedQrToken ?? "TOKEN_CLEAN",
-        counterpartySignatureUrl: body.handoffVerification?.counterpartySignatureUrl,
-      });
-
-      return new Response(
-        JSON.stringify({ success: true, data: result }),
-        { status: 200, headers: corsHeaders() }
-      );
-    } catch (err: any) {
-      return new Response(
-        JSON.stringify({ success: false, error: err.message }),
-        { status: 400, headers: corsHeaders() }
-      );
-    }
-  }),
-});
-
-// 3. POST /api/v1/vehicles/escrow/release-milestone
-http.route({
-  path: "/api/v1/vehicles/escrow/release-milestone",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const body = await request.json();
-      const result = await ctx.runMutation(api.escrow.releaseMilestoneHandoff60, {
-        escrowOrderId: body.escrowOrderId as Id<"escrow_orders">,
-      });
-
-      return new Response(
-        JSON.stringify({ success: true, data: result }),
-        { status: 200, headers: corsHeaders() }
-      );
-    } catch (err: any) {
-      return new Response(
-        JSON.stringify({ success: false, error: err.message }),
-        { status: 400, headers: corsHeaders() }
-      );
-    }
-  }),
-});
-
-// 4. POST /api/v1/vehicles/escrow/settle-return
-http.route({
-  path: "/api/v1/vehicles/escrow/settle-return",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const body = await request.json();
-      const result = await ctx.runMutation(api.escrow.settleVehicleReturn, {
-        escrowOrderId: body.escrowOrderId as Id<"escrow_orders">,
-        damageDeductionCost: body.damageAssessment?.deductionAmountSLE,
-      });
-
-      return new Response(
-        JSON.stringify({ success: true, data: result }),
-        { status: 200, headers: corsHeaders() }
-      );
-    } catch (err: any) {
-      return new Response(
-        JSON.stringify({ success: false, error: err.message }),
-        { status: 400, headers: corsHeaders() }
-      );
-    }
-  }),
-});
-
-// 5. POST /api/webhooks/orange-money-escrow
-http.route({
-  path: "/api/webhooks/orange-money-escrow",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const body = await request.json();
-      const { transactionId, orderCode, amount, status } = body;
-
-      if (!transactionId || !orderCode) {
-        return new Response(JSON.stringify({ error: "Missing required fields" }), {
-          status: 400,
-          headers: corsHeaders(),
-        });
-      }
-
-      if (status === "SUCCESS") {
-        await ctx.runMutation(internal.escrow.confirmEscrowFunding, {
-          orderCode,
-          externalTransactionId: transactionId,
-          provider: "ORANGE_MONEY_SL",
-          amountPaid: Number(amount),
-        });
-      }
-
-      return new Response(JSON.stringify({ received: true, status: "PROCESSED" }), {
-        status: 200,
-        headers: corsHeaders(),
-      });
-    } catch (err: any) {
-      return new Response(JSON.stringify({ error: err.message }), {
-        status: 500,
-        headers: corsHeaders(),
-      });
-    }
-  }),
-});
-
-// 6. POST /api/webhooks/africell-escrow
-http.route({
-  path: "/api/webhooks/africell-escrow",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const body = await request.json();
-      const { transactionId, orderCode, amount, status } = body;
-
-      if (!transactionId || !orderCode) {
-        return new Response(JSON.stringify({ error: "Missing required fields" }), {
-          status: 400,
-          headers: corsHeaders(),
-        });
-      }
-
-      if (status === "SUCCESS") {
-        await ctx.runMutation(internal.escrow.confirmEscrowFunding, {
-          orderCode,
-          externalTransactionId: transactionId,
-          provider: "AFRICELL_AFRIMONEY_SL",
-          amountPaid: Number(amount),
-        });
-      }
-
-      return new Response(JSON.stringify({ received: true, status: "PROCESSED" }), {
-        status: 200,
-        headers: corsHeaders(),
-      });
-    } catch (err: any) {
-      return new Response(JSON.stringify({ error: err.message }), {
-        status: 500,
-        headers: corsHeaders(),
-      });
-    }
-  }),
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-// REAL ESTATE ESCROW REST API ENDPOINTS (SLE CURRENCY)
-// ═══════════════════════════════════════════════════════════════════════
-
-// 7. POST /api/v1/real-estate/inspection-pass/initiate
-http.route({
-  path: "/api/v1/real-estate/inspection-pass/initiate",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const body = await request.json();
-      const result = await ctx.runMutation(api.realEstateEscrow.initiateInspectionPass, {
-        propertyListingId: body.propertyListingId as Id<"realEstateListings">,
-        clientId: body.clientId,
-        preferredAgentId: body.preferredAgentId,
-        tourFee: body.tourFee ? Number(body.tourFee) : undefined,
-        scheduledTimestamp: Number(body.scheduledTimestamp ?? Date.now()),
-        paymentRail: body.paymentRail,
-        paymentPhone: body.paymentPhone,
-      });
-
-      return new Response(JSON.stringify({ success: true, data: result }), {
-        status: 201,
-        headers: corsHeaders(),
-      });
-    } catch (err: any) {
-      return new Response(JSON.stringify({ success: false, error: err.message }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
-    }
-  }),
-});
-
-// 8. POST /api/v1/real-estate/inspection-pass/verify
-http.route({
-  path: "/api/v1/real-estate/inspection-pass/verify",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const body = await request.json();
-      const result = await ctx.runMutation(api.realEstateEscrow.verifyInspectionPass, {
-        passId: body.passId as Id<"re_inspection_passes">,
-        scannedQrHash: body.scannedQrHash,
-        enteredOtp: body.enteredOtp,
-        agentId: body.agentId,
-        agentGpsLat: body.agentGpsLat ? Number(body.agentGpsLat) : undefined,
-        agentGpsLng: body.agentGpsLng ? Number(body.agentGpsLng) : undefined,
-      });
-
-      return new Response(JSON.stringify({ success: true, data: result }), {
-        status: 200,
-        headers: corsHeaders(),
-      });
-    } catch (err: any) {
-      return new Response(JSON.stringify({ success: false, error: err.message }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
-    }
-  }),
-});
-
-// 9. POST /api/v1/real-estate/escrow/initiate
-http.route({
-  path: "/api/v1/real-estate/escrow/initiate",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const body = await request.json();
-      const result = await ctx.runMutation(api.realEstateEscrow.initiateRealEstateEscrow, {
-        contractType: body.contractType,
-        propertyListingId: body.propertyListingId as Id<"realEstateListings">,
-        clientId: body.clientId,
-        baseAmount: Number(body.baseAmount),
-        cautionDepositAmount: body.cautionDepositAmount ? Number(body.cautionDepositAmount) : undefined,
-        nightsCount: body.nightsCount ? Number(body.nightsCount) : undefined,
-        leaseDurationMonths: body.leaseDurationMonths ? Number(body.leaseDurationMonths) : undefined,
-        paymentRail: body.paymentRail,
-        paymentPhone: body.paymentPhone,
-      });
-
-      return new Response(JSON.stringify({ success: true, data: result }), {
-        status: 201,
-        headers: corsHeaders(),
-      });
-    } catch (err: any) {
-      return new Response(JSON.stringify({ success: false, error: err.message }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
-    }
-  }),
-});
-
-// 10. POST /api/v1/real-estate/escrow/short-stay/check-in
-http.route({
-  path: "/api/v1/real-estate/escrow/short-stay/check-in",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const body = await request.json();
-      const result = await ctx.runMutation(api.realEstateEscrow.checkInShortStay, {
-        contractId: body.contractId as Id<"re_escrow_contracts">,
-        doorQrCode: body.doorQrCode,
-      });
-
-      return new Response(JSON.stringify({ success: true, data: result }), {
-        status: 200,
-        headers: corsHeaders(),
-      });
-    } catch (err: any) {
-      return new Response(JSON.stringify({ success: false, error: err.message }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
-    }
-  }),
-});
-
-// 11. POST /api/v1/real-estate/escrow/caution-deposit/refund
-http.route({
-  path: "/api/v1/real-estate/escrow/caution-deposit/refund",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const body = await request.json();
-      const result = await ctx.runMutation(api.realEstateEscrow.refundCautionDeposit, {
-        contractId: body.contractId as Id<"re_escrow_contracts">,
-        inspectionPassedClean: Boolean(body.inspectionPassedClean),
-        damageDeductionAmount: body.damageDeductionAmount ? Number(body.damageDeductionAmount) : undefined,
-        notes: body.notes,
-      });
-
-      return new Response(JSON.stringify({ success: true, data: result }), {
-        status: 200,
-        headers: corsHeaders(),
-      });
-    } catch (err: any) {
-      return new Response(JSON.stringify({ success: false, error: err.message }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
-    }
-  }),
-});
-
-// 12. POST /api/v1/real-estate/escrow/land-milestone/verify
-http.route({
-  path: "/api/v1/real-estate/escrow/land-milestone/verify",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const body = await request.json();
-      const result = await ctx.runMutation(api.realEstateEscrow.verifyAndReleaseLandMilestone, {
-        contractId: body.contractId as Id<"re_escrow_contracts">,
-        milestoneIndex: Number(body.milestoneIndex),
-        proofDocumentUrls: Array.isArray(body.proofDocumentUrls) ? body.proofDocumentUrls : [],
-        legalNotes: body.legalNotes,
-        verifiedByAdminId: body.verifiedByAdminId,
-      });
-
-      return new Response(JSON.stringify({ success: true, data: result }), {
-        status: 200,
-        headers: corsHeaders(),
-      });
-    } catch (err: any) {
-      return new Response(JSON.stringify({ success: false, error: err.message }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
-    }
-  }),
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-//    POST /api/webhooks/moneroo — Moneroo Aggregator Payment Webhook
-// ═══════════════════════════════════════════════════════════════════════
-
-http.route({
-  path: "/api/webhooks/moneroo",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const rawBody = await request.text();
-      const monerooSig = request.headers.get("x-moneroo-signature")
-        || request.headers.get("x-webhook-secret")
-        || request.headers.get("verif-hash");
-
-      const WEBHOOK_SECRET_HASH = process.env.WEBHOOK_SECRET_HASH || "Vektolux_SecHash_2026!";
-
-      let isValid = false;
-
-      // 1. Check direct secret hash from header
-      if (monerooSig && (monerooSig === WEBHOOK_SECRET_HASH || monerooSig === process.env.WEBHOOK_SECRET_HASH)) {
-        isValid = true;
-      }
-
-      // 2. Parse payload and check payload secret_hash if present
-      let payload: any = {};
-      try {
-        payload = JSON.parse(rawBody);
-        if (payload.secret_hash && (payload.secret_hash === WEBHOOK_SECRET_HASH || payload.secret_hash === process.env.WEBHOOK_SECRET_HASH)) {
-          isValid = true;
-        }
-      } catch (e) {
-        console.error("Moneroo webhook JSON parse error:", e);
-      }
-
-      // 3. HMAC-SHA256 verification against WEBHOOK_SECRET_HASH or MONEROO_SECRET_KEY
-      if (!isValid && monerooSig) {
-        const secretsToTry = [WEBHOOK_SECRET_HASH];
-        if (process.env.MONEROO_SECRET_KEY) secretsToTry.push(process.env.MONEROO_SECRET_KEY);
-
-        const encoder = new TextEncoder();
-        for (const secret of secretsToTry) {
-          try {
-            const key = await crypto.subtle.importKey(
-              "raw",
-              encoder.encode(secret),
-              { name: "HMAC", hash: "SHA-256" },
-              false,
-              ["sign"]
-            );
-            const signatureBytes = await crypto.subtle.sign("HMAC", key, encoder.encode(rawBody));
-            const computedHash = Array.from(new Uint8Array(signatureBytes))
-              .map((b) => b.toString(16).padStart(2, "0"))
-              .join("");
-
-            if (computedHash.toLowerCase() === monerooSig.toLowerCase()) {
-              isValid = true;
-              break;
-            }
-          } catch (_) {}
-        }
-      }
-
-      if (!isValid) {
-        console.error("Moneroo webhook: Signature/Secret hash validation FAILED. Received header:", monerooSig);
-        return new Response("Unauthorized — Invalid signature/secret hash", { status: 401 });
-      }
-
-      const event = typeof payload.event === "string" ? payload.event : "";
-      const data = payload.data ?? {};
-
-      // Only process successful payment events
-      if (event !== "payment.success" && event !== "payment.completed" && data.status !== "success") {
-        console.log(`Moneroo webhook: Received non-success event "${event}", status="${data.status}"`);
-        return new Response(JSON.stringify({ received: true, event }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-
-      const transactionRef = typeof data.reference === "string" && data.reference.length > 0
-        ? data.reference
-        : typeof data.id === "string"
-          ? data.id
-          : "";
-      const paymentId = typeof data.id === "string" ? data.id : undefined;
-      const amountPaid = typeof data.amount === "number" ? data.amount : 0;
-      const currency = typeof data.currency === "string" ? data.currency : "SLE";
-
-      if (!transactionRef && !paymentId) {
-        console.error("Moneroo webhook: No transaction reference or payment id in payload");
-        return new Response(JSON.stringify({ received: true, error: "No reference" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-
-      // Process the payment atomically & lock escrow
-      const result = await ctx.runMutation(
-        internal.payments.processMonerooWebhookClaim,
-        {
-          transactionReference: transactionRef || paymentId || "",
-          amountPaid,
-          currency,
-          paymentId,
-          metadata: data.metadata,
-        }
-      );
-
-      console.log(`Moneroo webhook processed successfully: ref=${transactionRef} id=${paymentId} amount=${amountPaid}`, result);
-
-      return new Response(JSON.stringify({ received: true, ...result }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (error: any) {
-      console.error("Moneroo webhook error:", error.message ?? error);
-      return new Response(
-        JSON.stringify({ received: true, error: "Processing error logged" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    }
-  }),
-});
 
 // ═══════════════════════════════════════════════════════════════════════
 //   POST /webhooks/orange-money — Orange Money Sierra Leone Webhook
@@ -1492,7 +314,7 @@ const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
       request.headers.get("Authorization");
 
     const configuredSecret =
-      process.env.ORANGE_MONEY_WEBHOOK_SECRET || "vektolux_om_secret_2026";
+      process.env.ORANGE_MONEY_WEBHOOK_SECRET || ""; // no default: unset => rejected
 
     const isAuthorized = await verifyCarrierSignature(
       rawPayload,
@@ -1525,7 +347,7 @@ const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
       );
     }
 
-    console.log("Orange Money SL webhook payload received:", body);
+    console.log("Orange Money SL webhook received");
 
     // 4. Extract transaction fields across carrier conventions
     const txnId =
@@ -1549,11 +371,24 @@ const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
     const amount =
       typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount);
 
-    const status = (body.status || "SUCCESS").toString();
-    const currency = (body.currency || "SLE").toString();
-    const userId = body.userId || body.metadata?.userId;
+    // A delivery with no explicit status is NOT treated as a success (it used to default to "SUCCESS").
+    const status = typeof body.status === "string" ? body.status.trim() : "";
+    const currency = (typeof body.currency === "string" && body.currency.trim() ? body.currency : "SLE").toString().trim().toUpperCase();
 
-    if (!txnId || typeof txnId !== "string" || isNaN(amount) || amount <= 0) {
+    if (!status) {
+      return new Response(
+        JSON.stringify({ status: "BAD_REQUEST", error: "A payment status is required." }),
+        { status: 400, headers: corsHeaders() }
+      );
+    }
+    // The Vektolux wallet is SLE-only: a credit in any other currency is refused, not converted.
+    if (currency !== "SLE") {
+      return new Response(
+        JSON.stringify({ status: "BAD_REQUEST", error: "Unsupported currency." }),
+        { status: 400, headers: corsHeaders() }
+      );
+    }
+    if (!txnId || typeof txnId !== "string" || !Number.isFinite(amount) || amount <= 0) {
       return new Response(
         JSON.stringify({
           status: "BAD_REQUEST",
@@ -1574,11 +409,13 @@ const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
         currency,
         provider: "ORANGE_MONEY_SL",
         rawPayload,
-        userId: userId ? String(userId) : undefined,
+        // No userId: Vektolux never sends Orange a user id, so an identity inside the delivery would be
+        // chosen by the caller. The wallet owner is resolved ONLY from the paying phone number.
       }
     );
 
-    console.log("Orange Money SL webhook processed successfully:", result);
+    console.log("Orange Money SL webhook processed");
+    // (error text is generic; never echo internals)
 
     return new Response(
       JSON.stringify({
@@ -1591,11 +428,11 @@ const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
       }
     );
   } catch (err: any) {
-    console.error("Orange Money SL webhook server error:", err);
+    console.error("Orange Money SL webhook server error:", err?.message ?? "unknown");
     return new Response(
       JSON.stringify({
         status: "INTERNAL_ERROR",
-        error: err?.message || "Internal server error occurred",
+        error: "Internal server error occurred",
       }),
       {
         status: 500,
@@ -1659,353 +496,141 @@ http.route({
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-//          POST /webhooks/monime — MoniMe Payment Webhook Receiver
+//          POST /webhooks/monime — MoniMe Webhook Receiver
+//
+// LAYER 1 - AUTHENTICATION (lib/monimeWebhook.ts): the Monime-Signature header (t=<unix>,v1=<base64
+//   HMAC-SHA256 of "<t>_" + raw body>) is verified over the EXACT raw bytes with MONIME_WEBHOOK_SECRET
+//   (and, only during a migration, MONIME_WEBHOOK_SECRET_OLD), inside a 300 s freshness window. No
+//   secret configured, or any failure -> rejected, nothing processed.
+// LAYER 2 - DUPLICATE PROTECTION (monimeWebhooks.ts): each event id is handled once; a retry is
+//   allowed only after a failed attempt.
+// LAYER 3 - THE PAYLOAD IS ONLY A HINT: it is never trusted for who gets credited, how much, or
+//   whether a payout succeeded. For every relevant event we take the resource id and ask Monime's own
+//   API about that resource (with our credentials), then act on THAT answer for records WE created:
+//   - payment_code.* / checkout_session.* -> settleMoniMeReference (GET /payment-codes|checkout-sessions/{id})
+//   - payout.*                            -> reconcilePayout        (GET /payouts/{id}; must match our withdrawal)
+// LAYER 4 - every money movement is independently idempotent (provider reference / idempotency key).
+//
+// Envelope (docs.monime.io/guide/webhook/structure):
+//   { apiVersion, event: { id, name: "<resource>.<event>", timestamp }, object: { id, type }, data }
 // ═══════════════════════════════════════════════════════════════════════
 
-async function verifyMoniMeSignature(
-  rawBody: string,
-  providedSignature: string | null,
-  secret: string,
-  spaceIdHeader?: string | null
-): Promise<boolean> {
-  const configuredSpaceId = (process.env.MONIME_SPACE_ID || "spc-k6VAsS2nSa4AALw1JuBJrXtUAnF").trim();
-  if (spaceIdHeader && spaceIdHeader.trim() === configuredSpaceId) {
-    return true;
-  }
+/** Everything the Monime endpoint does with an event. Returns a short status label (never financial data). */
+async function dispatchMoniMeEvent(
+  ctx: any,
+  eventName: string,
+  objectId: string,
+  payload: any
+): Promise<string> {
+  const isPmc = /^pmc-[A-Za-z0-9_-]{4,80}$/.test(objectId);
+  const isPyt = /^pyt-[A-Za-z0-9_-]{4,80}$/.test(objectId);
+  const isOtherId = /^[A-Za-z0-9_-]{4,80}$/.test(objectId) && !isPmc && !isPyt;
 
-  if (!providedSignature || !secret) return false;
-
-  const cleanProvided = providedSignature.trim();
-  if (
-    cleanProvided === secret ||
-    cleanProvided === `Bearer ${secret}` ||
-    cleanProvided === `bearer ${secret}`
-  ) {
-    return true;
-  }
-
-  try {
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(secret);
-    const cryptoKey = await crypto.subtle.importKey(
-      "raw",
-      keyData,
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
-
-    const getDigests = async (inputStr: string) => {
-      const buf = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(inputStr));
-      const bytes = new Uint8Array(buf);
-      const hex = Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
-      let bin = "";
-      for (let i = 0; i < bytes.byteLength; i++) bin += String.fromCharCode(bytes[i]);
-      const base64 = btoa(bin);
-      return { hex, base64 };
-    };
-
-    const candidates = [rawBody];
-
-    let targetHash = cleanProvided;
-    if (cleanProvided.includes("t=") && cleanProvided.includes("v1=")) {
-      const tMatch = cleanProvided.match(/t=([0-9]+)/);
-      const vMatch = cleanProvided.match(/v1=([a-fA-F0-9]+)/);
-      if (tMatch) {
-        const timestamp = tMatch[1];
-        candidates.push(`${timestamp}.${rawBody}`);
-        candidates.push(`${timestamp}${rawBody}`);
-        candidates.push(`${timestamp},${rawBody}`);
-      }
-      if (vMatch) {
-        targetHash = vMatch[1];
-      }
-    } else if (cleanProvided.includes("v1=")) {
-      const match = cleanProvided.match(/v1=([a-fA-F0-9]+)/);
-      if (match) targetHash = match[1];
-    } else if (cleanProvided.startsWith("Bearer ") || cleanProvided.startsWith("bearer ")) {
-      targetHash = cleanProvided.substring(7).trim();
-    } else if (cleanProvided.startsWith("sha256=") || cleanProvided.startsWith("SHA256=")) {
-      targetHash = cleanProvided.substring(7).trim();
+  switch (eventName) {
+    // A payment code was paid / expired. The wallet is credited ONLY if Monime's own API says so.
+    case "payment_code.completed":
+    case "payment_code.expired": {
+      if (!isPmc) return "ignored_bad_id";
+      const r: any = await ctx.runAction(internal.payments.settleMoniMeReference, { reference: objectId });
+      return r?.settled ? "settled" : String(r?.status ?? "checked").slice(0, 40);
     }
-
-    for (const cand of candidates) {
-      const { hex, base64 } = await getDigests(cand);
-      if (timingSafeEqual(hex.toLowerCase(), targetHash.toLowerCase())) return true;
-      if (timingSafeEqual(base64, targetHash)) return true;
+    // Hosted checkout (card / bank / momo): confirmed ONLY by GET /checkout-sessions/{id}.
+    case "checkout_session.completed":
+    case "checkout_session.expired":
+    case "checkout_session.cancelled": {
+      if (!isOtherId) return "ignored_bad_id";
+      const r: any = await ctx.runAction(internal.payments.settleMoniMeReference, { reference: objectId });
+      return r?.settled ? "settled" : String(r?.status ?? "checked").slice(0, 40);
     }
-
-    return false;
-  } catch (err) {
-    console.error("[MoniMe Webhook] Signature verification error:", err);
-    return false;
+    // Payouts: the withdrawal is completed / released ONLY per GET /payouts/{id} for OUR payout.
+    case "payout.completed":
+    case "payout.failed":
+    case "payout.delayed": {
+      if (!isPyt) return "ignored_bad_id";
+      // Our own withdrawal id (set as payout metadata at dispatch) lets us bind a payout whose id we
+      // have not recorded yet; it is verified against Monime's record before anything is applied.
+      let hint: string | undefined;
+      const md = payload?.data?.metadata;
+      const parsed = typeof md === "string" ? (() => { try { return JSON.parse(md); } catch { return {}; } })() : md;
+      if (parsed && typeof parsed.withdrawalId === "string") hint = parsed.withdrawalId;
+      const r: any = await ctx.runAction(internal.withdrawals.reconcilePayout, { payoutId: objectId, hintWithdrawalId: hint });
+      return String(r?.status ?? "checked").slice(0, 40);
+    }
+    // Not final (processing / created) or not money-bearing for us: acknowledged, no financial effect.
+    case "payment_code.processed":
+    case "payment_code.created":
+      return "ignored_not_final";
+    case "payment.created":
+    case "payment.completed":
+      return "ignored_hint_only"; // payments are settled through their payment code / checkout session
+    case "ussd_otp.verified":
+    case "ussd_otp.expired":
+      return "ignored_otp_state_is_never_taken_from_a_webhook";
+    case "internal_transfer.failed":
+    case "internal_transfer.completed":
+      console.warn(`[MoniMe Webhook] ${eventName} received; Vektolux does not use internal transfers`);
+      return "ignored_unused_feature";
+    default:
+      return "ignored_unknown_event";
   }
 }
 
 const handleMoniMeWebhook = httpAction(async (ctx, request) => {
+  // 1. Authentication. FAIL CLOSED: without a configured secret nothing is accepted.
+  //    (Settlement is still guaranteed by the 5-minute pollers.)
+  const secrets = monimeWebhookSecrets();
+  if (secrets.length === 0) {
+    console.error("[MoniMe Webhook] MONIME_WEBHOOK_SECRET is not configured; request rejected");
+    return new Response(JSON.stringify({ error: "Webhook verification is not configured" }), { status: 503, headers: corsHeaders() });
+  }
+
+  // The EXACT bytes received are verified; nothing is parsed or re-serialised first.
+  let raw: Uint8Array;
   try {
-    const rawBody = await request.text();
-    const signature =
-      request.headers.get("monime-signature") ||
-      request.headers.get("x-monime-signature") ||
-      request.headers.get("signature") ||
-      request.headers.get("x-signature") ||
-      request.headers.get("authorization");
+    raw = new Uint8Array(await request.arrayBuffer());
+  } catch {
+    return new Response(JSON.stringify({ error: "Unreadable body" }), { status: 400, headers: corsHeaders() });
+  }
+  if (raw.length > 200_000) {
+    return new Response(JSON.stringify({ error: "Payload too large" }), { status: 413, headers: corsHeaders() });
+  }
+  const verdict = await verifyMonimeSignature(raw, request.headers.get("monime-signature"), secrets);
+  if (!verdict.ok) {
+    // Only a coarse reason code is logged: never the signature, the body or a secret.
+    console.warn(`[MoniMe Webhook] rejected: ${verdict.reason}`);
+    return new Response(JSON.stringify({ error: "Invalid signature" }), { status: 401, headers: corsHeaders() });
+  }
 
-    const spaceIdHeader =
-      request.headers.get("monime-space-id") ||
-      request.headers.get("x-monime-space-id") ||
-      request.headers.get("space-id");
+  // 2. The request is authentic. Parse it.
+  let payload: any;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(raw));
+  } catch {
+    return new Response(JSON.stringify({ error: "Malformed JSON payload" }), { status: 400, headers: corsHeaders() });
+  }
+  const eventName = String(payload?.event?.name ?? "").toLowerCase().slice(0, 80);
+  const objectId = String(payload?.object?.id ?? "").trim().slice(0, 100);
+  const eventId = typeof payload?.event?.id === "string" ? payload.event.id.trim().slice(0, 100) : "";
 
-    const configuredSpaceId = (process.env.MONIME_SPACE_ID || "spc-k6VAsS2nSa4AALw1JuBJrXtUAnF").trim();
-    const webhookSecret =
-      process.env.MONIME_WEBHOOK_SECRET || "whsec_vektolux_monime_prod_2026";
-
-    // 1. Signature Verification with timingSafeEqual
-    let isAuthorized = await verifyMoniMeSignature(
-      rawBody,
-      signature,
-      webhookSecret,
-      spaceIdHeader
-    );
-
-    // Allow test bypass header in dev/staging environments
-    const isTestBypass =
-      request.headers.get("x-monime-test-bypass") === "vektolux_test_2026";
-
-    // 2. Parse JSON payload
-    let payload: any = {};
-    try {
-      payload = JSON.parse(rawBody);
-    } catch (_) {
-      return new Response(
-        JSON.stringify({
-          status: "BAD_REQUEST",
-          error: "Malformed JSON payload",
-        }),
-        { status: 400, headers: corsHeaders() }
-      );
+  // 3. Duplicate protection: the same event id (Monime retries, or the old + new webhook) runs once.
+  if (eventId) {
+    const claim: any = await ctx.runMutation(internal.monimeWebhooks.claimEvent, { eventId, eventName, objectId });
+    if (!claim.fresh) {
+      return new Response(JSON.stringify({ received: true, duplicate: true }), { status: 200, headers: corsHeaders() });
     }
+  }
 
-    console.log("MoniMe Webhook Received:", {
-      event: payload.event || payload.type,
-      data: payload.data ?? payload,
-    });
-
-    const event = (payload.event || payload.type || "").toString().toLowerCase();
-    const data = payload.data ?? payload.object ?? payload;
-
-    // Decode metadata if it was passed as stringified JSON or object
-    let metadata: Record<string, any> = {};
-    if (typeof data.metadata === "string") {
-      try {
-        metadata = JSON.parse(data.metadata);
-      } catch (_) {
-        metadata = {};
-      }
-    } else if (data.metadata && typeof data.metadata === "object") {
-      metadata = data.metadata;
-    } else if (payload.metadata && typeof payload.metadata === "object") {
-      metadata = payload.metadata;
-    }
-
-    // Check payload spaceId match as fallback authorization
-    const payloadSpaceId = String(payload.spaceId || payload.space_id || data.spaceId || data.space_id || "").trim();
-    if (!isAuthorized && !isTestBypass && payloadSpaceId && payloadSpaceId === configuredSpaceId) {
-      isAuthorized = true;
-    }
-
-    // Also authorize if payload contains a genuine Vektolux reference or payment code
-    if (!isAuthorized && !isTestBypass) {
-      const refCandidate = String(data.reference || metadata.reference || payload.reference || data.id || "");
-      if (refCandidate.includes("vktlx") || refCandidate.startsWith("pmc-")) {
-        isAuthorized = true;
-      }
-    }
-
-    if (!isAuthorized && !isTestBypass) {
-      console.warn("[MoniMe Webhook] Signature verification failed, payload spaceId checked:", {
-        hasSignature: !!signature,
-        secretConfigured: !!webhookSecret,
-        spaceIdHeader,
-        payloadSpaceId,
-      });
-      // Return 200 with unauthorized warning so gateway does not endlessly retry malformed signatures
-      return new Response(
-        JSON.stringify({
-          received: true,
-          status: "IGNORED_UNAUTHORIZED",
-          message: "Webhook received but signature could not be verified",
-        }),
-        { status: 200, headers: corsHeaders() }
-      );
-    }
-
-    // Handle payment.success, charge.completed, payment.completed, checkout_session.completed
-    const status = (data.status || payload.status || "").toString().toLowerCase();
-    const isPaymentCompleted =
-      event === "payment.success" ||
-      event === "charge.completed" ||
-      event === "payment.completed" ||
-      event === "payment.successful" ||
-      event === "checkout_session.completed" ||
-      event === "payment_code.completed" ||
-      event.includes("success") ||
-      event.includes("completed") ||
-      status === "completed" ||
-      status === "successful" ||
-      status === "paid" ||
-      status === "success";
-
-    if (isPaymentCompleted) {
-      const orderNumber = String(
-        data.orderNumber ||
-        data.order_number ||
-        data.orderId ||
-        data.order_id ||
-        payload.orderNumber ||
-        payload.order_number ||
-        payload.orderId ||
-        ""
-      );
-
-      const rawReference = String(
-        data.reference ||
-        metadata.reference ||
-        payload.reference ||
-        orderNumber ||
-        data.id ||
-        `MONIME_${Date.now()}`
-      );
-
-      // Clean references across section symbol (§) and underscore (_) delimiters
-      const cleanRef = rawReference.replace(/§/g, "_");
-
-      // Extract userId or walletId from metadata or payload
-      const userId = String(
-        metadata.userId ||
-        metadata.user_id ||
-        data.userId ||
-        data.user_id ||
-        payload.userId ||
-        payload.user_id ||
-        ""
-      );
-
-      const walletId = String(
-        metadata.walletId ||
-        metadata.wallet_id ||
-        data.walletId ||
-        data.wallet_id ||
-        payload.walletId ||
-        payload.wallet_id ||
-        ""
-      );
-
-      let rawAmount = data.amount ?? data.total_amount ?? payload.amount;
-      if (typeof rawAmount === "object" && typeof rawAmount?.value === "number") {
-        rawAmount = rawAmount.value / 100;
-      }
-      let amount =
-        typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount || "0");
-      if (amount > 100 && (data.lineItems || payload.lineItems || data.amount?.value !== undefined)) {
-        amount = amount / 100;
-      }
-
-      let rawNet = data.net_amount ?? data.netAmount ?? metadata.netAmount ?? payload.net_amount ?? payload.netAmount;
-      if (typeof rawNet === "object" && typeof rawNet?.value === "number") {
-        rawNet = rawNet.value / 100;
-      }
-      let netAmount = typeof rawNet === "number" ? rawNet : (rawNet ? parseFloat(rawNet) : undefined);
-
-      let rawFee = data.fee ?? data.fees ?? metadata.fee ?? payload.fee ?? payload.fees;
-      if (typeof rawFee === "object" && typeof rawFee?.value === "number") {
-        rawFee = rawFee.value / 100;
-      }
-      let feeAmount = typeof rawFee === "number" ? rawFee : (rawFee ? parseFloat(rawFee) : undefined);
-
-      if (netAmount === undefined) {
-        if (feeAmount !== undefined) {
-          netAmount = amount - feeAmount;
-        } else {
-          const feeEst = amount === 5 ? 0.05 : (amount > 0 ? 0.10 : 0);
-          netAmount = Math.max(0, amount - feeEst);
-          feeAmount = feeEst;
-        }
-      }
-      if (feeAmount === undefined && netAmount !== undefined) {
-        feeAmount = Math.max(0, amount - netAmount);
-      }
-
-      const currency = data.currency || payload.currency || "SLE";
-      const customerPhone = String(
-        data.customer?.phone ||
-        data.metadata?.customerPhone ||
-        data.metadata?.phoneNumber ||
-        metadata.customerPhone ||
-        metadata.phoneNumber ||
-        data.phone ||
-        payload.phone ||
-        ""
-      );
-      const provider = String(
-        data.provider || data.channel || metadata.provider || payload.provider || "ORANGE"
-      );
-
-      const txnId = orderNumber || cleanRef || String(data.id || `MONIME_${Date.now()}`);
-
-      // 4. Atomically update transaction, credit wallet, and notify user
-      const result = await ctx.runMutation(
-        internal.payments.processMoniMeWebhookSuccess,
-        {
-          transactionId: txnId,
-          reference: cleanRef,
-          rawReference: rawReference !== cleanRef ? rawReference : undefined,
-          orderNumber: orderNumber || undefined,
-          walletId: walletId || undefined,
-          userId: userId || undefined,
-          amount,
-          netAmount,
-          feeAmount,
-          currency,
-          provider: `MONIME_${String(provider).toUpperCase()}`,
-          customerPhone: customerPhone ? String(customerPhone) : undefined,
-          rawPayload: rawBody,
-        }
-      );
-
-      console.log("MoniMe Webhook Processed Successfully:", result);
-
-      return new Response(
-        JSON.stringify({
-          received: true,
-          success: true,
-          status: "COMPLETED",
-          result,
-        }),
-        { status: 200, headers: corsHeaders() }
-      );
-    }
-
-    // Acknowledge other events (e.g. payment.failed, payment.pending) cleanly with 200
-    return new Response(
-      JSON.stringify({
-        received: true,
-        event,
-        status: status || "ACKNOWLEDGED",
-      }),
-      { status: 200, headers: corsHeaders() }
-    );
+  // 4. Handle. The payload is only a HINT: every action re-reads the truth from Monime's API.
+  try {
+    const outcome = await dispatchMoniMeEvent(ctx, eventName, objectId, payload);
+    if (eventId) await ctx.runMutation(internal.monimeWebhooks.finishEvent, { eventId, ok: true, outcome });
+    console.log(`[MoniMe Webhook] ${eventName} -> ${outcome}`);
+    return new Response(JSON.stringify({ received: true, outcome }), { status: 200, headers: corsHeaders() });
   } catch (err: any) {
-    console.error("[MoniMe Webhook] Processing error:", err);
-    return new Response(
-      JSON.stringify({
-        received: true,
-        status: "INTERNAL_ERROR_LOGGED",
-        error: err?.message || "Internal server error occurred",
-      }),
-      { status: 200, headers: corsHeaders() }
-    );
+    console.error("[MoniMe Webhook] processing error:", err?.message ?? "unknown");
+    if (eventId) await ctx.runMutation(internal.monimeWebhooks.finishEvent, { eventId, ok: false });
+    // 500 so Monime retries (same event id; the claim above allows the retry). Pollers also cover it.
+    return new Response(JSON.stringify({ received: false, error: "Processing failed" }), { status: 500, headers: corsHeaders() });
   }
 });
 
@@ -2040,6 +665,5 @@ http.route({
 });
 
 export default http;
-
 
 

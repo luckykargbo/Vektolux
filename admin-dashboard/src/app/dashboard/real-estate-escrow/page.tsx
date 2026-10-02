@@ -14,6 +14,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import styles from "./escrow.module.css";
+import { adminFetch } from "@/lib/adminSession";
 
 interface RealEstateEscrowSummary {
   totalContracts: number;
@@ -75,7 +76,7 @@ export default function RealEstateEscrowDashboardPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/real-estate-escrow");
+      const res = await adminFetch("/api/real-estate-escrow");
       const data = await res.json();
       if (data.success) {
         setSummary(data.data?.summary ?? null);
@@ -99,7 +100,7 @@ export default function RealEstateEscrowDashboardPage() {
     if (!confirm(`Are you sure you want to proceed with this real estate settlement action?`)) return;
     setActionLoading(payload.contractId ?? payload.passId ?? action);
     try {
-      const res = await fetch("/api/real-estate-escrow", {
+      const res = await adminFetch("/api/real-estate-escrow", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, ...payload }),

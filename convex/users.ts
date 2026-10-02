@@ -3,10 +3,16 @@
 // VEKTOLUX — User Profile Queries & Mutations
 // ═══════════════════════════════════════════════════════════════════════
 
-import { mutation, query } from "./_generated/server";
+import { action, mutation, query, internalMutation, internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { verifyAppleIdToken, verifyGoogleIdToken } from "./lib/oauth";
+import { issueSession } from "./lib/session";
 import { v } from "convex/values";
 import { userRole } from "./schema";
 import { verifyPassword } from "./auth";
+import { isRoleApproved, roleForApplication } from "./lib/permissions";
+import { requireAuthenticatedUser, requireAdmin, requireSelf, resolveOptionalUser } from "./lib/auth";
+import { toPublicProperty, toPublicVehicle } from "./lib/publicListing";
 
 // ═══════════════════════════════════════════════════════════════════════
 //                        GET USER BY ID
@@ -53,6 +59,7 @@ export function isUserVerifiedSeller(user: {
 export const getUserById = query({
   args: {
     userId: v.string(),
+    sessionToken: v.optional(v.string()),
   },
   returns: v.union(
     v.object({
@@ -81,22 +88,25 @@ export const getUserById = query({
       
       const user = await ctx.db.get(userId);
       if (!user) return null;
+      // Private contact / KYC / wallet fields are returned ONLY to the account owner.
+      const viewer = await resolveOptionalUser(ctx, { sessionToken: args.sessionToken });
+      const isSelf = viewer?.userId === user._id;
 
       return {
         id: user._id as string,
         name: user.name,
-        email: user.email,
-        phone: user.phone,
+        email: isSelf ? user.email : "",
+        phone: isSelf ? user.phone : "",
         role: user.role,
         isVerified: user.isVerified,
         isActive: user.isActive,
         isVerifiedSeller: isUserVerifiedSeller(user),
         avatarUrl: user.avatarUrl,
         bio: user.bio,
-        address: user.address,
+        address: isSelf ? user.address : undefined,
         region: user.region,
-        kycStatus: user.kycStatus,
-        walletAddress: user.walletAddress,
+        kycStatus: isSelf ? user.kycStatus : undefined,
+        walletAddress: isSelf ? user.walletAddress : undefined,
         createdAt: user._creationTime,
       };
     } catch {
@@ -109,7 +119,8 @@ export const getUserById = query({
 //                      GET USER BY EMAIL
 // ═══════════════════════════════════════════════════════════════════════
 
-export const getUserByEmail = query({
+// INTERNAL ONLY: email -> account lookup must not be public (user enumeration).
+export const getUserByEmail = internalQuery({
   args: {
     email: v.string(),
   },
@@ -153,6 +164,7 @@ export const getUserByEmail = query({
 
 export const updateUserProfile = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.string(),
     name: v.optional(v.string()),
     phone: v.optional(v.string()),
@@ -163,6 +175,8 @@ export const updateUserProfile = mutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     let userDoc = null;
     const normalized = ctx.db.normalizeId("users", args.userId);
     if (normalized) {
@@ -205,6 +219,7 @@ export const updateUserProfile = mutation({
 
 export const updateAvatar = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.string(),
     avatarUrl: v.string(),
   },
@@ -214,6 +229,8 @@ export const updateAvatar = mutation({
     avatarUrl: v.string(),
   }),
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     let userDoc = null;
     const normalized = ctx.db.normalizeId("users", args.userId);
     if (normalized) {
@@ -258,7 +275,9 @@ export const updateAvatar = mutation({
 //                    CREATE OR SYNC USER DIRECTLY
 // ═══════════════════════════════════════════════════════════════════════
 
-export const syncUser = mutation({
+// INTERNAL ONLY: it overwrote role / KYC status / session token for any account (privilege
+// escalation + account takeover). Not used by the app.
+export const syncUser = internalMutation({
   args: {
     userId: v.optional(v.string()),
     name: v.string(),
@@ -378,6 +397,7 @@ export const syncUser = mutation({
 
 export const switchActiveRole = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.string(),
     targetRole: v.union(
       v.literal("client"),
@@ -392,6 +412,8 @@ export const switchActiveRole = mutation({
     message: v.string(),
   }),
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     const userId = ctx.db.normalizeId("users", args.userId);
     if (!userId) {
       return { success: false, activeRole: "client", message: "User not found" };
@@ -429,86 +451,7 @@ export const switchActiveRole = mutation({
 //                 SWITCH USER MODE (DRIVER VS PASSENGER)
 // ═══════════════════════════════════════════════════════════════════════
 
-export const switchUserMode = mutation({
-  args: {
-    userId: v.string(),
-    targetMode: v.union(v.literal("passenger"), v.literal("driver")),
-  },
-  returns: v.object({
-    success: v.boolean(),
-    activeMode: v.string(),
-    message: v.string(),
-  }),
-  handler: async (ctx, args) => {
-    const userId = ctx.db.normalizeId("users", args.userId);
-    if (!userId) {
-      return { success: false, activeMode: "passenger", message: "User not found" };
-    }
-    const user = await ctx.db.get(userId);
-    if (!user) {
-      return { success: false, activeMode: "passenger", message: "User not found" };
-    }
 
-    const isDriverVerified = Boolean(
-      user.is_driver_verified ?? user.isVerifiedDriver ?? (user.role === "driver")
-    );
-
-    if (args.targetMode === "driver" && !isDriverVerified) {
-      return {
-        success: false,
-        activeMode: user.active_mode ?? "passenger",
-        message: "Driver verification required. Complete registration and vehicle approval.",
-      };
-    }
-
-    const activeRole = args.targetMode === "driver" ? "driver" : "client";
-    const driverStatus = args.targetMode === "driver" ? (user.driver_status ?? "online") : "offline";
-
-    await ctx.db.patch(userId, {
-      active_mode: args.targetMode,
-      activeRole,
-      driver_status: driverStatus,
-      updatedAt: Date.now(),
-    });
-
-    return {
-      success: true,
-      activeMode: args.targetMode,
-      message: `Switched to ${args.targetMode === "driver" ? "Driver Workspace" : "Passenger Mode"}`,
-    };
-  },
-});
-
-export const getUserMode = query({
-  args: {
-    userId: v.string(),
-  },
-  returns: v.union(
-    v.object({
-      userId: v.string(),
-      activeMode: v.string(),
-      isDriverVerified: v.boolean(),
-      driverStatus: v.string(),
-    }),
-    v.null()
-  ),
-  handler: async (ctx, args) => {
-    const userId = ctx.db.normalizeId("users", args.userId);
-    if (!userId) return null;
-    const user = await ctx.db.get(userId);
-    if (!user) return null;
-
-    const isDriverVerified = Boolean(
-      user.is_driver_verified ?? user.isVerifiedDriver ?? (user.role === "driver")
-    );
-    return {
-      userId: user._id as string,
-      activeMode: user.active_mode ?? (user.activeRole === "driver" ? "driver" : "passenger"),
-      isDriverVerified,
-      driverStatus: user.driver_status ?? "offline",
-    };
-  },
-});
 
 // ═══════════════════════════════════════════════════════════════════════
 //                     APPLY FOR ROLE UPGRADE
@@ -516,8 +459,16 @@ export const getUserMode = query({
 
 export const applyRoleUpgrade = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.string(),
-    targetRole: v.union(v.literal("driver"), v.literal("agent"), v.literal("merchant")),
+    // "driver" is no longer offered (ride system removed); "merchant" is the legacy dealer label.
+    targetRole: v.union(
+      v.literal("agent"),
+      v.literal("property_owner"),
+      v.literal("dealer"),
+      v.literal("merchant"),
+      v.literal("hotel_operator")
+    ),
     businessName: v.optional(v.string()),
     tinNumber: v.optional(v.string()),
     licenseNumber: v.optional(v.string()),
@@ -526,21 +477,31 @@ export const applyRoleUpgrade = mutation({
   returns: v.object({
     success: v.boolean(),
     applicationId: v.optional(v.string()),
+    errorCode: v.optional(v.string()),
     message: v.string(),
   }),
   handler: async (ctx, args) => {
-    const userId = ctx.db.normalizeId("users", args.userId);
-    if (!userId) {
-      return { success: false, message: "User not found" };
+    // Only the account owner (valid session) may act on this account.
+    const { userId, user } = await requireSelf(ctx, args.sessionToken, String(args.userId));
+    if (user.role === "admin") return { success: false, errorCode: "NOT_ALLOWED", message: "Administrators cannot apply for a business role." };
+    const targetRole = args.targetRole === "merchant" ? "dealer" : args.targetRole;
+    const docs = (args.documentUrls ?? []).filter((d) => typeof d === "string" && d.length <= 500).slice(0, 10);
+
+    const existing = await ctx.db.query("role_applications").withIndex("by_user", (q) => q.eq("userId", userId)).take(50);
+    if (existing.some((a) => a.status === "pending")) {
+      return { success: false, errorCode: "APPLICATION_PENDING", message: "You already have an application under review." };
+    }
+    if (roleForApplication(targetRole) === user.role && isRoleApproved(user)) {
+      return { success: false, errorCode: "ALREADY_GRANTED", message: "Your account already has this role." };
     }
     const now = Date.now();
     const appId = await ctx.db.insert("role_applications", {
       userId,
-      targetRole: args.targetRole,
-      businessName: args.businessName,
-      tinNumber: args.tinNumber,
-      licenseNumber: args.licenseNumber,
-      documentUrls: args.documentUrls ?? [],
+      targetRole,
+      businessName: args.businessName?.trim().slice(0, 200),
+      tinNumber: args.tinNumber?.trim().slice(0, 50),
+      licenseNumber: args.licenseNumber?.trim().slice(0, 50),
+      documentUrls: docs,
       status: "pending",
       updatedAt: now,
     });
@@ -548,69 +509,22 @@ export const applyRoleUpgrade = mutation({
     return {
       success: true,
       applicationId: appId as string,
-      message: `Application submitted for ${args.targetRole} verification`,
+      message: "Application submitted. An administrator will review it.",
     };
   },
 });
 
-// ═══════════════════════════════════════════════════════════════════════
-//                 MOCK APPROVE ROLE UPGRADE (DEMO)
-// ═══════════════════════════════════════════════════════════════════════
-
-export const mockApproveRoleUpgrade = mutation({
-  args: {
-    userId: v.string(),
-    targetRole: v.union(v.literal("driver"), v.literal("agent"), v.literal("merchant")),
-  },
-  returns: v.boolean(),
-  handler: async (ctx, args) => {
-    const userId = ctx.db.normalizeId("users", args.userId);
-    if (!userId) return false;
-
-    const updates: Record<string, unknown> = {
-      updatedAt: Date.now(),
-      activeRole: args.targetRole,
-    };
-
-    if (args.targetRole === "driver") {
-      updates.isVerifiedDriver = true;
-      updates.role = "driver";
-    } else if (args.targetRole === "agent") {
-      updates.isVerifiedAgent = true;
-      updates.role = "agent";
-    } else if (args.targetRole === "merchant") {
-      updates.isVerifiedMerchant = true;
-      updates.role = "merchant";
-    }
-
-    await ctx.db.patch(userId, updates);
-
-    // Also update any pending role application
-    const app = await ctx.db
-      .query("role_applications")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .filter((q) => q.eq(q.field("targetRole"), args.targetRole))
-      .first();
-
-    if (app) {
-      await ctx.db.patch(app._id, {
-        status: "approved",
-        reviewedAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-    }
-
-    return true;
-  },
-});
 
 // ═══════════════════════════════════════════════════════════════════════
 //                     SOCIAL / PUBLIC PROFILE
 // ═══════════════════════════════════════════════════════════════════════
 
 export const getUserProfile = query({
-  args: { userId: v.id("users") },
+  args: { userId: v.id("users"), sessionToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Email and phone are private: returned only to the profile owner.
+    const viewer = await resolveOptionalUser(ctx, { sessionToken: args.sessionToken });
+    const isSelf = !!viewer && String(viewer.userId) === String(args.userId);
     const user = await ctx.db.get(args.userId);
     if (!user) return null;
 
@@ -619,8 +533,8 @@ export const getUserProfile = query({
     return {
       _id: user._id,
       name: user.name,
-      email: user.email,
-      phone: user.phone,
+      email: isSelf ? user.email : undefined,
+      phone: isSelf ? user.phone : undefined,
       avatarUrl: user.avatarUrl,
       bio: user.bio,
       role: user.role,
@@ -630,7 +544,7 @@ export const getUserProfile = query({
       isVerified: user.isVerified,
       isVerifiedSeller,
       canPublishListings: isVerifiedSeller || user.role === "admin",
-      kycStatus: user.kycStatus,
+      kycStatus: isSelf ? user.kycStatus : undefined,
     };
   },
 });
@@ -651,11 +565,12 @@ export const getUserPosts = query({
       .take(50);
 
     const combined = [
-      ...realEstate.map((r) => ({ ...r, type: "property" })),
-      ...vehicles.map((v) => ({ ...v, type: "vehicle" })),
+      // Public profile view: never private phone / street address / coordinates.
+      ...realEstate.filter((r) => r.isDeleted !== true).map((r) => ({ ...toPublicProperty(r), type: "property" })),
+      ...vehicles.filter((v) => v.isDeleted !== true).map((v) => ({ ...toPublicVehicle(v), type: "vehicle" })),
     ];
 
-    combined.sort((a, b) => b._creationTime - a._creationTime);
+    combined.sort((a: any, b: any) => b._creationTime - a._creationTime);
     return combined;
   },
 });
@@ -667,13 +582,8 @@ export const updateBio = mutation({
     bio: v.string() 
   },
   handler: async (ctx, args) => {
-    if (!args.sessionToken) throw new Error("Unauthorized");
-    const user = await ctx.db.get(args.userId);
-    if (!user || user.sessionToken !== args.sessionToken) {
-      throw new Error("Unauthorized");
-    }
-
-    await ctx.db.patch(args.userId, { bio: args.bio, updatedAt: Date.now() });
+    await requireSelf(ctx, args.sessionToken, args.userId);
+    await ctx.db.patch(args.userId, { bio: args.bio.slice(0, 500), updatedAt: Date.now() });
     return { success: true };
   },
 });
@@ -683,32 +593,10 @@ export const updateBio = mutation({
  * Returns user identity, KYC badge, live wallet balance, active deal count, and QR payload.
  */
 export const getWalletProfile = query({
-  args: { userId: v.string() },
+  args: { userId: v.optional(v.string()), sessionToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    let user = null;
-    const userNorm = ctx.db.normalizeId("users", args.userId);
-    if (userNorm) {
-      user = await ctx.db.get(userNorm);
-    }
-    if (!user) {
-      user = await ctx.db
-        .query("users")
-        .withIndex("by_sessionToken", (q) => q.eq("sessionToken", args.userId))
-        .first();
-    }
-    if (!user) {
-      user = await ctx.db
-        .query("users")
-        .withIndex("by_email", (q) => q.eq("email", args.userId))
-        .first();
-    }
-    if (!user) {
-      user = await ctx.db
-        .query("users")
-        .withIndex("by_phone", (q) => q.eq("phone", args.userId))
-        .first();
-    }
-    if (!user) return null;
+    // Wallet/escrow summary is private: identity comes from the session only.
+    const { user } = await requireSelf(ctx, args.sessionToken, args.userId);
 
     // Fetch live wallet balance
     const wallet = await ctx.db
@@ -780,6 +668,7 @@ export const getWalletProfile = query({
  */
 export const applyForSellerVerification = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.string(),
     sellerType: v.union(
       v.literal("real_estate"),
@@ -795,6 +684,8 @@ export const applyForSellerVerification = mutation({
     message: v.string(),
   }),
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     let user = null;
     const userNorm = ctx.db.normalizeId("users", args.userId);
     if (userNorm) user = await ctx.db.get(userNorm);
@@ -846,9 +737,13 @@ export const approveSellerVerification = mutation({
         v.literal("individual")
       )
     ),
+    sessionToken: v.optional(v.string()),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
+    // Enforce admin privileges
+    const { userId: adminId } = await requireAdmin(ctx, { sessionToken: args.sessionToken });
+
     let user = null;
     const userNorm = ctx.db.normalizeId("users", args.userId);
     if (userNorm) user = await ctx.db.get(userNorm);
@@ -857,11 +752,12 @@ export const approveSellerVerification = mutation({
     const sType = args.sellerType ?? user.sellerType ?? "vendor";
     const role = sType === "real_estate" ? "agent" : "merchant";
 
+    // Business-role approval only. Identity (KYC) verification is a separate, admin-reviewed
+    // status and is NOT granted here.
     await ctx.db.patch(user._id, {
       isVerifiedSeller: true,
-      isVerified: true,
-      verificationStatus: "verified",
-      verificationBadge: "GREEN_TICK",
+      roleApprovedAt: Date.now(),
+      roleApprovedBy: adminId,
       role,
       activeRole: role,
       sellerType: sType,
@@ -886,10 +782,13 @@ async function generateDeterministicHash(payload: string): Promise<string> {
  */
 export const verifyTransactionPin = query({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.string(),
     pin: v.string(),
   },
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     const userId = ctx.db.normalizeId("users", args.userId);
     if (!userId) return { valid: false, message: "Invalid user ID", hasPin: false };
 
@@ -917,7 +816,11 @@ export const verifyTransactionPin = query({
 
     // 3. Fallback: if user has neither wallet PIN nor password configured yet
     if (!user.walletPinHash && !user.passwordHash) {
-      return { valid: true, hasPin: false };
+      return {
+        valid: false,
+        message: "No security PIN or password configured. Please set a transaction PIN before performing this action.",
+        hasPin: false,
+      };
     }
 
     return {
@@ -936,17 +839,17 @@ export const verifyTransactionPin = query({
 export const deleteUserAccount = mutation({
   args: {
     userId: v.string(),
+    sessionToken: v.optional(v.string()),
   },
+  returns: v.object({
+    success: v.boolean(),
+    message: v.string(),
+  }),
   handler: async (ctx, args) => {
-    const userId = ctx.db.normalizeId("users", args.userId);
-    if (!userId) {
-      return { success: false, message: "Invalid user ID" };
-    }
-
-    const user = await ctx.db.get(userId);
-    if (!user) {
-      return { success: false, message: "User account not found" };
-    }
+    // Authenticate caller — user can only delete own account unless admin
+    const auth = await requireAuthenticatedUser(ctx, { sessionToken: args.sessionToken, userId: args.userId });
+    const userId = auth.userId;
+    const user = auth.user;
 
     const now = Date.now();
     const randomizedSuffix = Math.random().toString(36).substring(2, 8);
@@ -996,151 +899,21 @@ function _generateSessionToken(): string {
     .join("");
 }
 
-export const authenticateWithOAuth = mutation({
-  args: {
-    provider: v.union(v.literal("google"), v.literal("apple")),
-    // The raw idToken from the provider SDK — stored as the externalAuthId key.
-    token: v.string(),
-    email: v.string(),
-    name: v.optional(v.string()),
-    avatarUrl: v.optional(v.string()),
-  },
-  returns: v.object({
-    userId: v.string(),
-    sessionToken: v.string(),
-    name: v.string(),
-    email: v.string(),
-    phone: v.string(),
-    role: v.string(),
-    isVerified: v.boolean(),
-    avatarUrl: v.optional(v.string()),
-    walletAddress: v.optional(v.string()),
-  }),
-  handler: async (ctx, args) => {
-    const now = Date.now();
-    const sessionToken = _generateSessionToken();
-
-    // ── 1. Look up by (authProvider, externalAuthId) ──────────────
-    // We use the first 256 chars of the idToken as the stable externalAuthId.
-    // (Apple re-issues tokens but the sub claim inside is stable — for a full
-    //  production app, verify the token and extract the "sub" claim instead.)
-    const externalAuthId = args.token.slice(0, 256);
-
-    const existing = await ctx.db
-      .query("users")
-      .withIndex("by_external_auth", (q) =>
-        q.eq("authProvider", args.provider).eq("externalAuthId", externalAuthId)
-      )
-      .first();
-
-    if (existing) {
-      // Returning social-auth user — refresh session token
-      await ctx.db.patch(existing._id, {
-        sessionToken,
-        updatedAt: now,
-        // Update avatar URL if Google provides a fresher one
-        ...(args.avatarUrl ? { avatarUrl: args.avatarUrl } : {}),
-      });
-      return {
-        userId: existing._id as string,
-        sessionToken,
-        name: existing.name,
-        email: existing.email,
-        phone: existing.phone ?? "",
-        role: existing.role,
-        isVerified: existing.isVerified,
-        avatarUrl: existing.avatarUrl,
-        walletAddress: existing.walletAddress,
-      };
-    }
-
-    // ── 2. Try to link by email (existing password-based account) ─
-    const byEmail = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", args.email))
-      .first();
-
-    if (byEmail) {
-      // Link the OAuth credential to the existing account
-      await ctx.db.patch(byEmail._id, {
-        authProvider: args.provider,
-        externalAuthId,
-        sessionToken,
-        updatedAt: now,
-        isVerified: true,
-        ...(args.avatarUrl && !byEmail.avatarUrl
-          ? { avatarUrl: args.avatarUrl }
-          : {}),
-      });
-      return {
-        userId: byEmail._id as string,
-        sessionToken,
-        name: byEmail.name,
-        email: byEmail.email,
-        phone: byEmail.phone ?? "",
-        role: byEmail.role,
-        isVerified: true,
-        avatarUrl: byEmail.avatarUrl,
-        walletAddress: byEmail.walletAddress,
-      };
-    }
-
-    // ── 3. Brand-new user — create account + wallet ───────────────
-    const displayName =
-      args.name && args.name.trim().length > 0
-        ? args.name.trim()
-        : args.email.split("@")[0];
-
-    const userId = await ctx.db.insert("users", {
-      name: displayName,
-      email: args.email,
-      phone: "",
-      role: "client",
-      authProvider: args.provider,
-      externalAuthId,
-      sessionToken,
-      isVerified: true,   // social-auth users are pre-verified
-      isActive: true,
-      avatarUrl: args.avatarUrl,
-      updatedAt: now,
-    });
-
-    // Initialise wallet with zero balance
-    await ctx.db.insert("walletBalances", {
-      userId,
-      availableBalance: 0,
-      pendingBalance: 0,
-      currency: "SLE",
-      updatedAt: now,
-    });
-
-    return {
-      userId: userId as string,
-      sessionToken,
-      name: displayName,
-      email: args.email,
-      phone: "",
-      role: "client",
-      isVerified: true,
-      avatarUrl: args.avatarUrl,
-      walletAddress: undefined,
-    };
-  },
-});
-
 // ═══════════════════════════════════════════════════════════════════════
 //                        SOCIAL SIGN IN
 // Returns { userId, hasPhone, sessionToken, user }
 // If hasPhone is false, client prompts to complete Sierra Leone phone number.
 // ═══════════════════════════════════════════════════════════════════════
 
-export const socialSignIn = mutation({
+// INTERNAL: completes a social sign-in for an identity ALREADY verified by socialSignIn.
+export const completeSocialSignIn = internalMutation({
   args: {
-    email: v.string(),
+    provider: v.string(),
+    sub: v.string(),
+    email: v.optional(v.string()),
+    emailVerified: v.boolean(),
     name: v.optional(v.string()),
     avatarUrl: v.optional(v.string()),
-    provider: v.string(),
-    providerId: v.string(),
   },
   returns: v.object({
     userId: v.string(),
@@ -1160,30 +933,35 @@ export const socialSignIn = mutation({
   }),
   handler: async (ctx, args) => {
     const now = Date.now();
-    const sessionToken = _generateSessionToken();
-    const normalizedEmail = args.email.trim().toLowerCase();
+    const { sessionToken, sessionExpiresAt } = issueSession(now);
+    const verifiedEmail = args.emailVerified && args.email ? args.email.trim().toLowerCase() : undefined;
 
-    // Query user by email
-    const existing = await ctx.db
+    // 1. The provider's stable subject id identifies the account.
+    let existing = await ctx.db
       .query("users")
-      .withIndex("by_email", (q) => q.eq("email", normalizedEmail))
+      .withIndex("by_external_auth", (q) => q.eq("authProvider", args.provider).eq("externalAuthId", args.sub))
       .first();
 
+    // 2. Otherwise link an existing account ONLY by an email the provider itself verified.
+    if (!existing && verifiedEmail) {
+      existing = await ctx.db.query("users").withIndex("by_email", (q) => q.eq("email", verifiedEmail)).first();
+    }
+
     if (existing) {
+      if (existing.isActive === false) throw new Error("Account has been deactivated. Please contact support.");
       const hasPhone = !!(
         (existing.phoneNumber && existing.phoneNumber.trim().length > 0) ||
         (existing.phone && existing.phone.trim().length > 0)
       );
-
       await ctx.db.patch(existing._id, {
         sessionToken,
+        sessionExpiresAt,
         lastLoginAt: now,
         updatedAt: now,
         authProvider: args.provider,
-        externalAuthId: args.providerId.slice(0, 256),
+        externalAuthId: args.sub,
         ...(args.avatarUrl && !existing.avatarUrl ? { avatarUrl: args.avatarUrl } : {}),
       });
-
       return {
         userId: existing._id as string,
         hasPhone,
@@ -1202,29 +980,25 @@ export const socialSignIn = mutation({
       };
     }
 
-    // New user
-    const displayName =
-      args.name && args.name.trim().length > 0
-        ? args.name.trim()
-        : normalizedEmail.split("@")[0];
-
+    // 3. New account: always a CLIENT and never pre-verified (identity verification is separate KYC).
+    const email = verifiedEmail ?? `${args.provider}_${args.sub}@users.vektolux.invalid`;
+    const displayName = args.name && args.name.trim().length > 0 ? args.name.trim().slice(0, 80) : email.split("@")[0];
     const userId = await ctx.db.insert("users", {
       name: displayName,
-      email: normalizedEmail,
+      email,
       phone: "",
       phoneNumber: undefined,
       role: "client",
       authProvider: args.provider,
-      externalAuthId: args.providerId.slice(0, 256),
+      externalAuthId: args.sub,
       sessionToken,
-      isVerified: true,
+      sessionExpiresAt,
+      isVerified: false,
       isActive: true,
       avatarUrl: args.avatarUrl,
       lastLoginAt: now,
       updatedAt: now,
     });
-
-    // Initialize wallet with zero balance
     await ctx.db.insert("walletBalances", {
       userId,
       availableBalance: 0,
@@ -1233,7 +1007,6 @@ export const socialSignIn = mutation({
       currency: "SLE",
       updatedAt: now,
     });
-
     return {
       userId: userId as string,
       hasPhone: false,
@@ -1241,17 +1014,67 @@ export const socialSignIn = mutation({
       user: {
         id: userId as string,
         name: displayName,
-        email: normalizedEmail,
+        email,
         phone: "",
         phoneNumber: undefined,
         role: "client",
-        isVerified: true,
+        isVerified: false,
         avatarUrl: args.avatarUrl,
         walletAddress: undefined,
       },
     };
   },
 });
+
+/**
+ * Social sign-in (Google / Apple). `providerId` MUST be the provider's signed ID token; it is
+ * verified server-side before any session is issued. The email/name sent by the client are
+ * NOT used to choose the account.
+ */
+export const socialSignIn = action({
+  args: {
+    email: v.optional(v.string()), // ignored for identity
+    name: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
+    provider: v.string(),
+    providerId: v.string(), // the provider ID token
+  },
+  returns: v.object({
+    userId: v.string(),
+    hasPhone: v.boolean(),
+    sessionToken: v.string(),
+    user: v.object({
+      id: v.string(),
+      name: v.string(),
+      email: v.string(),
+      phone: v.string(),
+      phoneNumber: v.optional(v.string()),
+      role: v.string(),
+      isVerified: v.boolean(),
+      avatarUrl: v.optional(v.string()),
+      walletAddress: v.optional(v.string()),
+    }),
+  }),
+  handler: async (ctx, args): Promise<any> => {
+    const provider = args.provider.trim().toLowerCase();
+    const identity =
+      provider === "google"
+        ? await verifyGoogleIdToken(args.providerId)
+        : provider === "apple"
+          ? await verifyAppleIdToken(args.providerId)
+          : null;
+    if (!identity) throw new Error("Unsupported sign-in provider.");
+    return await ctx.runMutation(internal.users.completeSocialSignIn, {
+      provider: identity.provider,
+      sub: identity.sub,
+      email: identity.email,
+      emailVerified: identity.emailVerified,
+      name: args.name ?? identity.name,
+      avatarUrl: args.avatarUrl,
+    });
+  },
+});
+
 
 // ═══════════════════════════════════════════════════════════════════════
 //                      LINK PHONE NUMBER
@@ -1260,6 +1083,7 @@ export const socialSignIn = mutation({
 
 export const linkPhoneNumber = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     userId: v.id("users"),
     phoneNumber: v.string(),
   },
@@ -1268,6 +1092,8 @@ export const linkPhoneNumber = mutation({
     phoneNumber: v.string(),
   }),
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     const user = await ctx.db.get(args.userId);
     if (!user) {
       throw new Error("User not found");

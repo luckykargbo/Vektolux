@@ -14,8 +14,6 @@ import 'core/network/connectivity_monitor.dart';
 import 'core/network/convex_client_wrapper.dart';
 import 'core/constants/app_constants.dart';
 import 'features/auth/auth.dart';
-import 'features/mobility/presentation/bloc/mobility_bloc.dart';
-import 'features/mobility/data/repositories/mobility_repository_impl.dart';
 import 'core/services/notification_service.dart';
 import 'core/services/payment_methods_service.dart';
 
@@ -79,13 +77,6 @@ class VektoluxApp extends StatelessWidget {
           BlocProvider<AuthBloc>(
             create: (context) => AuthBloc(
               repository: context.read<AuthRepository>(),
-            ),
-          ),
-          BlocProvider<MobilityBloc>(
-            create: (context) => MobilityBloc(
-              repository: MobilityRepositoryImpl(
-                convexClient: convexClient,
-              ),
             ),
           ),
         ],

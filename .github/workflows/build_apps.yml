@@ -67,6 +67,24 @@ jobs:
           zip -r -y Vektolux.ipa Payload
           ls -lh Vektolux.ipa
 
+      - name: Validate IPA (bundle id, version, architecture, archive integrity)
+        run: |
+          PL=build/ios/iphoneos/Runner.app/Info.plist
+          BID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PL")
+          VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PL")
+          BLD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PL")
+          echo "Bundle ID: $BID  Version: $VER  Build: $BLD"
+          test "$BID" = "com.vektolux.app"
+          test "$VER" = "1.0.25"
+          test "$BLD" = "26"
+          lipo -info build/ios/iphoneos/Runner.app/Runner
+          lipo -info build/ios/iphoneos/Runner.app/Runner | grep -q arm64
+          unzip -tq Vektolux.ipa
+          SIZE=$(stat -f%z Vektolux.ipa); echo "IPA size: $SIZE bytes"
+          test "$SIZE" -gt 5000000
+          # no secrets/config files packaged
+          if unzip -l Vektolux.ipa | grep -Ei "\.env|key\.properties|\.p12|\.jks|\.mobileprovision|GoogleService-Info"; then echo "Unexpected sensitive file in IPA"; exit 1; fi
+
       - name: Upload iOS IPA
         uses: actions/upload-artifact@v4
         with:
@@ -83,6 +101,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout Repository (release notes)
+        uses: actions/checkout@v4
+
       - name: Download Android APK
         if: needs.build-android.result == 'success'
         uses: actions/download-artifact@v4
@@ -107,31 +128,13 @@ jobs:
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: "Vektolux Mobile Release (v1.0.24) — Pure Convex Architecture & iOS Sideloading Fix"
-          body: |
-            ## Vektolux Mobile App Builds (v1.0.24) — Pure Convex Architecture & iOS Sideloading Fix
-
-            ### Direct Downloads:
-            - 📱 **iOS IPA (No Codesign)**: [`Vektolux.ipa`](https://github.com/luckykargbo/Vektolux/releases/download/latest/Vektolux.ipa)
-              * Clean release AOT build packaged with symlinks (`-y`) for seamless Sideloadly / AltStore / TrollStore signing.
-            - 🤖 **Android APK**: [`app-release.apk`](https://github.com/luckykargbo/Vektolux/releases/download/latest/app-release.apk)
-              * Direct sideload / install on any Android device.
-
-            ### What's New in this Build (v1.0.24):
-            - **Complete Firebase & APNs Decoupling**:
-              * Removed `firebase_core` and `firebase_messaging` dependencies.
-              * Deleted incomplete `GoogleService-Info.plist` that triggered native startup crashes (`com.firebase.core` missing App ID).
-              * Decoupled notifications into a pure in-app & local notification service (`flutter_local_notifications`), removing APNs registration failures on free personal Apple IDs.
-            - **Native iOS Startup & Codesigning Fixes**:
-              * Preserved Mach-O framework symlinks (`zip -r -y`) ensuring `Flutter.framework` and `App.framework` code signatures validate cleanly during sideloading.
-              * Removed `remote-notification` background mode preventing entitlement conflicts.
-            - **Marketplace & Onboarding Systems**:
-              * Production Real Estate Marketplace with 2-column cards, Verified Badges, and privacy-first broad locations.
-              * Explore and Home Screen overhauls powered directly by Convex Cloud.
+          # Test build for physical-iPhone testing (unsigned IPA, signed by Sideloadly on install).
+          tag_name: vektolux-ios-test-1.0.25-26
+          name: "Vektolux iPhone Test Build 1.0.25 (26)"
+          body_path: docs/IOS_TEST_BUILD.md
           files: release-assets/*
-          prerelease: false
-          make_latest: true
+          prerelease: true
+          make_latest: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

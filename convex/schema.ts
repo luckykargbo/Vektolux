@@ -5,6 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import { defineSchema, defineTable } from "convex/server";
+import { feeSnapshotValidator, feeVerticalValidator } from "./lib/fees";
 import { v } from "convex/values";
 
 // ─── Reusable Validators (Enum-like unions) ──────────────────────────
@@ -100,7 +101,8 @@ export const universalBookingStatus = v.union(
   v.literal("confirmed"),
   v.literal("in_progress"),
   v.literal("completed"),
-  v.literal("cancelled")
+  v.literal("cancelled"),
+  v.literal("disputed") // paid booking frozen for admin resolution
 );
 
 export const vehicleType = v.union(
@@ -184,6 +186,7 @@ export const ledgerAccountTypeEnum = v.union(
   v.literal("OWNER_AVAILABLE"),
   v.literal("OWNER_ESCROW_PENDING"),
   v.literal("PLATFORM_REVENUE_REALIZED"),
+  v.literal("SUBSCRIPTION_REVENUE"),
   v.literal("DAMAGE_DEPOSIT_CUSTODY"),
   v.literal("TELCO_CLEARING_LIABILITY")
 );
@@ -376,7 +379,12 @@ export default defineSchema({
     // Auth
     passwordHash: v.optional(v.string()),
     sessionToken: v.optional(v.string()),
+    // Absolute session expiry (ms). Sessions issued before this field existed have none.
+    sessionExpiresAt: v.optional(v.number()),
     walletPinHash: v.optional(v.string()),
+    // Brute-force protection for the wallet PIN / transaction password
+    pinFailedAttempts: v.optional(v.number()),
+    pinLockedUntil: v.optional(v.number()),
     authProvider: v.optional(v.string()),
     externalAuthId: v.optional(v.string()),
     phoneNumber: v.optional(v.string()),
@@ -395,6 +403,9 @@ export default defineSchema({
         v.literal("driver"),
         v.literal("agent"),
         v.literal("merchant"),
+        v.literal("property_owner"),
+        v.literal("dealer"),
+        v.literal("hotel_operator"),
         v.literal("admin")
       )
     ),
@@ -414,6 +425,9 @@ export default defineSchema({
       )
     ),
     sellerApprovedAt: v.optional(v.number()),
+    // Business role approval (role is granted only by an administrator decision)
+    roleApprovedAt: v.optional(v.number()),
+    roleApprovedBy: v.optional(v.id("users")),
     driverVehicleId: v.optional(v.string()),
 
     // Social & Profile
@@ -480,7 +494,9 @@ export default defineSchema({
     // Location
     address: v.string(),
     city: v.string(),
+    district: v.optional(v.string()), // Sierra Leone district (see lib/slLocations.ts)
     country: v.string(),
+    // PRIVATE: exact location is stored for owner/admin use only and is never returned publicly.
     latitude: v.number(),
     longitude: v.number(),
     geohash: v.string(),
@@ -664,10 +680,15 @@ export default defineSchema({
     failureReason: v.optional(v.string()),
     description: v.optional(v.string()),
 
+    // Idempotency: a retried client request / replayed webhook with the same key
+    // (per user) resolves to the original record instead of moving money twice.
+    idempotencyKey: v.optional(v.string()),
+
     // Metadata
     createdAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
+    .index("by_user_idempotency", ["userId", "idempotencyKey"])
     .index("by_transaction_id", ["transactionId"])
     .index("by_wallet", ["walletId"])
     .index("by_user", ["userId"])
@@ -675,6 +696,74 @@ export default defineSchema({
     .index("by_reference", ["referenceType", "referenceId"])
     .index("by_status", ["status"])
     .index("by_gateway_ref", ["gatewayProvider", "gatewayReference"]),
+
+  // ─── WITHDRAWAL REQUESTS ──────────────────────────────────────────
+  // Lifecycle: pending -> processing -> completed | failed.  The funds are reserved
+  // (available -> pending balance) at creation and only leave the wallet when the
+  // payout is CONFIRMED; a failure/cancel releases the reservation back to available.
+  withdrawal_requests: defineTable({
+    userId: v.id("users"),
+    walletId: v.id("walletBalances"),
+    transactionDocId: v.id("transactions"),
+    amount: v.number(),
+    currency: v.string(),
+    method: v.union(v.literal("mobile_money"), v.literal("bank")),
+    providerCode: v.string(), // "orange" | "africell" | bank code/name
+    destinationAccount: v.string(),
+    destinationName: v.optional(v.string()),
+    bankName: v.optional(v.string()),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("processing"),
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("cancelled")
+    ),
+    idempotencyKey: v.string(),
+    providerReference: v.optional(v.string()),
+    failureReason: v.optional(v.string()),
+    resolvedByAdminId: v.optional(v.id("users")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_status", ["status"])
+    .index("by_user_idempotency", ["userId", "idempotencyKey"])
+    .index("by_providerReference", ["providerReference"]),
+
+  // ─── AUTH RATE LIMITS (login / password reset brute-force protection) ─
+  auth_rate_limits: defineTable({
+    key: v.string(), // e.g. "login:id:<identifier>", "reset-req:<userId>"
+    count: v.number(),
+    windowStart: v.number(),
+    lockedUntil: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  // ─── QR PAYMENT REQUESTS ──────────────────────────────────────────
+  // A QR code encodes ONLY the opaque `token`. Recipient, amount and validity are
+  // always resolved server-side from this record; nothing sensitive is in the QR.
+  qr_payment_requests: defineTable({
+    token: v.string(),
+    receiverId: v.id("users"),
+    currency: v.string(),
+    amount: v.optional(v.number()), // fixed amount; absent = payer chooses
+    note: v.optional(v.string()),
+    singleUse: v.boolean(),
+    status: v.union(
+      v.literal("active"),
+      v.literal("paid"),
+      v.literal("cancelled")
+    ),
+    expiresAt: v.optional(v.number()),
+    paidTransactionId: v.optional(v.string()),
+    paidByUserId: v.optional(v.id("users")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_token", ["token"])
+    .index("by_receiver", ["receiverId"]),
 
   // ─── PAYMENT INTENTS ──────────────────────────────────────────────
   paymentIntents: defineTable({
@@ -770,7 +859,21 @@ export default defineSchema({
     cancelledAt: v.optional(v.number()),
     cancelReason: v.optional(v.string()),
     updatedAt: v.number(),
+    // Immutable snapshot of the fee rule + breakdown used when this order was priced.
+    feeSnapshot: v.optional(feeSnapshotValidator),
+    // Settlement of the escrowed payment (server-driven; see bookings.ts).
+    settlementStatus: v.optional(v.union(v.literal("held"), v.literal("disputed"), v.literal("released"), v.literal("refunded"))),
+    releaseEligibleAt: v.optional(v.number()), // endTime + 24h: auto-release unless disputed
+    buyerConfirmedAt: v.optional(v.number()),
+    disputeReason: v.optional(v.string()),
+    disputedAt: v.optional(v.number()),
+    disputedBy: v.optional(v.union(v.literal("buyer"), v.literal("vendor"))),
+    releasedAt: v.optional(v.number()),
+    releasedBy: v.optional(v.union(v.literal("buyer"), v.literal("auto"), v.literal("admin"))),
+    refundedAt: v.optional(v.number()),
+    refundReason: v.optional(v.string()),
   })
+    .index("by_settlement_eligible", ["settlementStatus", "releaseEligibleAt"])
     .index("by_buyer", ["buyerId"])
     .index("by_vendor", ["vendorId"])
     .index("by_listing", ["listingId"])
@@ -826,16 +929,67 @@ export default defineSchema({
     .index("by_idempotency_key", ["idempotencyKey"])
     .index("by_user", ["userId"])
     .index("by_check", ["checkId"]),
+  // ─── FEE & COMMISSION RULES (versioned; rows are never edited, only added or cancelled) ───
+  fee_rules: defineTable({
+    vertical: feeVerticalValidator,
+    version: v.number(),
+    ownerFeeBps: v.number(),
+    buyerFeeBps: v.number(),
+    agentCommissionBps: v.number(),
+    agentCommissionPayer: v.union(v.literal("buyer"), v.literal("owner")),
+    platformShareOfAgentCommissionBps: v.number(),
+    effectiveFrom: v.number(),
+    status: v.union(v.literal("active"), v.literal("cancelled")),
+    note: v.string(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    cancelledBy: v.optional(v.id("users")),
+    cancelledAt: v.optional(v.number()),
+    cancelReason: v.optional(v.string()),
+  })
+    .index("by_vertical_effectiveFrom", ["vertical", "effectiveFrom"])
+    .index("by_vertical_version", ["vertical", "version"]),
+
+  // ─── MONIME WEBHOOK EVENT LEDGER (duplicate/replay protection; no payloads stored) ───
+  monime_webhook_events: defineTable({
+    eventId: v.string(),
+    eventName: v.string(),
+    objectId: v.string(),
+    status: v.union(v.literal("processing"), v.literal("done"), v.literal("failed")),
+    attempts: v.number(),
+    receivedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    outcome: v.optional(v.string()),
+  })
+    .index("by_eventId", ["eventId"])
+    .index("by_receivedAt", ["receivedAt"]),
+
+  // ─── PRIVATE FILES (identity documents, selfies): never served by the public file-URL query ───
+  private_files: defineTable({
+    storageId: v.string(),
+    kind: v.string(),
+    ownerUserId: v.optional(v.id("users")),
+    createdAt: v.number(),
+  }).index("by_storageId", ["storageId"]),
+
   // ─── ROLE & OPERATOR APPLICATIONS ──────────────────────────────
   role_applications: defineTable({
     userId: v.id("users"),
-    targetRole: v.union(v.literal("driver"), v.literal("agent"), v.literal("merchant")),
+    targetRole: v.union(
+      v.literal("driver"), // legacy (ride system removed); kept for historical records
+      v.literal("agent"), // Real Estate Agent (subscription-based professional)
+      v.literal("merchant"), // legacy alias of dealer
+      v.literal("property_owner"), // Real Estate Owner
+      v.literal("dealer"), // Car Dealer / Vehicle Owner
+      v.literal("hotel_operator") // Hotel / Guest House Owner (subscription-based)
+    ),
     businessName: v.optional(v.string()),
     tinNumber: v.optional(v.string()),
     licenseNumber: v.optional(v.string()),
     documentUrls: v.array(v.string()),
-    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected")),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected"), v.literal("suspended")),
     reviewNotes: v.optional(v.string()),
+    reviewedBy: v.optional(v.id("users")),
     reviewedAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
@@ -846,9 +1000,10 @@ export default defineSchema({
   password_resets: defineTable({
     identifier: v.string(), // phone or email
     deliveryChannel: v.union(v.literal("sms"), v.literal("whatsapp"), v.literal("email")),
-    otpCode: v.string(),
+    otpCode: v.string(), // SHA-256 of the code (never the code itself, for records created after hardening)
     expiresAt: v.number(),
     isUsed: v.boolean(),
+    attempts: v.optional(v.number()), // wrong guesses; the code is burned after the limit
     createdAt: v.number(),
   })
     .index("by_identifier", ["identifier"])
@@ -901,6 +1056,8 @@ export default defineSchema({
     metadata: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
+    // Immutable snapshot of the fee rule + breakdown used when this order was priced.
+    feeSnapshot: v.optional(feeSnapshotValidator),
   })
     .index("by_order_code", ["orderCode"])
     .index("by_renter_or_buyer", ["renterOrBuyerId"])
@@ -982,7 +1139,8 @@ export default defineSchema({
   })
     .index("by_tx", ["transactionId"])
     .index("by_user", ["userId"])
-    .index("by_user_account", ["userId", "accountType"]),
+    .index("by_user_account", ["userId", "accountType"])
+    .index("by_account", ["accountType"]), // admin financial reporting
 
   // ─── ESCROW DISPUTES ──────────────────────────────────────────────
   escrow_disputes: defineTable({
@@ -1035,14 +1193,20 @@ export default defineSchema({
     verifiedAt: v.optional(v.number()),
     agentGpsLat: v.optional(v.number()),
     agentGpsLng: v.optional(v.number()),
-    isAddressUnmasked: v.boolean(),
+    isAddressUnmasked: v.boolean(), // legacy; the owner's address is never unmasked to the other party
+    failedAttempts: v.optional(v.number()), // wrong OTP/QR attempts (locks at 5)
     createdAt: v.number(),
+    // Immutable snapshot of the fee rule + breakdown used when this order was priced.
+    feeSnapshot: v.optional(feeSnapshotValidator),
+    // The owner-authorised listing agent relationship this order relied on (if any).
+    agentAuthorizationId: v.optional(v.id("listing_agent_authorizations")),
   })
     .index("by_client", ["clientId"])
     .index("by_agent", ["agentId"])
     .index("by_property", ["propertyListingId"])
     .index("by_qr", ["qrHash"])
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    .index("by_agent_authorization", ["agentAuthorizationId"]),
 
   // ─── REAL ESTATE ESCROW: MASTER CONTRACTS & VAULTS ────────────────
   re_escrow_contracts: defineTable({
@@ -1067,15 +1231,21 @@ export default defineSchema({
     stayCheckInTimestamp: v.optional(v.number()),
     stay24hAutoReleaseTimestamp: v.optional(v.number()),
     leaseDurationMonths: v.optional(v.number()),
+    escrowHeldRemaining: v.optional(v.number()), // money still held in escrow for this contract
     createdAt: v.number(),
     updatedAt: v.number(),
+    // Immutable snapshot of the fee rule + breakdown used when this order was priced.
+    feeSnapshot: v.optional(feeSnapshotValidator),
+    // The owner-authorised listing agent relationship this order relied on (if any).
+    agentAuthorizationId: v.optional(v.id("listing_agent_authorizations")),
   })
     .index("by_contract_code", ["contractCode"])
     .index("by_client", ["clientId"])
     .index("by_beneficiary", ["beneficiaryId"])
     .index("by_property", ["propertyListingId"])
     .index("by_state", ["currentState"])
-    .index("by_bank_ref", ["bankEscrowReference"]),
+    .index("by_bank_ref", ["bankEscrowReference"])
+    .index("by_agent_authorization", ["agentAuthorizationId"]),
 
   // ─── REAL ESTATE ESCROW: LAND & PROPERTY MILESTONES (10/40/50) ────
   re_escrow_milestones: defineTable({
@@ -1165,7 +1335,7 @@ export default defineSchema({
 
   // ─── DYNAMIC PAYMENT SETTINGS (Admin-Configurable) ─────────────────
   payment_settings: defineTable({
-    providerId: v.string(), // e.g., "moneroo_auto", "qmoney_manual", "afrimoney_manual", "bank_transfer"
+    providerId: v.string(), // e.g., "qmoney_manual", "afrimoney_manual", "bank_transfer"
     displayName: v.string(), // "Orange Money / Cards", "QCell QMoney", etc.
     type: paymentSettingsType,
     isEnabled: v.boolean(),
@@ -1194,7 +1364,12 @@ export default defineSchema({
     reviewedByAdminId: v.optional(v.id("users")),
     reviewedAt: v.optional(v.number()),
     createdAt: v.number(),
+    // What the provider's (signed) webhook reported — a hint for the reviewing admin, never credited.
+    providerReportedAmount: v.optional(v.number()),
+    providerReportedCurrency: v.optional(v.string()),
+    providerReportedAt: v.optional(v.number()),
   })
+    .index("by_transactionReference", ["transactionReference"])
     .index("by_userId", ["userId"])
     .index("by_status", ["status"])
     .index("by_providerId", ["providerId"])
@@ -1216,11 +1391,155 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_user_default", ["userId", "isDefault"]),
 
+  // ─── MARKETPLACE BOOKING SETTLEMENT HISTORY (append-only) ─────────
+  // Every escrow step of a booking: paid, dispute opened, admin decision, release, refund — with the
+  // actor, the amounts and the wallet transaction / ledger codes it produced.
+  booking_events: defineTable({
+    bookingId: v.id("bookings"),
+    action: v.union(
+      v.literal("PAID"),
+      v.literal("DISPUTE_OPENED"),
+      v.literal("ADMIN_DECISION"),
+      v.literal("RELEASED"),
+      v.literal("REFUNDED"),
+      v.literal("SETTLEMENT_BACKFILLED")
+    ),
+    actorId: v.optional(v.id("users")),
+    actorRole: v.union(v.literal("buyer"), v.literal("vendor"), v.literal("admin"), v.literal("system")),
+    amount: v.optional(v.number()),
+    platformFee: v.optional(v.number()),
+    transactionCode: v.optional(v.string()),
+    ledgerCode: v.optional(v.string()),
+    note: v.optional(v.string()),
+    at: v.number(),
+  }).index("by_booking", ["bookingId"]),
+
+  // ─── REFUNDS AFTER PAYOUT (REVERSALS + RECOVERY CASES) ───────────
+  // One row per reversed escrow release. The original release is never modified; every money
+  // movement of a reversal is its own transaction + ledger transaction (walletCore).
+  payment_reversals: defineTable({
+    releaseTransactionId: v.id("transactions"), // the buyer-side "escrow_release" row
+    buyerId: v.id("users"),
+    recipientId: v.id("users"),
+    currency: v.string(),
+    referenceType: v.string(),
+    referenceId: v.string(),
+    originalAmount: v.number(),
+    platformFeeReversed: v.number(),
+    recipientNetOwed: v.number(),
+    recoveredFromRecipient: v.number(),
+    platformCoveredAmount: v.number(),
+    writtenOffAmount: v.number(),
+    refundedToBuyer: v.number(),
+    outstandingAmount: v.number(),
+    status: v.union(
+      v.literal("completed"), // fully reversed at once
+      v.literal("pending_recovery"), // recipient lacked funds: open case for an admin
+      v.literal("recovered"), // shortfall recovered later
+      v.literal("platform_covered"), // shortfall paid to the buyer by the platform
+      v.literal("written_off") // closed without crediting the shortfall
+    ),
+    reason: v.string(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    closedBy: v.optional(v.id("users")),
+    closedAt: v.optional(v.number()),
+    closeNote: v.optional(v.string()),
+    // While the case is open, the outstanding amount is protected from the recipient's own debits
+    // (withdrawals, transfers, payments) unless an admin lifted the protection (audited).
+    withdrawalProtection: v.optional(v.union(v.literal("active"), v.literal("lifted"))),
+    protectionChangedBy: v.optional(v.id("users")),
+    protectionChangedAt: v.optional(v.number()),
+    protectionNote: v.optional(v.string()),
+  })
+    .index("by_release", ["releaseTransactionId"])
+    .index("by_status", ["status"])
+    .index("by_recipient_status", ["recipientId", "status"]),
+
+  payment_reversal_events: defineTable({
+    reversalId: v.id("payment_reversals"),
+    action: v.union(
+      v.literal("REVERSED"),
+      v.literal("RECOVERED"),
+      v.literal("PLATFORM_COVERED"),
+      v.literal("WRITTEN_OFF"),
+      v.literal("PROTECTION_LIFTED"),
+      v.literal("PROTECTION_RESTORED")
+    ),
+    amount: v.number(),
+    transactionCode: v.optional(v.string()),
+    ledgerCode: v.optional(v.string()),
+    actorId: v.id("users"),
+    note: v.optional(v.string()),
+    at: v.number(),
+  }).index("by_reversal", ["reversalId"]),
+
+  // ─── OWNER-AUTHORISED LISTING AGENTS ──────────────────────────────
+  // Owner → authorises Agent → Agent represents THAT listing. At most one pending/active agent per
+  // listing. Rows are never deleted; every change is also appended to listing_agent_events.
+  listing_agent_authorizations: defineTable({
+    listingType: v.union(v.literal("property"), v.literal("vehicle")),
+    listingId: v.string(),
+    ownerId: v.id("users"),
+    agentId: v.id("users"),
+    status: v.union(
+      v.literal("pending"), // owner invited; agent has not accepted yet
+      v.literal("active"), // agent accepted: represents the listing
+      v.literal("declined"), // agent declined the invitation
+      v.literal("revoked") // ended by the owner, the agent (withdrawal) or an admin
+    ),
+    invitedAt: v.number(),
+    acceptedAt: v.optional(v.number()),
+    declinedAt: v.optional(v.number()),
+    revokedAt: v.optional(v.number()),
+    revokedBy: v.optional(v.id("users")),
+    revokedByRole: v.optional(v.union(v.literal("owner"), v.literal("agent"), v.literal("admin"))),
+    revokeReason: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_listing", ["listingType", "listingId"])
+    .index("by_agent", ["agentId"])
+    .index("by_owner", ["ownerId"]),
+
+  // Append-only audit trail of listing-agent authorisations.
+  listing_agent_events: defineTable({
+    authorizationId: v.id("listing_agent_authorizations"),
+    action: v.union(
+      v.literal("INVITED"),
+      v.literal("ACCEPTED"),
+      v.literal("DECLINED"),
+      v.literal("REVOKED")
+    ),
+    actorId: v.id("users"),
+    actorRole: v.union(v.literal("owner"), v.literal("agent"), v.literal("admin")),
+    note: v.optional(v.string()),
+    at: v.number(),
+  }).index("by_authorization", ["authorizationId"]),
+
   // ─── IMMUTABLE ADMIN AUDIT LOGS ───────────────────────────────────
   // Permanent audit trail of admin financial approvals/rejections
   audit_logs: defineTable({
     adminUserId: v.id("users"),
-    action: v.union(v.literal("APPROVE_DEPOSIT"), v.literal("REJECT_DEPOSIT")),
+    action: v.union(
+      v.literal("APPROVE_DEPOSIT"),
+      v.literal("REJECT_DEPOSIT"),
+      v.literal("WITHDRAWAL_COMPLETED"),
+      v.literal("WITHDRAWAL_FAILED"),
+      v.literal("ROLE_APPROVED"),
+      v.literal("ROLE_REJECTED"),
+      v.literal("ROLE_SUSPENDED"),
+      v.literal("SUBSCRIPTION_GRANTED"),
+      v.literal("SUBSCRIPTION_PLAN_CHANGED"),
+      v.literal("VERIFICATION_DECISION"),
+      v.literal("FEE_RULE_CHANGED"),
+      v.literal("FEE_RULE_CANCELLED"),
+      v.literal("PAYMENT_REVERSED"),
+      v.literal("RECOVERY_RETRIED"),
+      v.literal("RECOVERY_CLOSED"),
+      v.literal("RECOVERY_PROTECTION_CHANGED"),
+      v.literal("BOOKING_SETTLED")
+    ),
     targetTransactionId: v.string(), // Claim ID or external carrier reference
     snapshot: v.string(), // JSON string snapshot of record state at resolution time
     timestamp: v.number(),
@@ -1370,6 +1689,12 @@ export default defineSchema({
     checkOutTime: v.optional(v.string()),
     supportsHourlyStays: v.boolean(),
     updatedAt: v.number(),
+    // Admin review (hotelVerification.ts). Never back-filled for existing rows: no invented dates.
+    submittedAt: v.optional(v.number()),
+    reviewedBy: v.optional(v.id("users")),
+    reviewedAt: v.optional(v.number()),
+    verifiedAt: v.optional(v.number()),
+    reviewNote: v.optional(v.string()),
   })
     .index("by_userId", ["userId"])
     .index("by_operationalType", ["operationalType"])
@@ -1380,6 +1705,25 @@ export default defineSchema({
       searchField: "businessName",
       filterFields: ["city", "operationalType", "isVerified"],
     }),
+
+  // ─── HOTEL VERIFICATION HISTORY (append-only) ─────────────────────
+  hotel_verification_events: defineTable({
+    hotelId: v.id("hotel_profiles"),
+    action: v.union(
+      v.literal("SUBMITTED"),
+      v.literal("RESUBMITTED"),
+      v.literal("APPROVED"),
+      v.literal("REJECTED"),
+      v.literal("SUSPENDED"),
+      v.literal("REINSTATED")
+    ),
+    fromStatus: v.optional(v.string()),
+    toStatus: v.string(),
+    actorId: v.id("users"),
+    actorRole: v.union(v.literal("owner"), v.literal("admin")),
+    note: v.optional(v.string()),
+    at: v.number(),
+  }).index("by_hotel", ["hotelId"]),
 
   // ─── SUBSCRIPTION PLANS (Dynamic Admin-Managed Pricing) ───────────
   subscription_plans: defineTable({
@@ -1414,6 +1758,8 @@ export default defineSchema({
     ),
     startDate: v.number(),
     expiryDate: v.number(),
+    // PAYMENT DUNNING only (status "dunning"): unrelated to the legacy-agent subscription-policy
+    // grace period (lib/permissions.ts). Currently never written; kept so existing data validates.
     gracePeriodEndsAt: v.optional(v.number()),
     amountPaid: v.number(),
     currency: v.string(),
@@ -1421,6 +1767,7 @@ export default defineSchema({
     paymentMethod: v.string(),
     autoRenew: v.boolean(),
     lastRenewedAt: v.optional(v.number()),
+    reminderSentAt: v.optional(v.number()), // expiry reminder already sent for the current period
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1474,6 +1821,7 @@ export default defineSchema({
     platformCommissionRate: v.number(),
     platformCommissionAmount: v.number(),
     operatorPayoutAmount: v.number(),
+    guestTotalAmount: v.optional(v.number()),
     currency: v.string(),
     status: v.union(
       v.literal("pending_payment"),
@@ -1493,6 +1841,8 @@ export default defineSchema({
     specialRequests: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
+    // Immutable snapshot of the fee rule + breakdown used when this order was priced.
+    feeSnapshot: v.optional(feeSnapshotValidator),
   })
     .index("by_bookingReference", ["bookingReference"])
     .index("by_hotelId", ["hotelId"])

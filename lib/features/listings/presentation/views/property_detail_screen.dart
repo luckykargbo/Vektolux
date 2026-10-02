@@ -57,7 +57,7 @@ class PropertyDetailScreen extends StatefulWidget {
     this.bathrooms,
     this.squareMeters,
     this.isFurnished = true,
-    this.isVerified = true,
+    this.isVerified = false,
     this.amenities = const [
       'EDSA Grid + Standby Generator',
       '24/7 Guma Valley Water + Borehole',
@@ -141,6 +141,26 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
       return 'SLE ${_currencyFormat.format(widget.price)} / yr';
     }
     return 'SLE ${_currencyFormat.format(widget.price)}';
+  }
+
+  /// PRIVACY GUARANTEE: Never expose physical street or house numbers to users.
+  String get _generalLocation {
+    final raw = widget.address.trim();
+    if (raw.isEmpty) return 'Sierra Leone';
+    for (final town in [
+      'Freetown', 'Bo', 'Kenema', 'Makeni', 'Koidu', 'Kailahun', 'Port Loko',
+      'Pujehun', 'Bombali', 'Kambia', 'Moyamba', 'Kono', 'Bonthe', 'Tonkolili',
+      'Falaba', 'Karene', 'Koinadugu', 'Waterloo', 'Goderich', 'Western Area',
+    ]) {
+      if (raw.toLowerCase().contains(town.toLowerCase())) {
+        return '$town, Sierra Leone';
+      }
+    }
+    final parts = raw.split(',');
+    if (parts.length > 1) {
+      return '${parts.last.trim()}, Sierra Leone';
+    }
+    return raw.endsWith('Sierra Leone') ? raw : '$raw, Sierra Leone';
   }
 
   void _handlePrimaryAction() {
@@ -382,10 +402,11 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
-                          widget.address,
+                          _generalLocation,
                           style: const TextStyle(
                             fontSize: 13,
                             color: AppColors.textSecondary,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),

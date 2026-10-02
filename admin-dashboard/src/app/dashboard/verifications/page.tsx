@@ -4,6 +4,7 @@ import { Clock, CheckCircle2, XCircle, ClipboardList, RefreshCcw, AlertTriangle,
 import { useEffect, useState, useCallback } from "react";
 import type { AdminSession, VerificationEntry, VerificationStatus } from "@/lib/types";
 import styles from "./verifications.module.css";
+import { adminFetch } from "@/lib/adminSession";
 
 export default function VerificationsPage() {
   const [session, setSession] = useState<AdminSession | null>(null);
@@ -26,7 +27,7 @@ export default function VerificationsPage() {
     setError("");
     try {
       const res = await fetch(
-        `/api/verifications?adminId=${session.user.id}&sessionToken=${session.user.sessionToken}&status=${filter}`
+        `/api/verifications?adminId=${session.user.id}&status=${filter}`
       );
       const data = await res.json();
       if (data.success) {
@@ -46,13 +47,12 @@ export default function VerificationsPage() {
     if (!session) return;
     setActionId(entry.userId);
     try {
-      const res = await fetch("/api/verifications", {
+      const res = await adminFetch("/api/verifications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "approve",
           adminId: session.user.id,
-          sessionToken: session.user.sessionToken,
           agentId: entry.userId,
         }),
       });
@@ -75,13 +75,12 @@ export default function VerificationsPage() {
 
     setActionId(rejectModal.entry.userId);
     try {
-      const res = await fetch("/api/verifications", {
+      const res = await adminFetch("/api/verifications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "reject",
           adminId: session.user.id,
-          sessionToken: session.user.sessionToken,
           agentId: rejectModal.entry.userId,
           reason: trimmedReason,
         }),

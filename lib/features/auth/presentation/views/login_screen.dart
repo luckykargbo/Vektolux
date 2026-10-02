@@ -4,13 +4,15 @@
 // Fast sign-in via email/password OR zero-cost Google / Apple social auth.
 // ═══════════════════════════════════════════════════════════════════════
 
-import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../bloc/auth_bloc.dart';
@@ -20,8 +22,14 @@ import 'register_screen.dart';
 import 'forgot_password_screen.dart';
 import 'complete_profile_phone_screen.dart';
 
-// ── Google Sign-In singleton ─────────────────────────────────────────────
-final _googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
+// ── Google Sign-In singleton (Vektolux Google Cloud Project) ───────────────
+final _googleSignIn = GoogleSignIn(
+  clientId: kIsWeb
+      ? AuthConstants.googleWebClientId
+      : (defaultTargetPlatform == TargetPlatform.iOS ? AuthConstants.googleIosClientId : null),
+  serverClientId: kIsWeb ? null : AuthConstants.googleWebClientId,
+  scopes: ['email', 'profile'],
+);
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -67,14 +75,14 @@ class _LoginScreenState extends State<LoginScreen> {
         return; // user cancelled
       }
       final auth = await account.authentication;
-      final idToken = auth.idToken;
-      if (idToken == null || !mounted) {
+      final token = auth.idToken ?? auth.accessToken ?? account.id;
+      if (!mounted) {
         setState(() => _socialLoading = false);
         return;
       }
       context.read<AuthBloc>().add(SocialAuthEvent(
             provider: 'google',
-            token: idToken,
+            token: token,
             email: account.email,
             name: account.displayName,
             avatarUrl: account.photoUrl,
@@ -255,8 +263,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     isLoading: _socialLoading,
                   ),
 
-                  // Apple sign-in: required on iOS, hidden on Android
-                  if (Platform.isIOS) ...[
+                  // Apple sign-in: required on iOS, hidden on Android & Web
+                  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) ...[
                     const SizedBox(height: 12),
                     _SocialAuthButton(
                       onTap: _socialLoading ? null : _onAppleSignIn,

@@ -71,7 +71,8 @@ class AuthRepositoryImpl implements AuthRepository {
       throw Exception(data['errorMessage']?.toString() ?? result.errorMessage ?? 'Registration failed: Missing credentials');
     }
 
-    final isRestrictedRole = role == UserRole.agent || role == UserRole.merchant;
+    // The account starts as a client; a requested professional role is a pending application
+    // reviewed by an administrator (server-side). Identity verification is separate.
     final user = UserEntity(
       id: data['userId']?.toString() ?? '',
       name: data['name']?.toString() ?? name,
@@ -80,7 +81,7 @@ class AuthRepositoryImpl implements AuthRepository {
       role: UserRoleX.fromConvex(data['role']?.toString() ?? role.convexValue),
       avatarUrl: data['avatarUrl']?.toString() ?? avatarUrl,
       sessionToken: data['sessionToken']?.toString(),
-      verificationStatus: isRestrictedRole ? 'pending' : 'unverified',
+      verificationStatus: 'unverified',
       businessName: businessName,
       tinNumber: tinNumber,
       documentUrl: documentUrl,
@@ -349,48 +350,6 @@ class AuthRepositoryImpl implements AuthRepository {
     return updated;
   }
 
-  @override
-  Future<UserEntity> switchUserMode({
-    required String userId,
-    required String targetMode,
-  }) async {
-    final result = await _convexClient.mutation(
-      'users:switchUserMode',
-      args: {
-        'userId': userId,
-        'targetMode': targetMode,
-      },
-    );
-
-    if (!result.success || result.value == null) {
-      throw Exception(result.errorMessage ?? 'Failed to switch mode');
-    }
-
-    final data = result.value as Map<String, dynamic>;
-    if (data['success'] == false) {
-      throw Exception(data['message']?.toString() ?? 'Mode switch rejected');
-    }
-
-    final current = await getActiveSession();
-    final updated = (current ??
-            UserEntity(
-              id: userId,
-              name: '',
-              email: '',
-              phone: '',
-              role: targetMode == 'driver' ? UserRole.driver : UserRole.client,
-            ))
-        .copyWith(
-      activeMode: targetMode,
-      role: targetMode == 'driver' ? UserRole.driver : UserRole.client,
-      driverStatus: targetMode == 'driver' ? 'online' : 'offline',
-    );
-
-    await _cacheUser(updated);
-    _log.i('User switched mode directly on Convex Cloud to $targetMode');
-    return updated;
-  }
-
   // ── Private Helpers ──────────────────────────────────────────────
 
   Future<void> _cacheUser(UserEntity user) async {
@@ -431,50 +390,6 @@ class AuthRepositoryImpl implements AuthRepository {
   // ── OAuth (Google / Apple) ─────────────────────────────────────────
 
   @override
-  Future<UserEntity> authenticateWithOAuth({
-    required String provider,
-    required String token,
-    required String email,
-    String? name,
-    String? avatarUrl,
-  }) async {
-    final result = await _convexClient.mutation(
-      'users:authenticateWithOAuth',
-      args: {
-        'provider': provider,
-        'token': token,
-        'email': email,
-        if (name != null && name.isNotEmpty) 'name': name,
-        if (avatarUrl != null && avatarUrl.isNotEmpty) 'avatarUrl': avatarUrl,
-      },
-    );
-
-    if (!result.success) {
-      throw AuthException(result.errorMessage ?? 'Social sign-in failed');
-    }
-
-    final data = result.value as Map<String, dynamic>;
-    final user = UserEntity(
-      id: data['userId'] as String,
-      name: data['name'] as String? ?? email.split('@').first,
-      email: data['email'] as String? ?? email,
-      phone: data['phone'] as String? ?? '',
-      role: UserRoleX.fromConvex(data['role'] as String? ?? 'client'),
-      isVerified: data['isVerified'] as bool? ?? true,
-      avatarUrl: data['avatarUrl'] as String?,
-      walletAddress: data['walletAddress'] as String?,
-      sessionToken: data['sessionToken'] as String?,
-    );
-
-    await _cacheUser(user);
-    if (user.sessionToken != null) {
-      _convexClient.setAuthToken(user.sessionToken!);
-    }
-    _log.i('OAuth login OK: ${user.email} via $provider');
-    return user;
-  }
-
-  @override
   Future<({UserEntity user, bool hasPhone})> socialSignIn({
     required String email,
     String? name,
@@ -482,7 +397,9 @@ class AuthRepositoryImpl implements AuthRepository {
     required String provider,
     required String providerId,
   }) async {
-    final result = await _convexClient.mutation(
+    // socialSignIn is an ACTION: the server verifies the Google/Apple ID token (sent as
+    // providerId) with the provider before issuing a session.
+    final result = await _convexClient.action(
       'users:socialSignIn',
       args: {
         'email': email,
@@ -508,7 +425,7 @@ class AuthRepositoryImpl implements AuthRepository {
       email: userData['email'] as String? ?? email,
       phone: (userData['phoneNumber'] ?? userData['phone']) as String? ?? '',
       role: UserRoleX.fromConvex(userData['role'] as String? ?? 'client'),
-      isVerified: userData['isVerified'] as bool? ?? true,
+      isVerified: userData['isVerified'] == true,
       avatarUrl: userData['avatarUrl'] as String? ?? avatarUrl,
       walletAddress: userData['walletAddress'] as String?,
       sessionToken: sessionToken,

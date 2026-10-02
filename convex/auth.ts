@@ -4,10 +4,46 @@
 // Handles user registration, login, and session management.
 // ═══════════════════════════════════════════════════════════════════════
 
-import { mutation, query } from "./_generated/server";
+import { markPrivateFile, validateUpload } from "./lib/uploads";
+import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { userRole } from "./schema";
+import { clearLimit, consume, lockRemainingMs, minutes, recordFailure } from "./lib/rateLimit";
+import { issueSession } from "./lib/session";
+
+const MIN_PASSWORD_LENGTH = 8;
+// Login: 5 wrong attempts within 15 min locks that account/identifier for 15 min.
+const LOGIN_POLICY = { max: 5, windowMs: 15 * 60 * 1000, lockMs: 15 * 60 * 1000 };
+// Reset requests: at most 3 codes per 15 min per account (stops inbox flooding).
+const RESET_REQUEST_POLICY = { max: 3, windowMs: 15 * 60 * 1000 };
+// Reset code guesses: a code is burned after 5 wrong guesses.
+const RESET_CODE_MAX_ATTEMPTS = 5;
+
+async function sha256Hex(input: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Reset codes are stored hashed (bound to the identifier), never in plain text. */
+async function hashResetCode(identifier: string, code: string): Promise<string> {
+  return "h1:" + (await sha256Hex(`vektolux-reset:${identifier}:${code}`));
+}
+
+/** Cryptographically random 6-digit code. */
+function secureSixDigitCode(): string {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return String(100000 + (buf[0] % 900000));
+}
+
+/** Constant-time string comparison. */
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let r = 0;
+  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
+}
 
 // ─── PBKDF2 Password Hashing with Random Salt (Web Crypto API) ───────
 async function hashPassword(password: string): Promise<string> {
@@ -53,9 +89,12 @@ export async function verifyPassword(
       const legacyHash = Array.from(new Uint8Array(hashBuffer))
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
-      return legacyHash === storedHash || password === storedHash;
+      // Legacy SHA-256 hashes. (Submitting the stored hash itself used to be accepted.)
+      if (/^[0-9a-f]{64}$/.test(storedHash)) return safeEqual(legacyHash, storedHash);
+      // Very old plaintext records: compared only when the stored value is not a hash.
+      return storedHash.length > 0 && safeEqual(password, storedHash);
     } catch {
-      return password === storedHash;
+      return false;
     }
   }
   const [saltHex, hashHex] = parts;
@@ -86,7 +125,7 @@ export async function verifyPassword(
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 
-  return computedHashHex === hashHex;
+  return safeEqual(computedHashHex, hashHex);
 }
 
 // ─── Generate session token ─────────────────────────────────────────
@@ -142,88 +181,25 @@ export function getPhoneCandidates(raw: string): string[] {
 
 // ─── Case-Insensitive & Format-Agnostic User Lookup ──────────────────
 export async function findUserByIdentifier(ctx: any, identifier: string) {
+  // Exact, indexed matches only. (Previously: full-table scans and phone-SUFFIX matching, which
+  // could resolve a short number to someone else's account.)
   const raw = identifier.trim();
-  if (!raw) return null;
+  if (!raw || raw.length > 254) return null;
 
-  const isEmail = raw.includes("@");
-
-  if (isEmail) {
+  if (raw.includes("@")) {
     const lower = raw.toLowerCase();
-
-    // 1. Exact index match on lowercase email
-    let user = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q: any) => q.eq("email", lower))
-      .first();
-    if (user) return user;
-
-    // 2. Exact index match on raw casing
+    const byLower = await ctx.db.query("users").withIndex("by_email", (q: any) => q.eq("email", lower)).first();
+    if (byLower) return byLower;
     if (raw !== lower) {
-      user = await ctx.db
-        .query("users")
-        .withIndex("by_email", (q: any) => q.eq("email", raw))
-        .first();
-      if (user) return user;
+      return await ctx.db.query("users").withIndex("by_email", (q: any) => q.eq("email", raw)).first();
     }
-
-    // 3. Fallback scan matching normalized email
-    const allUsers = await ctx.db.query("users").collect();
-    const matched = allUsers.find(
-      (u: any) => u.email && u.email.trim().toLowerCase() === lower
-    );
-    if (matched) return matched;
-  } else {
-    // Phone lookup
-    const candidates = getPhoneCandidates(raw);
-
-    // 1. Try index query with each candidate variation
-    for (const cand of candidates) {
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_phone", (q: any) => q.eq("phone", cand))
-        .first();
-      if (user) return user;
-    }
-
-    // 2. Fallback scan matching normalized digits
-    const targetDigits = raw.replace(/\D/g, "");
-    if (targetDigits.length >= 6) {
-      const allUsers = await ctx.db.query("users").collect();
-      const matched = allUsers.find((u: any) => {
-        if (!u.phone) return false;
-        const uDigits = u.phone.replace(/\D/g, "");
-        if (uDigits === targetDigits) return true;
-        const targetSuffix = targetDigits.replace(/^232/, "");
-        const uSuffix = uDigits.replace(/^232/, "");
-        if (
-          targetSuffix &&
-          uSuffix &&
-          (targetSuffix === uSuffix ||
-            targetSuffix.endsWith(uSuffix) ||
-            uSuffix.endsWith(targetSuffix))
-        ) {
-          return true;
-        }
-        return false;
-      });
-      if (matched) return matched;
-    }
+    return null;
   }
 
-  // Cross-lookup fallback (e.g. user typed email without @ or digits that match phone)
-  const lower = raw.toLowerCase();
-  let fallbackUser = await ctx.db
-    .query("users")
-    .withIndex("by_email", (q: any) => q.eq("email", lower))
-    .first();
-  if (fallbackUser) return fallbackUser;
-
-  fallbackUser = await ctx.db
-    .query("users")
-    .withIndex("by_phone", (q: any) => q.eq("phone", raw))
-    .first();
-  if (fallbackUser) return fallbackUser;
-
+  for (const cand of getPhoneCandidates(raw)) {
+    const user = await ctx.db.query("users").withIndex("by_phone", (q: any) => q.eq("phone", cand)).first();
+    if (user) return user;
+  }
   return null;
 }
 
@@ -242,6 +218,21 @@ export function canonicalizeUserRole(rawRole: string): "client" | "agent" | "mer
   if (normalized.includes("driver") || normalized.includes("logistics") || normalized.includes("fleet")) return "driver";
   if (normalized.includes("admin")) return "admin";
   return "client"; // default for "client", "buyer", "client / buyer", etc.
+}
+
+/**
+ * Business role a registrant ASKED for (from the UI label). It is only ever recorded as a pending
+ * application; the stored role stays "client" until an administrator approves it.
+ */
+export function requestedApplicationRole(
+  rawRole: string
+): "agent" | "property_owner" | "dealer" | "hotel_operator" | null {
+  const r = (rawRole ?? "").toLowerCase().trim();
+  if (r.includes("hotel") || r.includes("guest")) return "hotel_operator";
+  if (r.includes("agent")) return "agent";
+  if (r.includes("owner") || r.includes("property") || r.includes("landlord")) return "property_owner";
+  if (r.includes("merchant") || r.includes("dealer") || r.includes("dealership")) return "dealer";
+  return null;
 }
 
 export const registerUser = mutation({
@@ -271,12 +262,18 @@ export const registerUser = mutation({
     avatarUrl: v.optional(v.string()),
     address: v.optional(v.string()),
     region: v.optional(v.string()),
+    pendingApplicationRole: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
     try {
       const normalizedEmail = args.email.trim().toLowerCase();
       const normalizedPhone = args.phone.trim();
-      const canonicalRole = canonicalizeUserRole(args.role);
+      // Self-registration can NEVER grant administrator rights (any role string containing
+      // "admin" previously did). Admins are appointed server-side only.
+      // Selecting a business role grants NOTHING: every account starts as a client and the
+      // requested role becomes a pending application for admin review.
+      const canonicalRole = "client";
+      const applicationRole = requestedApplicationRole(args.role);
 
       // 1. Check for duplicate email (case-insensitive)
       const existingByEmail = await findUserByIdentifier(ctx, normalizedEmail);
@@ -296,13 +293,26 @@ export const registerUser = mutation({
         };
       }
 
+      if (!args.password || args.password.length < MIN_PASSWORD_LENGTH) {
+        return { success: false, errorMessage: `Password must be at least ${MIN_PASSWORD_LENGTH} characters long.` };
+      }
+
+      // The supporting document (if any) must be a real, acceptable file we hold. The URL stored
+      // is derived from the file itself; a client-supplied URL string is never trusted.
+      let verifiedDocumentUrl: string | undefined;
+      if (args.documentStorageId) {
+        const check = await validateUpload(ctx, args.documentStorageId);
+        if (!check.ok) return { success: false, errorMessage: check.reason };
+        verifiedDocumentUrl = (await ctx.storage.getUrl(args.documentStorageId)) ?? undefined;
+      }
+
       // 3. Hash password
       const passwordHash = await hashPassword(args.password);
-      const sessionToken = generateSessionToken();
       const now = Date.now();
+      const { sessionToken, sessionExpiresAt } = issueSession(now);
 
-      const isRestrictedRole = canonicalRole === "agent" || canonicalRole === "merchant";
-      const verificationStatus = isRestrictedRole ? "pending" : "unverified";
+      const isRestrictedRole = applicationRole !== null;
+      const verificationStatus = "unverified"; // identity (KYC) is reviewed separately
 
       // 4. Insert user record
       const userId = await ctx.db.insert("users", {
@@ -315,15 +325,19 @@ export const registerUser = mutation({
         region: args.region,
         passwordHash,
         sessionToken,
+        sessionExpiresAt,
         isVerified: false,
         isActive: true,
         verificationStatus,
         businessName: args.businessName,
         tinNumber: args.tinNumber,
         documentStorageId: args.documentStorageId,
-        documentUrl: args.documentUrl,
+        documentUrl: verifiedDocumentUrl,
         updatedAt: now,
       });
+      if (args.documentStorageId) {
+        await markPrivateFile(ctx, args.documentStorageId, "registration_document", userId);
+      }
 
       // 5. Initialize user wallet with zero balance (idempotently)
       const existingWallet = await ctx.db
@@ -344,23 +358,23 @@ export const registerUser = mutation({
         });
       }
 
-      // 6. Create merchant profile and role application if role is agent or merchant
+      // 6. Record the requested business role as a pending application
       if (isRestrictedRole) {
         await ctx.db.insert("merchant_profiles", {
           userId,
           businessName: args.businessName,
           tinNumber: args.tinNumber,
-          documentUrl: args.documentUrl,
+          documentUrl: verifiedDocumentUrl,
           verificationStatus: "pending",
           updatedAt: now,
         });
 
         await ctx.db.insert("role_applications", {
           userId,
-          targetRole: canonicalRole as "agent" | "merchant",
+          targetRole: applicationRole,
           businessName: args.businessName,
           tinNumber: args.tinNumber,
-          documentUrls: args.documentUrl ? [args.documentUrl] : [],
+          documentUrls: verifiedDocumentUrl ? [verifiedDocumentUrl] : [],
           status: "pending",
           updatedAt: now,
         });
@@ -375,21 +389,14 @@ export const registerUser = mutation({
         phone: args.phone,
         role: canonicalRole,
         avatarUrl: args.avatarUrl,
+        ...(applicationRole ? { pendingApplicationRole: applicationRole } : {}),
       };
     } catch (err: any) {
-      console.error("[registerUser] Error during user registration:", {
-        error: err?.message || String(err),
-        stack: err?.stack,
-        payload: {
-          name: args.name,
-          email: args.email,
-          phone: args.phone,
-          role: args.role,
-        },
-      });
+      // No personal data in logs, and no internal error details returned to the client.
+      console.error("[registerUser] registration error:", err?.message ?? String(err));
       return {
         success: false,
-        errorMessage: `Registration failed: ${err?.message || "Internal server error"}`,
+        errorMessage: "Registration failed. Please try again.",
       };
     }
   },
@@ -431,72 +438,53 @@ export const loginWithPhoneOrEmail = mutation({
     driver_status: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
+    const GENERIC = "Invalid email/phone or password. Please try again or use 'Forgot Password' to reset.";
     try {
       const sanitizedId = args.identifier.trim();
-      let user = await findUserByIdentifier(ctx, sanitizedId);
+      const now = Date.now();
+      const idKey = `login:id:${sanitizedId.toLowerCase()}`;
 
-      // Support alias: admin@vektolux.sl -> Alfred Manso Kargbo
-      if (!user && sanitizedId.toLowerCase() === "admin@vektolux.sl") {
-        user = await findUserByIdentifier(ctx, "alfred.kargbo@vektolux.com");
+      const idLock = await lockRemainingMs(ctx, idKey, now);
+      if (idLock > 0) {
+        return { success: false, errorMessage: `Too many failed attempts. Please try again in ${minutes(idLock)} minute(s) or reset your password.` };
       }
 
-      if (!user) {
-        return {
-          success: false,
-          errorMessage: "No account found with that email or phone number. Please check your credentials or register.",
-        };
-      }
-
-      if (!user.isActive) {
-        return {
-          success: false,
-          errorMessage: "This account has been deactivated. Please contact support.",
-        };
-      }
-
-      // Auto-heal admin credentials if passwordHash is missing or needs sync
-      if (
-        (user.email?.toLowerCase() === "admin@vektolux.sl" ||
-          user.email?.toLowerCase() === "alfred.kargbo@vektolux.com") &&
-        args.password === "password123"
-      ) {
-        const valid = user.passwordHash ? await verifyPassword(args.password, user.passwordHash) : false;
-        if (!valid) {
-          const freshHash = await hashPassword("password123");
-          await ctx.db.patch(user._id, {
-            passwordHash: freshHash,
-            role: "admin",
-            isActive: true,
-            isVerified: true,
-            updatedAt: Date.now(),
-          });
-          user = (await ctx.db.get(user._id))!;
+      const user = await findUserByIdentifier(ctx, sanitizedId);
+      const userKey = user ? `login:user:${user._id}` : undefined;
+      if (userKey) {
+        const userLock = await lockRemainingMs(ctx, userKey, now);
+        if (userLock > 0) {
+          return { success: false, errorMessage: `Too many failed attempts. Please try again in ${minutes(userLock)} minute(s) or reset your password.` };
         }
       }
 
-      if (!user.passwordHash) {
-        return {
-          success: false,
-          errorMessage: "Password not set for this account. Please use 'Forgot Password' to set your password.",
-        };
+      // One generic answer for "no such account", "no password set" and "wrong password", so the
+      // response never reveals which emails/phones are registered. Every failure is counted.
+      const ok = !!user && !!user.passwordHash && (await verifyPassword(args.password, user.passwordHash));
+      if (!ok || !user) {
+        await recordFailure(ctx, idKey, LOGIN_POLICY, now);
+        if (userKey) await recordFailure(ctx, userKey, LOGIN_POLICY, now);
+        return { success: false, errorMessage: GENERIC };
       }
 
-      // Verify password
-      const isPasswordValid = await verifyPassword(args.password, user.passwordHash);
-      if (!isPasswordValid) {
-        return {
-          success: false,
-          errorMessage: "Invalid email/phone or password. Please try again or use 'Forgot Password' to reset.",
-        };
+      // Correct password: only now is it safe to say the account is deactivated.
+      if (!user.isActive) {
+        return { success: false, errorMessage: "This account has been deactivated. Please contact support." };
       }
 
-      // Generate new session token
-      const sessionToken = generateSessionToken();
+      await clearLimit(ctx, idKey);
+      await clearLimit(ctx, userKey!);
+
+      const { sessionToken, sessionExpiresAt } = issueSession(now);
+      // Transparently upgrade legacy (SHA-256 / plaintext) password records to salted PBKDF2.
+      const upgradedHash = user.passwordHash!.includes(":") ? undefined : await hashPassword(args.password);
       await ctx.db.patch(user._id, {
         sessionToken,
-        updatedAt: Date.now(),
+        sessionExpiresAt,
+        lastLoginAt: now,
+        updatedAt: now,
+        ...(upgradedHash ? { passwordHash: upgradedHash } : {}),
       });
-
       const isDriverVerified = Boolean(
         user.is_driver_verified ?? user.isVerifiedDriver ?? (user.role?.toLowerCase() === "driver")
       );
@@ -529,11 +517,8 @@ export const loginWithPhoneOrEmail = mutation({
         driver_status: driverStatus,
       };
     } catch (err: any) {
-      console.error("[loginWithPhoneOrEmail] error:", err);
-      return {
-        success: false,
-        errorMessage: err?.message ?? "An error occurred during login. Please try again.",
-      };
+      console.error("[loginWithPhoneOrEmail] error:", err?.message ?? String(err));
+      return { success: false, errorMessage: "An error occurred during login. Please try again." };
     }
   },
 });
@@ -582,8 +567,11 @@ export const getUserSession = query({
       const user = await ctx.db.get(userId);
       if (!user) return null;
 
-      // Validate session token
-      if (user.sessionToken !== args.sessionToken) {
+      // Validate session token (constant-time) and expiry
+      if (!user.sessionToken || !safeEqual(user.sessionToken, args.sessionToken)) {
+        return null;
+      }
+      if (typeof user.sessionExpiresAt === "number" && user.sessionExpiresAt <= Date.now()) {
         return null;
       }
 
@@ -631,13 +619,13 @@ export const getUserSession = query({
 //                    SEED DEMO / TEST USERS (PRODUCTION ENFORCED)
 // ═══════════════════════════════════════════════════════════════════════
 
-export const seedDemoUsers = mutation({
-  args: {},
+export const seedDemoUsers = internalMutation({
+  args: { initialPassword: v.string() },
   returns: v.object({
     seeded: v.array(v.string()),
     existing: v.array(v.string()),
   }),
-  handler: async (ctx) => {
+  handler: async (ctx, args) => {
     // Only ensure primary production user Alfred Manso Kargbo exists
     const prodAccount = {
       email: "alfred.kargbo@vektolux.com",
@@ -648,8 +636,11 @@ export const seedDemoUsers = mutation({
 
     const seeded: string[] = [];
     const existing: string[] = [];
-    const defaultPassword = "password123";
-    const passwordHash = await hashPassword(defaultPassword);
+    // No hardcoded admin password (it used to be "password123"). Must be supplied by the operator.
+    if (!args.initialPassword || args.initialPassword.length < 12) {
+      throw new Error("initialPassword must be at least 12 characters.");
+    }
+    const passwordHash = await hashPassword(args.initialPassword);
     const now = Date.now();
 
     const existingUser = await ctx.db
@@ -713,111 +704,65 @@ export const sendPasswordResetOtp = mutation({
     success: v.boolean(),
     message: v.string(),
     expiresInSeconds: v.number(),
-    demoCode: v.optional(v.string()), // Returned in dev/sandbox for instant testing
   }),
   handler: async (ctx, args) => {
+    // The SAME answer is returned whether or not an account exists (no account enumeration).
+    // Only e-mail delivery is implemented: there is no SMS/WhatsApp provider, so we do not
+    // claim to have sent one.
+    const GENERIC = {
+      success: true,
+      message:
+        "If an account with an email address matches, a 6-digit reset code has been sent to that email. SMS and WhatsApp delivery are not available yet.",
+      expiresInSeconds: 600,
+    };
     try {
       const rawId = args.identifier.trim();
       if (!rawId) {
-        return {
-          success: false,
-          message: "Phone number or email is required",
-          expiresInSeconds: 0,
-        };
+        return { success: false, message: "Phone number or email is required", expiresInSeconds: 0 };
       }
-
-      // Check if user exists by email or phone (case-insensitive & format-agnostic)
-      const user = await findUserByIdentifier(ctx, rawId);
-
-      if (!user) {
-        return {
-          success: false,
-          message: "No account registered with that email or phone number",
-          expiresInSeconds: 0,
-        };
-      }
-
       const now = Date.now();
-      const expiresInSeconds = 600; // 10 minutes
-      const expiresAt = now + expiresInSeconds * 1000;
 
-      // Generate secure 6-digit numeric OTP
-      const otpCode = (100000 + Math.floor(Math.random() * 900000)).toString();
+      // Throttle by what the caller typed as well as by account (stops inbox flooding).
+      if (!(await consume(ctx, `reset-req:id:${rawId.toLowerCase()}`, RESET_REQUEST_POLICY, now))) {
+        return { success: false, message: "Too many reset requests. Please wait 15 minutes and try again.", expiresInSeconds: 0 };
+      }
 
-      // Normalize key for storing OTP
-      const normalizedKey = rawId.includes("@")
-        ? rawId.toLowerCase()
-        : (user.email ? user.email.toLowerCase() : rawId);
+      const user = await findUserByIdentifier(ctx, rawId);
+      if (!user || !user.email || user.isActive === false) return GENERIC;
+      if (!(await consume(ctx, `reset-req:user:${user._id}`, RESET_REQUEST_POLICY, now))) return GENERIC;
 
-      // Invalidate previous active OTPs for this identifier (both raw and normalized)
+      const normalizedKey = user.email.toLowerCase();
       const existingOtps = await ctx.db
         .query("password_resets")
         .withIndex("by_identifier", (q) => q.eq("identifier", normalizedKey))
         .filter((q) => q.eq(q.field("isUsed"), false))
-        .collect();
+        .take(20);
+      for (const old of existingOtps) await ctx.db.patch(old._id, { isUsed: true });
 
-      for (const oldOtp of existingOtps) {
-        await ctx.db.patch(oldOtp._id, { isUsed: true });
-      }
-
-      if (rawId !== normalizedKey) {
-        const altOtps = await ctx.db
-          .query("password_resets")
-          .withIndex("by_identifier", (q) => q.eq("identifier", rawId))
-          .filter((q) => q.eq(q.field("isUsed"), false))
-          .collect();
-        for (const oldOtp of altOtps) {
-          await ctx.db.patch(oldOtp._id, { isUsed: true });
-        }
-      }
-
-      // Insert new OTP record
+      const otpCode = secureSixDigitCode();
       await ctx.db.insert("password_resets", {
         identifier: normalizedKey,
-        deliveryChannel: args.deliveryChannel,
-        otpCode,
-        expiresAt,
+        deliveryChannel: "email",
+        otpCode: await hashResetCode(normalizedKey, otpCode),
+        expiresAt: now + 600 * 1000,
         isUsed: false,
+        attempts: 0,
         createdAt: now,
       });
 
-      // Dispatch real email via Resend if email channel or email identifier
-      if (args.deliveryChannel === "email" || rawId.includes("@")) {
-        const emailTarget = rawId.includes("@") ? rawId.toLowerCase() : (user.email || rawId);
-        try {
-          await ctx.scheduler.runAfter(0, internal.emails.sendOtpEmail, {
-            to: emailTarget,
-            otpCode,
-            recipientName: user.name ?? "User",
-          });
-        } catch (emailErr) {
-          console.warn("[sendPasswordResetOtp] Email dispatch warning:", emailErr);
-        }
-      }
-
-      const channelName =
-        args.deliveryChannel === "whatsapp"
-          ? "WhatsApp message"
-          : args.deliveryChannel === "sms"
-          ? "SMS text"
-          : "Email";
-
-      return {
-        success: true,
-        message: `Reset code dispatched via ${channelName} to ${rawId}`,
-        expiresInSeconds,
-        demoCode: otpCode, // Test code for zero-friction verification
-      };
+      await ctx.scheduler.runAfter(0, internal.emails.sendOtpEmail, {
+        to: normalizedKey,
+        otpCode,
+        recipientName: user.name ?? "User",
+      });
+      return GENERIC;
     } catch (err: any) {
-      console.error("[sendPasswordResetOtp] unhandled error:", err);
-      return {
-        success: false,
-        message: err?.message ?? "An unexpected server error occurred while sending the reset code.",
-        expiresInSeconds: 0,
-      };
+      console.error("[sendPasswordResetOtp] error:", err?.message ?? String(err));
+      return GENERIC;
     }
   },
 });
+
 
 export const verifyResetOtpAndSetPassword = mutation({
   args: {
@@ -830,95 +775,62 @@ export const verifyResetOtpAndSetPassword = mutation({
     message: v.string(),
   }),
   handler: async (ctx, args) => {
+    const INVALID = { success: false, message: "Invalid or expired verification code. Please request a new one." };
     try {
       const rawId = args.identifier.trim();
       const code = args.otpCode.trim();
-
-      if (!code || code.length !== 6) {
-        return {
-          success: false,
-          message: "Please enter a valid 6-digit verification code",
-        };
+      if (!/^\d{6}$/.test(code)) {
+        return { success: false, message: "Please enter a valid 6-digit verification code" };
       }
-      if (!args.newPassword || args.newPassword.length < 6) {
-        return {
-          success: false,
-          message: "New password must be at least 6 characters long",
-        };
+      if (!args.newPassword || args.newPassword.length < MIN_PASSWORD_LENGTH) {
+        return { success: false, message: `New password must be at least ${MIN_PASSWORD_LENGTH} characters long` };
       }
-
       const now = Date.now();
 
-      // Find the user first
       const user = await findUserByIdentifier(ctx, rawId);
-      if (!user) {
-        return {
-          success: false,
-          message: "Associated user account not found",
-        };
-      }
+      if (!user || !user.email) return INVALID;
+      const normalizedKey = user.email.toLowerCase();
 
-      const normalizedKey = rawId.includes("@")
-        ? rawId.toLowerCase()
-        : (user.email ? user.email.toLowerCase() : rawId);
-
-      // Query active OTP with normalized key
-      let resetRecord = await ctx.db
+      // The single most recent active code for this account.
+      const record = await ctx.db
         .query("password_resets")
-        .withIndex("by_identifier_code", (q) =>
-          q.eq("identifier", normalizedKey).eq("otpCode", code)
-        )
+        .withIndex("by_identifier", (q) => q.eq("identifier", normalizedKey))
+        .order("desc")
         .first();
+      if (!record || record.isUsed || record.expiresAt < now) return INVALID;
 
-      if (!resetRecord && rawId !== normalizedKey) {
-        resetRecord = await ctx.db
-          .query("password_resets")
-          .withIndex("by_identifier_code", (q) =>
-            q.eq("identifier", rawId).eq("otpCode", code)
-          )
-          .first();
+      const expected = await hashResetCode(normalizedKey, code);
+      if (!safeEqual(expected, record.otpCode)) {
+        // Count the wrong guess (returned, not thrown, so it persists). Burn the code at the limit.
+        const attempts = (record.attempts ?? 0) + 1;
+        await ctx.db.patch(record._id, { attempts, isUsed: attempts >= RESET_CODE_MAX_ATTEMPTS });
+        return attempts >= RESET_CODE_MAX_ATTEMPTS
+          ? { success: false, message: "Too many incorrect codes. Please request a new code." }
+          : INVALID;
       }
 
-      if (!resetRecord || resetRecord.isUsed || resetRecord.expiresAt < now) {
-        return {
-          success: false,
-          message: "Invalid or expired verification code. Please request a new one.",
-        };
-      }
-
-      // Re-hash new password using PBKDF2
       const passwordHash = await hashPassword(args.newPassword);
-      const newSessionToken = generateSessionToken();
+      // New password => every existing session is invalidated by issuing a fresh one.
+      await ctx.db.patch(user._id, { passwordHash, ...issueSession(now), updatedAt: now });
+      await ctx.db.patch(record._id, { isUsed: true });
+      // A successful reset lifts any login lockout for the account.
+      await clearLimit(ctx, `login:user:${user._id}`);
 
-      // Update user record and invalidate older sessions
-      await ctx.db.patch(user._id, {
-        passwordHash,
-        sessionToken: newSessionToken,
-        updatedAt: now,
-      });
-
-      // Mark OTP used
-      await ctx.db.patch(resetRecord._id, { isUsed: true });
-
-      return {
-        success: true,
-        message: "Password has been successfully updated! You can now sign in.",
-      };
+      return { success: true, message: "Password has been successfully updated! You can now sign in." };
     } catch (err: any) {
-      console.error("[verifyResetOtpAndSetPassword] error:", err);
-      return {
-        success: false,
-        message: err?.message ?? "Failed to verify code and reset password.",
-      };
+      console.error("[verifyResetOtpAndSetPassword] error:", err?.message ?? String(err));
+      return { success: false, message: "Failed to verify code and reset password." };
     }
   },
 });
+
 
 // ═══════════════════════════════════════════════════════════════════════
 //                 DIAGNOSTIC QUERY: USER AUTH STATUS
 // ═══════════════════════════════════════════════════════════════════════
 
-export const checkUserAuthStatus = query({
+// INTERNAL ONLY: returned name/email/phone/role for any identifier (enumeration + PII leak).
+export const checkUserAuthStatus = internalQuery({
   args: { identifier: v.string() },
   handler: async (ctx, args) => {
     const user = await findUserByIdentifier(ctx, args.identifier);

@@ -107,10 +107,15 @@
 			<string>google_oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.googleusercontent.apps.vektolux</string>
+				<string>com.googleusercontent.apps.489916570762-evp88rv2n0dqk1v41lhfl8aj7obl3gvi</string>
 			</array>
 		</dict>
 	</array>
 
+	<!-- Google Sign-In (no Firebase): iOS client + server (web) client -->
+	<key>GIDClientID</key>
+	<string>489916570762-evp88rv2n0dqk1v41lhfl8aj7obl3gvi.apps.googleusercontent.com</string>
+	<key>GIDServerClientID</key>
+	<string>489916570762-vfc729r27jha8q4s0o55piskj5a67bv3.apps.googleusercontent.com</string>
 </dict>
 </plist>

@@ -10,7 +10,6 @@ const nextConfig = {
     remotePatterns: [
       { protocol: "https", hostname: "images.unsplash.com" },
       { protocol: "https", hostname: "ideal-poodle-813.convex.cloud" },
-      { protocol: "https", hostname: "incredible-possum-462.convex.cloud" },
     ],
   },
 };

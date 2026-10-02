@@ -14,6 +14,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import styles from "./notifications.module.css";
+import { adminFetch } from "@/lib/adminSession";
 
 interface PlatformUser {
   _id: string;
@@ -57,7 +58,7 @@ export default function NotificationsPage() {
         const adminId = session?.user?.id || "admin";
 
         // Fetch users
-        const usersRes = await fetch(`/api/users?adminId=${adminId}`);
+        const usersRes = await adminFetch(`/api/users?adminId=${adminId}`);
         if (usersRes.ok) {
           const uJson = await usersRes.json();
           if (uJson.success && Array.isArray(uJson.data)) {
@@ -69,7 +70,7 @@ export default function NotificationsPage() {
         }
 
         // Fetch notification history
-        const histRes = await fetch("/api/admin/send-notification");
+        const histRes = await adminFetch("/api/admin/send-notification");
         if (histRes.ok) {
           const hJson = await histRes.json();
           if (hJson.success && Array.isArray(hJson.data)) {
@@ -106,7 +107,7 @@ export default function NotificationsPage() {
         deepLinkId: deepLinkId.trim() || undefined,
       };
 
-      const res = await fetch("/api/admin/send-notification", {
+      const res = await adminFetch("/api/admin/send-notification", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -128,7 +129,7 @@ export default function NotificationsPage() {
         setDeepLinkId("");
 
         // Refresh history
-        const histRes = await fetch("/api/admin/send-notification");
+        const histRes = await adminFetch("/api/admin/send-notification");
         if (histRes.ok) {
           const hJson = await histRes.json();
           if (hJson.success && Array.isArray(hJson.data)) {

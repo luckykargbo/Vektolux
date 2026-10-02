@@ -185,10 +185,6 @@ class _TerminalsTabState extends State<TerminalsTab> {
                       value: 'qmoney',
                       child: Text('QMoney Sierra Leone'),
                     ),
-                    DropdownMenuItem(
-                      value: 'moneroo',
-                      child: Text('Moneroo Multi-Channel'),
-                    ),
                   ],
                   onChanged: (v) => setSheetState(() => carrier = v!),
                 ),

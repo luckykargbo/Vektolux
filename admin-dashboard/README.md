@@ -21,9 +21,10 @@ Open [http://localhost:3000](http://localhost:3000)
 ## Features
 
 - **Verification Queue**: Review and approve/reject agent & merchant applications in real-time
-- **Listings Inspector**: View all properties and vehicles, filter by type, clear all data
-- **Quick Seed**: 1-click test data injection across Freetown, Bo, Makeni, Waterloo
-- **Live Backend**: Connected to `https://incredible-possum-462.convex.cloud` (production)
+- **Listings Inspector**: View all properties and vehicles and take down listings (bulk deletion is disabled)
+- **Quick Seed**: disabled — sample data is never injected into the live database
+- **Live Backend**: `https://ideal-poodle-813.convex.cloud` (the only deployment; there is no fallback)
+- **Financial Overview**: user funds, escrow, withdrawals, refunds, subscription revenue and platform fees reported separately
 
 ## Architecture
 

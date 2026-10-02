@@ -6,7 +6,9 @@
 // All functions enforce admin role validation.
 // ═══════════════════════════════════════════════════════════════════════
 
-import { query, mutation, internalMutation } from "./_generated/server";
+import { query, mutation, action, internalMutation, internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { requireSelf } from "./lib/auth";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
@@ -20,24 +22,13 @@ async function validateAdminSession(
   adminId: string,
   sessionToken?: string
 ) {
-  const adminDocId = ctx.db.normalizeId("users", adminId);
-  if (!adminDocId) {
-    throw new Error("Unauthorized: Invalid administrator credentials.");
-  }
-  const adminUser = await ctx.db.get(adminDocId);
-  if (!adminUser || adminUser.role !== "admin") {
+  // The admin's own valid session is mandatory; an admin user id alone proves nothing.
+  // (Previously a missing token skipped the check, so anyone knowing an admin's id passed.)
+  const { userId, user } = await requireSelf(ctx, sessionToken, adminId || undefined);
+  if (user.role !== "admin") {
     throw new Error("Forbidden: Access restricted to platform administrators.");
   }
-  if (
-    sessionToken &&
-    adminUser.sessionToken &&
-    adminUser.sessionToken !== sessionToken
-  ) {
-    throw new Error(
-      "Unauthorized: Session token expired. Please sign in again."
-    );
-  }
-  return { adminDocId, adminUser };
+  return { adminDocId: userId, adminUser: user };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -106,16 +97,6 @@ export const seedApiKeysConfig = mutation({
         operationalFunction:
           "Authenticates API calls to Africell Afrimoney gateway",
         usedIn: "convex/http.ts → /payments/afrimoney",
-      },
-      {
-        serviceId: "moneroo_gateway",
-        displayName: "Moneroo Payment Gateway",
-        keyName: "SECRET_KEY",
-        maskedValue: "****pending",
-        envVarName: "MONEROO_SECRET_KEY",
-        operationalFunction:
-          "Authenticates checkout session creation and payment verification",
-        usedIn: "convex/http.ts → /payments/moneroo",
       },
       {
         serviceId: "sms_notification",
@@ -233,7 +214,7 @@ export const getApiHealthIncidents = query({
 
 /**
  * MODULE 1.1: Real-time status panel query for all 4 integrated gateways:
- * Orange Money Sierra Leone, Africell Afrimoney, Moneroo Gateway, and SMS / Notification Gateway.
+ * Orange Money Sierra Leone, Africell Afrimoney, and SMS / Notification Gateway.
  * Returns operational health, masked preview, last ping timestamp, and error logs.
  */
 export const getApiGatewayHealthPanel = query({
@@ -242,9 +223,8 @@ export const getApiGatewayHealthPanel = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    if (args.adminId) {
-      await validateAdminSession(ctx, args.adminId, args.sessionToken);
-    }
+    // Administrator session is ALWAYS required (a missing adminId no longer skips the check).
+    await validateAdminSession(ctx, args.adminId ?? "", args.sessionToken);
 
     // 1. Fetch all existing API key configs, health logs, and transactions
     const configs = await ctx.db.query("api_keys_config").take(50);
@@ -314,33 +294,6 @@ export const getApiGatewayHealthPanel = query({
             operationalFunction:
               "Authenticates API calls and signs requests to Africell Afrimoney gateway",
             usedIn: "convex/http.ts → /payments/afrimoney",
-          },
-        ],
-      },
-      {
-        serviceId: "moneroo_gateway",
-        displayName: "Moneroo Gateway",
-        provider: "Moneroo Financial Technologies",
-        brandColor: "#2563EB",
-        category: "Card Gateway & Cross-Border",
-        purpose:
-          "Handles Visa / Mastercard card processing, multi-currency conversion, and global payment checkout for diaspora buyers and international renters.",
-        defaultKeys: [
-          {
-            keyName: "SECRET_KEY",
-            maskedValue: "****live_4491",
-            envVarName: "MONEROO_SECRET_KEY",
-            operationalFunction:
-              "Authenticates checkout session creation and server-side payment verification",
-            usedIn: "convex/http.ts → /payments/moneroo",
-          },
-          {
-            keyName: "PUBLIC_KEY",
-            maskedValue: "****pk_8823",
-            envVarName: "MONEROO_PUBLIC_KEY",
-            operationalFunction:
-              "Initializes client-side card payment checkout widget in web and mobile app",
-            usedIn: "lib/core/services/moneroo.dart",
           },
         ],
       },
@@ -471,57 +424,87 @@ export const getApiGatewayHealthPanel = query({
   },
 });
 
+/** INTERNAL: confirms the caller is an administrator (used by the probe action below). */
+export const assertAdminForProbe = internalQuery({
+  args: { adminId: v.optional(v.string()), sessionToken: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    await validateAdminSession(ctx, args.adminId ?? "", args.sessionToken);
+    return true;
+  },
+});
+
+/** INTERNAL: stores the result of a real probe. */
+export const recordGatewayProbe = internalMutation({
+  args: { serviceId: v.string(), reachable: v.boolean(), statusCode: v.number(), pingMs: v.number() },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const configs = await ctx.db
+      .query("api_keys_config")
+      .withIndex("by_serviceId", (q) => q.eq("serviceId", args.serviceId))
+      .take(10);
+    for (const config of configs) {
+      await ctx.db.patch(config._id, {
+        lastCheckedAt: now,
+        healthStatus: args.reachable ? "operational" : "outage",
+        updatedAt: now,
+      });
+    }
+    await ctx.db.insert("api_health_logs", {
+      serviceId: args.serviceId,
+      endpoint: `probe/${args.serviceId}`,
+      statusCode: args.statusCode,
+      errorMessage: args.reachable ? `Reachable (HTTP ${args.statusCode}, ${args.pingMs}ms).` : `Unreachable (HTTP ${args.statusCode}).`,
+      severity: args.reachable ? "info" : "critical",
+      occurredAt: now,
+    });
+  },
+});
+
 /**
- * Diagnostic ping mutation: tests gateway connectivity and updates health timestamp.
+ * Admin-only REAL connectivity probe. Only Monime has a probe (an unauthenticated request to its API
+ * host: any HTTP answer below 500 means the host is reachable). Other services report that no live
+ * probe exists rather than inventing a result.
  */
-export const testApiGatewayPing = mutation({
+export const testApiGatewayPing = action({
   args: {
     serviceId: v.string(),
     adminId: v.optional(v.string()),
     sessionToken: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
-    if (args.adminId) {
-      await validateAdminSession(ctx, args.adminId, args.sessionToken);
+  handler: async (ctx, args): Promise<any> => {
+    await ctx.runQuery(internal.adminPortal.assertAdminForProbe, { adminId: args.adminId, sessionToken: args.sessionToken });
+    if (args.serviceId !== "monime") {
+      return {
+        success: false,
+        serviceId: args.serviceId,
+        status: "not_checked",
+        message: "No live connectivity probe is implemented for this service.",
+        timestamp: Date.now(),
+      };
     }
-
-    const now = Date.now();
-    const pingMs = Math.floor(Math.random() * 30) + 15;
-
-    const configs = await ctx.db
-      .query("api_keys_config")
-      .withIndex("by_serviceId", (q) => q.eq("serviceId", args.serviceId))
-      .take(10);
-
-    for (const config of configs) {
-      await ctx.db.patch(config._id, {
-        lastCheckedAt: now,
-        healthStatus: "operational",
-        updatedAt: now,
-      });
+    const base = (process.env.MONIME_API_BASE_URL || "https://api.monime.io/v1").trim();
+    const started = Date.now();
+    let statusCode = 0;
+    let reachable = false;
+    try {
+      const res = await fetch(base, { method: "GET" });
+      statusCode = res.status;
+      reachable = res.status < 500;
+    } catch {
+      statusCode = 0;
     }
-
-    await ctx.db.insert("api_health_logs", {
-      serviceId: args.serviceId,
-      endpoint: `healthcheck/${args.serviceId}`,
-      statusCode: 200,
-      errorMessage:
-        "Gateway health ping verified successfully (HTTP 200 OK).",
-      severity: "info",
-      occurredAt: now,
-    });
-
+    const pingMs = Date.now() - started;
+    await ctx.runMutation(internal.adminPortal.recordGatewayProbe, { serviceId: args.serviceId, reachable, statusCode, pingMs });
     return {
-      success: true,
+      success: reachable,
       serviceId: args.serviceId,
       pingMs,
-      status: "operational",
-      message: `Diagnostic ping successful (${pingMs}ms). Carrier endpoint operational.`,
-      timestamp: now,
+      status: reachable ? "operational" : "outage",
+      message: reachable ? `Monime API host reachable (HTTP ${statusCode}, ${pingMs}ms).` : "Monime API host is not reachable.",
+      timestamp: Date.now(),
     };
   },
 });
-
 
 /**
  * Internal mutation: Called by webhook handlers to update key health status.
@@ -644,9 +627,8 @@ export const updateGatewayKeyMask = mutation({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    if (args.adminId) {
-      await validateAdminSession(ctx, args.adminId, args.sessionToken);
-    }
+    // Administrator session is ALWAYS required (a missing adminId no longer skips the check).
+    await validateAdminSession(ctx, args.adminId ?? "", args.sessionToken);
 
     const now = Date.now();
     const existing = await ctx.db
@@ -1087,9 +1069,8 @@ export const getAdminAnalytics = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    if (args.adminId) {
-      await validateAdminSession(ctx, args.adminId, args.sessionToken);
-    }
+    // Administrator session is ALWAYS required (a missing adminId no longer skips the check).
+    await validateAdminSession(ctx, args.adminId ?? "", args.sessionToken);
 
     // 1. Live Users Aggregation
     const users = await ctx.db.query("users").take(500);
@@ -1313,6 +1294,8 @@ export const recordUserSession = mutation({
     appVersion: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     const userDocId = ctx.db.normalizeId("users", args.userId);
     if (!userDocId) throw new Error("User not found.");
 
@@ -1364,6 +1347,8 @@ export const endUserSession = mutation({
     sessionToken: v.string(),
   },
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.userId));
     const userDocId = ctx.db.normalizeId("users", args.userId);
     if (!userDocId) throw new Error("User not found.");
 
@@ -1525,12 +1510,15 @@ export const getAdminUserAuditView = query({
  */
 export const submitContactRequest = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     buyerId: v.string(),
     listingId: v.string(),
     listingType: v.union(v.literal("property"), v.literal("vehicle")),
     message: v.string(),
   },
   handler: async (ctx, args) => {
+    // Only the account owner (valid session) may act on this account.
+    await requireSelf(ctx, args.sessionToken, String(args.buyerId));
     const buyerDocId = ctx.db.normalizeId("users", args.buyerId);
     if (!buyerDocId) throw new Error("Buyer account not found.");
 
@@ -1597,10 +1585,15 @@ export const submitContactRequest = mutation({
  */
 export const getSellerContactRequests = query({
   args: {
+    sessionToken: v.optional(v.string()),
     sellerId: v.string(),
     statusFilter: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const __c = await requireSelf(ctx, args.sessionToken);
+    if (__c.user.role !== "admin" && String(__c.userId) !== args.sellerId) {
+      throw new Error("Unauthorized: You can only manage your own contact requests.");
+    }
     const sellerDocId = ctx.db.normalizeId("users", args.sellerId);
     if (!sellerDocId) return [];
 
@@ -1656,11 +1649,16 @@ export const getSellerContactRequests = query({
  */
 export const respondToContactRequest = mutation({
   args: {
+    sessionToken: v.optional(v.string()),
     sellerId: v.string(),
     requestId: v.string(),
     action: v.union(v.literal("accepted"), v.literal("declined")),
   },
   handler: async (ctx, args) => {
+    const __c = await requireSelf(ctx, args.sessionToken);
+    if (__c.user.role !== "admin" && String(__c.userId) !== args.sellerId) {
+      throw new Error("Unauthorized: You can only manage your own contact requests.");
+    }
     const sellerDocId = ctx.db.normalizeId("users", args.sellerId);
     if (!sellerDocId) throw new Error("Seller account not found.");
 

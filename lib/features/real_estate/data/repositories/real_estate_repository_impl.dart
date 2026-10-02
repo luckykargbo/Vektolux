@@ -5,7 +5,6 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:logger/logger.dart';
-import 'package:uuid/uuid.dart';
 
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../domain/entities/property_listing_entity.dart';
@@ -15,7 +14,6 @@ import '../models/property_listing_model.dart';
 class RealEstateRepositoryImpl implements RealEstateRepository {
   final ConvexClientWrapper _convexClient;
   final Logger _log = Logger(printer: PrettyPrinter(methodCount: 0));
-  final Uuid _uuid = const Uuid();
 
   // In-memory cache for locally booked slots during session to prevent double-booking
   final Map<String, Set<String>> _localBookedSlotsMap = {};
@@ -96,37 +94,30 @@ class RealEstateRepositoryImpl implements RealEstateRepository {
     required String timeSlotLabel,
     String? notes,
   }) async {
-    final bookingId = _uuid.v4();
     final dateKey = '${listingId}_${date.year}_${date.month}_${date.day}';
-
-    _localBookedSlotsMap.putIfAbsent(dateKey, () => {}).add(timeSlotLabel);
-
     final startOfDay = DateTime(date.year, date.month, date.day, 9).millisecondsSinceEpoch;
     final endOfDay = DateTime(date.year, date.month, date.day, 17).millisecondsSinceEpoch;
 
-    final payload = {
-      'listingId': listingId,
-      'listingType': 'property',
-      'listingTitle': 'Property Inspection Tour',
-      'buyerId': buyerId,
-      'vendorId': ownerId,
-      'bookingType': 'property_inspection',
-      'startTime': startOfDay,
-      'endTime': endOfDay,
-      'totalAmount': 0.0,
-      'notes': notes != null ? '$timeSlotLabel - $notes' : timeSlotLabel,
-    };
-
+    // The server decides the vendor (the listing owner), the price and the status.
     final result = await _convexClient.mutation(
       'bookings:createBooking',
-      args: payload,
+      args: {
+        'listingId': listingId,
+        'listingType': 'property',
+        'listingTitle': 'Property Inspection Tour',
+        'buyerId': buyerId,
+        'bookingType': 'property_inspection',
+        'startTime': startOfDay,
+        'endTime': endOfDay,
+        'notes': notes != null ? '$timeSlotLabel - $notes' : timeSlotLabel,
+      },
     );
-
-    if (!result.success) {
-      _log.w('Convex scheduleSiteVisit notice: ${result.errorMessage}');
+    final value = result.value;
+    if (!result.success || value is! Map || value['bookingId'] == null) {
+      throw Exception(result.errorMessage ?? 'The visit could not be booked.');
     }
-
-    return bookingId;
+    _localBookedSlotsMap.putIfAbsent(dateKey, () => {}).add(timeSlotLabel);
+    return value['bookingId'].toString();
   }
 
   @override
@@ -144,55 +135,34 @@ class RealEstateRepositoryImpl implements RealEstateRepository {
     String? customerPhone,
     String? customerName,
   }) async {
-    final bookingId = _uuid.v4();
-    final idempotencyKey = 'hourly_booking_${bookingId}_${DateTime.now().millisecondsSinceEpoch}';
     final endTime = startTime.add(Duration(hours: durationHours));
 
-    // 1. Create payment intent in Convex Cloud
-    final intentResult = await _convexClient.mutation(
-      'payments:createPaymentIntent',
-      args: {
-        'userId': buyerId,
-        'amount': totalAmount,
-        'currency': currency,
-        'paymentMethod': paymentMethod,
-        'gatewayProvider': gatewayProvider,
-        'referenceType': 'hourly_guesthouse',
-        'referenceId': bookingId,
-        'vendorId': ownerId,
-        'idempotencyKey': idempotencyKey,
-        'commissionType': 'hourly_guesthouse',
-      },
-    );
-
-    if (!intentResult.success) {
-      throw Exception(intentResult.errorMessage ?? 'Failed to create payment intent');
-    }
-
-    final paymentIntentId = intentResult.value['paymentIntentId'];
-
-    // 2. Direct Convex Cloud booking creation
-    await _convexClient.mutation(
+    // Creates a REAL booking. The server prices it from the listing (the client total is not
+    // sent) and returns it awaiting payment; it is paid from the wallet or by Mobile Money,
+    // and the vendor/platform split is decided by the server.
+    final result = await _convexClient.mutation(
       'bookings:createBooking',
       args: {
         'listingId': listingId,
         'listingType': 'property',
         'listingTitle': 'Hourly Stay Reservation',
         'buyerId': buyerId,
-        'vendorId': ownerId,
-        'bookingType': 'short_stay_booking',
+        'bookingType': 'hourly_guesthouse',
         'startTime': startTime.millisecondsSinceEpoch,
         'endTime': endTime.millisecondsSinceEpoch,
-        'totalAmount': totalAmount,
-        'notes': 'PaymentIntent: $paymentIntentId',
+        'hours': durationHours,
       },
     );
-
+    final value = result.value;
+    if (!result.success || value is! Map || value['bookingId'] == null) {
+      throw Exception(result.errorMessage ?? 'The booking could not be created.');
+    }
     return {
-      'bookingId': bookingId,
-      'paymentIntentId': paymentIntentId,
-      'gatewayProvider': gatewayProvider,
-      'totalAmount': totalAmount,
+      'bookingId': value['bookingId'].toString(),
+      'reference': value['txRef']?.toString() ?? '',
+      'status': value['status']?.toString() ?? '',
+      'paymentStatus': value['paymentStatus']?.toString() ?? '',
+      'totalAmount': value['totalAmount'],
       'currency': currency,
     };
   }
