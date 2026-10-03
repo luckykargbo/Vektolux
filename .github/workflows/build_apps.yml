@@ -75,8 +75,8 @@ jobs:
           BLD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PL")
           echo "Bundle ID: $BID  Version: $VER  Build: $BLD"
           test "$BID" = "com.vektolux.app"
-          test "$VER" = "1.0.26"
-          test "$BLD" = "27"
+          test "$VER" = "1.0.27"
+          test "$BLD" = "28"
           lipo -info build/ios/iphoneos/Runner.app/Runner
           lipo -info build/ios/iphoneos/Runner.app/Runner | grep -q arm64
           unzip -tq Vektolux.ipa
@@ -129,8 +129,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           # Test build for physical-iPhone testing (unsigned IPA, signed by Sideloadly on install).
-          tag_name: vektolux-ios-test-1.0.26-27
-          name: "Vektolux iPhone Test Build 1.0.26 (27)"
+          tag_name: vektolux-ios-test-1.0.27-28
+          name: "Vektolux iPhone Test Build 1.0.27 (28)"
           body_path: docs/IOS_TEST_BUILD.md
           files: release-assets/*
           prerelease: true

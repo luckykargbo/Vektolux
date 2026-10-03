@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| App version | 1.0.26 |
-| Build number | 27 |
+| App version | 1.0.27 |
+| Build number | 28 |
 | Bundle ID | `com.vektolux.app` |
 | Build type | Release, **unsigned** (built by GitHub Actions on macOS with `flutter build ios --release --no-codesign`) |
 | Status | **Test build** for installation on a physical iPhone. Not an App Store / TestFlight build. |
@@ -25,7 +25,8 @@ With a free Apple ID the app stops opening after 7 days; reinstall it the same w
 - **Orange Money stays disabled** until Orange provides its webhook documentation.
 - Moneroo has been removed from Vektolux.
 - This build talks to the live Convex backend (`ideal-poodle-813`). The newest server changes have **not been deployed yet**, so some new actions (for example booking *Confirm completed* / *Report a problem*) can show an error until the backend is deployed. Login, browsing, listings and navigation can be tested normally.
-- This build fixes the Home and Explore screen layouts (action row, cards, categories, bottom bar) and forces light mode so text is readable when the phone is in Dark Mode.
+- **New in this build: the Real Estate Agent workspace** (Home, Listings, Messages, Notifications and Profile tabs; add and manage listings, buyer inquiries, earnings & payouts, followers). It opens only for accounts the server reports as approved Real Estate Agents, and it needs the newest server changes, which are not deployed yet. Until then every account sees the normal app, exactly as before.
+- Still included from the previous build: the Home and Explore layout fixes and light mode, so text is readable when the phone is in Dark Mode.
 - Sign in with Apple may not work on a free-Apple-ID install: that capability needs a paid Apple Developer account.
 
 Installation through Sideloadly has not been tested by the build pipeline; please report what you see.

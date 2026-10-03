@@ -461,6 +461,10 @@ class ConvexClientWrapper {
     'subscriptions:adminTogglePlanStatus',
     // vehicles
     'mobility:updateVehicleListingStatus',
+    // owner-authorised listing agents (agent workspace)
+    'listingAgents:getMyAgentAuthorizations',
+    'listingAgents:respondToListingAgentInvitation',
+    'listingAgents:revokeListingAgent',
   };
 
   static bool _acceptsSessionToken(String functionPath) =>
