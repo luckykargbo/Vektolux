@@ -46,6 +46,15 @@ class ClientHomeScreen extends StatefulWidget {
 }
 
 class _ClientHomeScreenState extends State<ClientHomeScreen> {
+  // Layout tokens (one vertical rhythm for the whole Home screen).
+  static const double _kPageGutter = 16;
+  static const double _kGapS = 10; // inside a group (wallet → actions, top-up → payment cards)
+  static const double _kGapM = 14; // between groups
+  static const double _kGapL = 20; // before content sections (saved places, properties)
+  // This dense dashboard caps iOS Dynamic Type at 1.15× so fixed-height cards and 4-up rows keep
+  // their structure (larger system text sizes otherwise broke the action row letter-by-letter).
+  static const double _kMaxTextScale = 1.15;
+
   final TextEditingController _searchController = TextEditingController();
   final NumberFormat _currencyFormat = NumberFormat('#,##0.00', 'en_US');
 
@@ -707,7 +716,9 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
 
         return Scaffold(
           backgroundColor: Colors.white,
-          body: SafeArea(
+          body: MediaQuery.withClampedTextScaling(
+            maxScaleFactor: _kMaxTextScale,
+            child: SafeArea(
             bottom: false,
             child: RefreshIndicator(
               color: AppColors.emeraldDark,
@@ -716,11 +727,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 physics: const AlwaysScrollableScrollPhysics(
                   parent: BouncingScrollPhysics(),
                 ),
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.symmetric(horizontal: _kPageGutter),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
 
                     // ═════════════════════════════════════════════════
                     // 1. USER HEADER
@@ -733,14 +744,14 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       unreadCount: _unreadNotificationsCount,
                     ),
 
-                    const SizedBox(height: 16),
+                    const SizedBox(height: _kGapM),
 
                     // ═════════════════════════════════════════════════
                     // 2. SEARCH BAR
                     // ═════════════════════════════════════════════════
                     _buildSearchBar(),
 
-                    const SizedBox(height: 16),
+                    const SizedBox(height: _kGapM),
 
                     if (isSearching) ...[
                       // Real search results overlay
@@ -751,61 +762,62 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       // ═════════════════════════════════════════════════
                       _buildEscrowWalletCard(user),
 
-                      const SizedBox(height: 14),
+                      const SizedBox(height: _kGapS),
 
                       // ═════════════════════════════════════════════════
                       // 4. WALLET ACTIONS (Deposit, Withdraw, Scan QR)
                       // ═════════════════════════════════════════════════
                       _buildWalletActionButtons(user),
 
-                      const SizedBox(height: 16),
+                      const SizedBox(height: _kGapS),
 
                       // ═════════════════════════════════════════════════
                       // 5. QUICK TOP UP HEADER
                       // ═════════════════════════════════════════════════
                       _buildQuickTopUpBanner(),
 
-                      const SizedBox(height: 12),
+                      const SizedBox(height: _kGapS),
 
                       // ═════════════════════════════════════════════════
                       // 6. MOBILE MONEY + BANK TRANSFER (2 CARDS)
                       // ═════════════════════════════════════════════════
                       _buildPaymentMethodCards(user),
 
-                      const SizedBox(height: 16),
+                      const SizedBox(height: _kGapS),
 
                       // ═════════════════════════════════════════════════
                       // 7. SECURITY & BENEFITS ROW
                       // ═════════════════════════════════════════════════
                       _buildSecurityBenefitsRow(),
 
-                      const SizedBox(height: 18),
+                      const SizedBox(height: _kGapM),
 
                       // ═════════════════════════════════════════════════
                       // 8. AUTO-SLIDING PROMOTIONAL BANNER
                       // ═════════════════════════════════════════════════
                       _buildAutoSlidingPromoBanner(),
 
-                      const SizedBox(height: 20),
+                      const SizedBox(height: _kGapL),
 
                       // ═════════════════════════════════════════════════
                       // 9. SAVED PLACES & SHORTCUTS
                       // ═════════════════════════════════════════════════
                       _buildSavedPlacesSection(user),
 
-                      const SizedBox(height: 20),
+                      const SizedBox(height: _kGapL),
 
                       // ═════════════════════════════════════════════════
                       // 10. VERIFIED PROPERTIES IN SIERRA LEONE
                       // ═════════════════════════════════════════════════
                       _buildVerifiedPropertiesSection(),
 
-                      const SizedBox(height: 36),
+                      const SizedBox(height: 28),
                     ],
                   ],
                 ),
               ),
             ),
+          ),
           ),
         );
       },
@@ -833,15 +845,15 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
       children: [
         // Avatar circle with initials or photo
         Container(
-          width: 50,
-          height: 50,
+          width: 44,
+          height: 44,
           decoration: const BoxDecoration(
             color: Color(0xFF047857), // Deep emerald
             shape: BoxShape.circle,
           ),
           child: user?.avatarUrl != null && user!.avatarUrl!.isNotEmpty
               ? ClipRRect(
-                  borderRadius: BorderRadius.circular(25),
+                  borderRadius: BorderRadius.circular(22),
                   child: Image.network(
                     user.avatarUrl!,
                     fit: BoxFit.cover,
@@ -851,7 +863,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w700,
-                          fontSize: 18,
+                          fontSize: 16,
                         ),
                       ),
                     ),
@@ -863,12 +875,12 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w700,
-                      fontSize: 18,
+                      fontSize: 16,
                     ),
                   ),
                 ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 10),
 
         // User Name & Meta
         Expanded(
@@ -878,9 +890,10 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               const Text(
                 'Hello,',
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: FontWeight.w500,
                   color: AppColors.textSecondary,
+                  height: 1.2,
                 ),
               ),
               Row(
@@ -891,10 +904,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 18,
+                        fontSize: 16,
                         fontWeight: FontWeight.w800,
                         color: AppColors.obsidian,
-                        letterSpacing: -0.3,
+                        letterSpacing: -0.2,
+                        height: 1.25,
                       ),
                     ),
                   ),
@@ -917,10 +931,13 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               ),
               Text(
                 'Member since $memberSinceYear',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: 11.5,
+                  fontSize: 11,
                   color: AppColors.textSecondary,
                   fontWeight: FontWeight.w400,
+                  height: 1.2,
                 ),
               ),
             ],
@@ -939,11 +956,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
             );
           },
           child: Container(
-            width: 42,
-            height: 42,
+            width: 38,
+            height: 38,
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(21),
+              borderRadius: BorderRadius.circular(19),
               border: Border.all(color: const Color(0xFFE2E8F0)),
               boxShadow: [
                 BoxShadow(
@@ -959,12 +976,12 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 const Icon(
                   Icons.notifications_none_rounded,
                   color: AppColors.obsidian,
-                  size: 22,
+                  size: 20,
                 ),
                 if (unreadCount > 0)
                   Positioned(
-                    top: 9,
-                    right: 10,
+                    top: 8,
+                    right: 9,
                     child: Container(
                       width: 8,
                       height: 8,
@@ -990,11 +1007,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
             );
           },
           child: Container(
-            width: 42,
-            height: 42,
+            width: 38,
+            height: 38,
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(21),
+              borderRadius: BorderRadius.circular(19),
               border: Border.all(color: const Color(0xFFE2E8F0)),
               boxShadow: [
                 BoxShadow(
@@ -1007,7 +1024,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
             child: const Icon(
               Icons.settings_outlined,
               color: AppColors.obsidian,
-              size: 20,
+              size: 19,
             ),
           ),
         ),
@@ -1020,74 +1037,85 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   // ═══════════════════════════════════════════════════════════════════
 
   Widget _buildSearchBar() {
-    return Container(
-      height: 52,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.02),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          const SizedBox(width: 14),
-          const Icon(
-            Icons.search_rounded,
-            color: Color(0xFF94A3B8),
-            size: 22,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: TextField(
-              controller: _searchController,
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                hintText: 'Search homes, cars, or destinations...',
-                hintStyle: TextStyle(
-                  color: Color(0xFF94A3B8),
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w400,
+    const double barHeight = 46;
+    return Row(
+      children: [
+        Expanded(
+          child: Container(
+            height: barHeight,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.02),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
                 ),
-                border: InputBorder.none,
-                isDense: true,
-                contentPadding: EdgeInsets.zero,
-              ),
+              ],
+            ),
+            child: Row(
+              children: [
+                const SizedBox(width: 12),
+                const Icon(
+                  Icons.search_rounded,
+                  color: Color(0xFF94A3B8),
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    onChanged: (_) => setState(() {}),
+                    style: const TextStyle(fontSize: 13.5),
+                    decoration: const InputDecoration(
+                      hintText: 'Search homes, cars, or destinations...',
+                      hintMaxLines: 1,
+                      hintStyle: TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w400,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ),
+                if (_searchController.text.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.clear, size: 18, color: AppColors.textSecondary),
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() {});
+                    },
+                  )
+                else
+                  const SizedBox(width: 12),
+              ],
             ),
           ),
-          if (_searchController.text.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.clear, size: 18, color: AppColors.textSecondary),
-              onPressed: () {
-                _searchController.clear();
-                setState(() {});
-              },
+        ),
+        const SizedBox(width: 10),
+        GestureDetector(
+          onTap: _openFilterBottomSheet,
+          child: Container(
+            width: barHeight,
+            height: barHeight,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F172A), // Dark navy
+              borderRadius: BorderRadius.circular(12),
             ),
-          const SizedBox(width: 4),
-          GestureDetector(
-            onTap: _openFilterBottomSheet,
-            child: Container(
-              margin: const EdgeInsets.only(right: 6),
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: const Color(0xFF0F172A), // Dark navy
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(
-                Icons.tune_rounded,
-                color: Colors.white,
-                size: 20,
-              ),
+            child: const Icon(
+              Icons.tune_rounded,
+              color: Colors.white,
+              size: 20,
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -1114,9 +1142,12 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
       );
 
   Widget _buildEscrowWalletCard(UserEntity? user) {
+    return LayoutBuilder(builder: (context, constraints) {
+    // The illustration scales with the card (it used to be a fixed 114×96 box that squeezed the text).
+    final graphicWidth = (constraints.maxWidth * 0.27).clamp(76.0, 114.0);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [
@@ -1143,34 +1174,34 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 32,
-                          height: 32,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF047857),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.shield_rounded,
-                            color: Colors.white,
-                            size: 18,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'Escrow Wallet',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF064E3B),
-                          ),
-                        ),
-                      ],
+                    Container(
+                      width: 30,
+                      height: 30,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF047857),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.shield_rounded,
+                        color: Colors.white,
+                        size: 17,
+                      ),
                     ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Vektolux Escrow Wallet',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF064E3B),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
                     InkWell(
                       onTap: () {
                         Navigator.of(context).push(
@@ -1209,11 +1240,16 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                   ],
                 ),
 
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
+                const Text(
+                  'Wallet Balance',
+                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF065F46)),
+                ),
+                const SizedBox(height: 2),
                 if (_isLoadingBalance)
                   Container(
                     width: 120,
-                    height: 32,
+                    height: 30,
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.6),
                       borderRadius: BorderRadius.circular(8),
@@ -1229,37 +1265,55 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     ),
                   )
                 else if (_walletError != null)
-                  Row(
-                    children: [
-                      Text(
-                        _walletError!,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.error,
+                  // The real error stays visible (never replaced by a fake balance), laid out to fit.
+                  SizedBox(
+                    height: 30,
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            _walletError!,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.error,
+                              height: 1.15,
+                            ),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        onTap: () => _fetchWalletData(user.id),
-                        child: const Icon(Icons.refresh, size: 16, color: Color(0xFF047857)),
-                      ),
-                    ],
+                        const SizedBox(width: 6),
+                        InkWell(
+                          onTap: () => _fetchWalletData(user.id),
+                          borderRadius: BorderRadius.circular(14),
+                          child: const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: Icon(Icons.refresh, size: 18, color: Color(0xFF047857)),
+                          ),
+                        ),
+                      ],
+                    ),
                   )
                 else if (_walletBalance != null)
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'SLE ${_currencyFormat.format(_walletBalance! + (_escrowBalance ?? 0) + (_pendingBalance ?? 0))}',
-                        style: const TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
-                          letterSpacing: -0.5,
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'SLE ${_currencyFormat.format(_walletBalance! + (_escrowBalance ?? 0) + (_pendingBalance ?? 0))}',
+                          maxLines: 1,
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF0F172A),
+                            letterSpacing: -0.5,
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 4),
                       _walletFigure('Escrow Protected', _escrowBalance ?? 0),
                       _walletFigure('Available', _walletBalance!),
                       if ((_pendingBalance ?? 0) > 0)
@@ -1275,9 +1329,9 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       color: Color(0xFF0F172A),
                     ),
                   ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.8),
                     borderRadius: BorderRadius.circular(16),
@@ -1295,14 +1349,18 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                         ),
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        _activeEscrowDeals > 0
-                            ? 'Escrow Protected • $_activeEscrowDeals Active Deal${_activeEscrowDeals == 1 ? '' : 's'}'
-                            : 'Escrow Protected • Ready for Deals',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF065F46),
+                      Flexible(
+                        child: Text(
+                          _activeEscrowDeals > 0
+                              ? 'Escrow Protected • $_activeEscrowDeals Active Deal${_activeEscrowDeals == 1 ? '' : 's'}'
+                              : 'Escrow Protected • Ready for Deals',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF065F46),
+                          ),
                         ),
                       ),
                     ],
@@ -1311,13 +1369,14 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               ],
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
 
           // 3D Emerald Security Wallet Graphic with periodic subtle verification pulse
-          const SecurityWalletGraphic(),
+          SecurityWalletGraphic(width: graphicWidth, height: graphicWidth * 96 / 114),
         ],
       ),
     );
+    });
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -1325,48 +1384,47 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   // ═══════════════════════════════════════════════════════════════════
 
   Widget _buildWalletActionButtons(UserEntity? user) {
-    return Row(
-      children: [
-        Expanded(
-          child: _buildWalletActionTile(
-            icon: Icons.add_rounded,
-            title: 'Deposit',
-            subtitle: 'Add funds to wallet',
-            onTap: () => _showTopUpSheet(context, user),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _buildWalletActionTile(
-            icon: Icons.arrow_upward_rounded,
-            title: 'Withdraw',
-            subtitle: 'Move funds out',
-            onTap: () => _showWithdrawalSheet(context, user),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _buildWalletActionTile(
-            icon: Icons.qr_code_2_rounded,
-            title: 'Receive',
-            subtitle: 'Get paid',
-            onTap: () => ReceivePaymentSheet.show(
+    final actions = <({IconData icon, String title, String subtitle, VoidCallback onTap})>[
+      (icon: Icons.add_rounded, title: 'Deposit', subtitle: 'Add funds to wallet', onTap: () => _showTopUpSheet(context, user)),
+      (icon: Icons.arrow_upward_rounded, title: 'Withdraw', subtitle: 'Move funds out', onTap: () => _showWithdrawalSheet(context, user)),
+      (
+        icon: Icons.qr_code_2_rounded,
+        title: 'Receive',
+        subtitle: 'Get paid',
+        onTap: () => ReceivePaymentSheet.show(
               context,
               onPaymentReceived: () => _fetchWalletData(user?.id),
             ),
-          ),
+      ),
+      (icon: Icons.qr_code_scanner_rounded, title: 'Scan & Pay', subtitle: 'Pay a QR code', onTap: () => _openQrScanner(context)),
+    ];
+    const gap = 8.0;
+    return LayoutBuilder(builder: (context, constraints) {
+      // Each of the 4 tiles gets an equal share. The wide layout (icon + title + subtitle + chevron)
+      // needs ~150pt per tile; on phones (~85pt per tile) a compact stacked tile is used instead of
+      // squeezing the title into a few points (which wrapped "Deposit" one letter per line).
+      final tileWidth = (constraints.maxWidth - gap * (actions.length - 1)) / actions.length;
+      final compact = tileWidth < 150;
+      return IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < actions.length; i++) ...[
+              if (i > 0) const SizedBox(width: gap),
+              Expanded(
+                child: _buildWalletActionTile(
+                  icon: actions[i].icon,
+                  title: actions[i].title,
+                  subtitle: actions[i].subtitle,
+                  onTap: actions[i].onTap,
+                  compact: compact,
+                ),
+              ),
+            ],
+          ],
         ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _buildWalletActionTile(
-            icon: Icons.qr_code_scanner_rounded,
-            title: 'Scan & Pay',
-            subtitle: 'Pay a QR code',
-            onTap: () => _openQrScanner(context),
-          ),
-        ),
-      ],
-    );
+      );
+    });
   }
 
   Widget _buildWalletActionTile({
@@ -1374,34 +1432,75 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     required String title,
     required String subtitle,
     required VoidCallback onTap,
+    bool compact = false,
   }) {
+    final decoration = BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: const Color(0xFFE2E8F0)),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.02),
+          blurRadius: 6,
+          offset: const Offset(0, 2),
+        ),
+      ],
+    );
+    final iconCircle = Container(
+      width: compact ? 30 : 32,
+      height: compact ? 30 : 32,
+      decoration: const BoxDecoration(
+        color: Color(0xFF047857), // Emerald circle
+        shape: BoxShape.circle,
+      ),
+      child: Icon(icon, color: Colors.white, size: compact ? 17 : 18),
+    );
+
+    if (compact) {
+      return Semantics(
+        button: true,
+        label: '$title. $subtitle',
+        child: GestureDetector(
+          onTap: onTap,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+            decoration: decoration,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                iconCircle,
+                const SizedBox(height: 6),
+                // One line, always: scales down slightly rather than wrapping.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    softWrap: false,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.obsidian,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.02),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
+        decoration: decoration,
         child: Row(
           children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: const BoxDecoration(
-                color: Color(0xFF047857), // Emerald circle
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, color: Colors.white, size: 18),
-            ),
+            iconCircle,
             const SizedBox(width: 8),
             Expanded(
               child: Column(
@@ -1410,6 +1509,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 children: [
                   Text(
                     title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
@@ -1446,7 +1547,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   Widget _buildQuickTopUpBanner() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
@@ -1474,17 +1575,23 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               children: [
                 Text(
                   'Quick Top Up',
+                  maxLines: 1,
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
                     color: AppColors.obsidian,
+                    height: 1.2,
                   ),
                 ),
+                SizedBox(height: 1),
                 Text(
                   'Top up your wallet instantly using your phone number or bank details.',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 11.5,
+                    fontSize: 11,
                     color: AppColors.textSecondary,
+                    height: 1.25,
                   ),
                 ),
               ],
@@ -1500,13 +1607,16 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   // ═══════════════════════════════════════════════════════════════════
 
   Widget _buildPaymentMethodCards(UserEntity? user) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    // IntrinsicHeight + stretch: both cards take the taller card's height, and the Spacer in each
+    // keeps inputs and buttons aligned at the bottom regardless of description length.
+    return IntrinsicHeight(
+      child: Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // ── LEFT: Mobile Money Card ─────────────────────────────────
         Expanded(
           child: Container(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: const Color(0xFFF0FDF4), // Light green tint
               borderRadius: BorderRadius.circular(16),
@@ -1518,8 +1628,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 Row(
                   children: [
                     Container(
-                      width: 38,
-                      height: 38,
+                      width: 34,
+                      height: 34,
                       decoration: BoxDecoration(
                         color: const Color(0xFF10B981).withValues(alpha: 0.15),
                         shape: BoxShape.circle,
@@ -1527,17 +1637,22 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       child: const Icon(
                         Icons.phonelink_ring_rounded,
                         color: Color(0xFF059669),
-                        size: 22,
+                        size: 20,
                       ),
                     ),
                     const SizedBox(width: 8),
                     const Expanded(
-                      child: Text(
-                        'Mobile Money',
-                        style: TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.obsidian,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Mobile Money',
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.obsidian,
+                          ),
                         ),
                       ),
                     ),
@@ -1546,16 +1661,19 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 const SizedBox(height: 8),
                 const Text(
                   'Pay with your mobile number\n(Orange Money, Afrimoney, QMoney, or SLCB Bank).',
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 10.5,
                     color: AppColors.textSecondary,
                     height: 1.3,
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
+                const Spacer(),
                 // Pill Phone Input
                 Container(
-                  height: 40,
+                  height: 38,
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   decoration: BoxDecoration(
                     color: Colors.white,
@@ -1583,11 +1701,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 // Pay Now Button
                 SizedBox(
                   width: double.infinity,
-                  height: 40,
+                  height: 38,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF047857),
@@ -1598,16 +1716,20 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       ),
                     ),
                     onPressed: () => _executeMobileMoneyTopUp(user),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.bolt, size: 16),
-                        SizedBox(width: 4),
-                        Text(
-                          'Pay Now →',
-                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-                        ),
-                      ],
+                    child: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.bolt, size: 16),
+                          SizedBox(width: 4),
+                          Text(
+                            'Pay Now →',
+                            maxLines: 1,
+                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1621,7 +1743,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         // ── RIGHT: Bank Transfer Card ───────────────────────────────
         Expanded(
           child: Container(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: const Color(0xFFF0F9FF), // Light blue tint
               borderRadius: BorderRadius.circular(16),
@@ -1633,8 +1755,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 Row(
                   children: [
                     Container(
-                      width: 38,
-                      height: 38,
+                      width: 34,
+                      height: 34,
                       decoration: BoxDecoration(
                         color: const Color(0xFF0284C7).withValues(alpha: 0.15),
                         shape: BoxShape.circle,
@@ -1642,17 +1764,22 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       child: const Icon(
                         Icons.account_balance_rounded,
                         color: Color(0xFF0284C7),
-                        size: 22,
+                        size: 20,
                       ),
                     ),
                     const SizedBox(width: 8),
                     const Expanded(
-                      child: Text(
-                        'Bank Transfer',
-                        style: TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.obsidian,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Bank Transfer',
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.obsidian,
+                          ),
                         ),
                       ),
                     ),
@@ -1661,16 +1788,19 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 const SizedBox(height: 8),
                 const Text(
                   'Pay from your bank account\n(Link, Afrimoney Bank, QMoney Bank, or any supported bank).',
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 10.5,
                     color: AppColors.textSecondary,
                     height: 1.3,
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
+                const Spacer(),
                 // Pill Bank Input
                 Container(
-                  height: 40,
+                  height: 38,
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   decoration: BoxDecoration(
                     color: Colors.white,
@@ -1697,11 +1827,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 // Pay Now Button
                 SizedBox(
                   width: double.infinity,
-                  height: 40,
+                  height: 38,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF2563EB), // Royal blue
@@ -1712,16 +1842,20 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       ),
                     ),
                     onPressed: () => _executeBankTransfer(user),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.bolt, size: 16),
-                        SizedBox(width: 4),
-                        Text(
-                          'Pay Now →',
-                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-                        ),
-                      ],
+                    child: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.bolt, size: 16),
+                          SizedBox(width: 4),
+                          Text(
+                            'Pay Now →',
+                            maxLines: 1,
+                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1730,6 +1864,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           ),
         ),
       ],
+      ),
     );
   }
 
@@ -1739,29 +1874,31 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
 
   Widget _buildSecurityBenefitsRow() {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _buildBenefitItem(Icons.bolt_rounded, 'Instant\nProcessing'),
+          Expanded(child: _buildBenefitItem(Icons.bolt_rounded, 'Instant\nProcessing')),
           _buildBenefitDivider(),
-          _buildBenefitItem(Icons.shield_outlined, 'Secure\nTransactions'),
+          Expanded(child: _buildBenefitItem(Icons.shield_outlined, 'Secure\nTransactions')),
           _buildBenefitDivider(),
-          _buildBenefitItem(Icons.lock_outline_rounded, 'Your Details\nAre Safe'),
+          Expanded(child: _buildBenefitItem(Icons.lock_outline_rounded, 'Your Details\nAre Safe')),
           _buildBenefitDivider(),
-          _buildBenefitItem(Icons.published_with_changes_rounded, 'Available\nAlways', is247: true),
+          Expanded(child: _buildBenefitItem(Icons.published_with_changes_rounded, 'Available\nAlways', is247: true)),
         ],
       ),
     );
   }
 
   Widget _buildBenefitItem(IconData icon, String label, {bool is247 = false}) {
-    return Row(
+    // Bounded by its Expanded cell; scales down a little instead of overflowing on narrow phones.
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         if (is247)
@@ -1785,6 +1922,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         const SizedBox(width: 4),
         Text(
           label,
+          maxLines: 2,
           style: const TextStyle(
             fontSize: 9.5,
             fontWeight: FontWeight.w600,
@@ -1793,6 +1931,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           ),
         ),
       ],
+      ),
     );
   }
 
@@ -1825,7 +1964,9 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 final slide = _promotionalSlides[index];
                 return Container(
                   margin: const EdgeInsets.symmetric(horizontal: 2),
-                  padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
+                  // 10pt vertical padding leaves room for the text column when system text is scaled up
+                  // (the banner is a fixed 130pt tall; 14pt overflowed by a pixel at 1.15×).
+                  padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(
                       colors: [
@@ -1868,9 +2009,9 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                 height: 1.25,
                               ),
                             ),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: 6),
                             SizedBox(
-                              height: 32,
+                              height: 30,
                               child: ElevatedButton(
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF047857),
@@ -1884,19 +2025,24 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                 onPressed: () {
                                   MainNavigationShell.switchToTab(context, slide.targetTab);
                                 },
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      slide.actionLabel,
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
+                                // Scales down a little rather than overflowing the narrow banner column.
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        slide.actionLabel,
+                                        maxLines: 1,
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    const Icon(Icons.arrow_forward, size: 12),
-                                  ],
+                                      const SizedBox(width: 4),
+                                      const Icon(Icons.arrow_forward, size: 12),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
@@ -1964,20 +2110,28 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Row(
-              children: [
-                Icon(Icons.location_on, color: Color(0xFF10B981), size: 18),
-                SizedBox(width: 6),
-                Text(
-                  'Saved Places & Shortcuts',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.obsidian,
+            // The title takes the remaining width (ellipsis if needed); "See All" always stays visible.
+            const Expanded(
+              child: Row(
+                children: [
+                  Icon(Icons.location_on, color: Color(0xFF10B981), size: 18),
+                  SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      'Saved Places & Shortcuts',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.obsidian,
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
+            const SizedBox(width: 8),
             GestureDetector(
               onTap: () {
                 MainNavigationShell.switchToTab(context, 4); // Account

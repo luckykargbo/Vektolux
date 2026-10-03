@@ -50,6 +50,7 @@ export const getExploreFeed = query({
       city: string;
       bedrooms?: number;
       bathrooms?: number;
+      areaSqM?: number;
       ownerId: string;
       ownerName: string;
       ownerAvatar?: string;
@@ -95,6 +96,7 @@ export const getExploreFeed = query({
           city: p.city ?? "Sierra Leone",
           bedrooms: p.bedrooms,
           bathrooms: p.bathrooms,
+          areaSqM: p.areaSqM,
           ownerId: p.ownerId as string,
           ownerName,
           ownerAvatar,
@@ -117,6 +119,8 @@ export const getExploreFeed = query({
       currency: string;
       imageUrl?: string;
       location: string;
+      fuelType?: string;
+      transmission?: string;
       ownerId: string;
       ownerName: string;
       ownerAvatar?: string;
@@ -164,6 +168,8 @@ export const getExploreFeed = query({
           currency: vDoc.currency ?? "SLE",
           imageUrl: firstImage,
           location: publicLocation(vDoc.location),
+          fuelType: vDoc.fuelType,
+          transmission: vDoc.transmission,
           ownerId: vDoc.ownerId as string,
           ownerName,
           ownerAvatar,
@@ -238,6 +244,15 @@ export const getExploreFeed = query({
       ownerName: string;
       ownerAvatar?: string;
       isVerified: boolean;
+      // real card details (absent when the listing does not have them; the app never invents them)
+      category?: string;
+      pricingType?: string;
+      bedrooms?: number;
+      bathrooms?: number;
+      areaSqM?: number;
+      year?: number;
+      fuelType?: string;
+      transmission?: string;
     }> = [];
 
     // Combine top real items into recommendation stream
@@ -254,6 +269,10 @@ export const getExploreFeed = query({
         ownerName: p.ownerName,
         ownerAvatar: p.ownerAvatar,
         isVerified: p.isVerified,
+        category: p.category,
+        bedrooms: p.bedrooms,
+        bathrooms: p.bathrooms,
+        areaSqM: p.areaSqM,
       });
     }
 
@@ -270,6 +289,11 @@ export const getExploreFeed = query({
         ownerName: vItem.ownerName,
         ownerAvatar: vItem.ownerAvatar,
         isVerified: vItem.isVerified,
+        category: vItem.category,
+        pricingType: vItem.pricingType,
+        year: vItem.year,
+        fuelType: vItem.fuelType,
+        transmission: vItem.transmission,
       });
     }
 

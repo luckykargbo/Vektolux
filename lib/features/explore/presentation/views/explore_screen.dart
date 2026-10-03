@@ -35,6 +35,16 @@ class ExploreScreen extends StatefulWidget {
 }
 
 class _ExploreScreenState extends State<ExploreScreen> {
+  // Layout tokens (one rhythm for the whole screen).
+  static const double _gutter = 20; // screen side margin
+  static const double _gap = 12; // gap between cards
+  static const double _sectionGap = 20; // gap between sections
+  // Dense dashboard: cap iOS Dynamic Type so cards and one-line labels keep their structure.
+  static const double _maxTextScale = 1.15;
+
+  /// Width available to content (screen minus both gutters); set from the LayoutBuilder in build().
+  double _contentWidth = 350;
+
   final NumberFormat _currencyFormat = NumberFormat('#,##0', 'en_US');
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -391,9 +401,9 @@ class _ExploreScreenState extends State<ExploreScreen> {
           model: model,
           year: year,
           vehicleType: category,
-          listingIntent: pricingType == 'daily' ? 'rental' : 'sale',
-          salePrice: pricingType == 'daily' ? null : price,
-          pricePerDay: pricingType == 'daily' ? price : null,
+          listingIntent: _isDailyHire(pricingType) ? 'rental' : 'sale',
+          salePrice: _isDailyHire(pricingType) ? null : price,
+          pricePerDay: _isDailyHire(pricingType) ? price : null,
           imageUrls: imageUrls,
         ),
       ),
@@ -414,91 +424,45 @@ class _ExploreScreenState extends State<ExploreScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: SafeArea(
-        bottom: false,
-        child: RefreshIndicator(
-          color: AppColors.emerald,
-          backgroundColor: Colors.white,
-          onRefresh: _loadExploreData,
-          child: CustomScrollView(
-            controller: _scrollController,
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              // ── 1. HEADER ───────────────────────────────────────────
-              SliverToBoxAdapter(
-                child: _buildHeader(),
-              ),
-
-              // ── 2. SEARCH BAR & GREEN FILTER BUTTON ─────────────────
-              SliverToBoxAdapter(
-                child: _buildSearchRow(),
-              ),
-
-              // ── 3. CATEGORY SHORTCUTS ───────────────────────────────
-              SliverToBoxAdapter(
-                child: _buildCategoryShortcuts(),
-              ),
-
-              const SliverToBoxAdapter(
-                child: SizedBox(height: 14),
-              ),
-
-              // ── DYNAMIC BODY: SEARCH RESULTS OR EXPLORE SECTIONS ───
-              if (_isSearching)
-                SliverToBoxAdapter(
-                  child: _buildSearchResults(),
-                )
-              else if (_loadError != null)
-                SliverToBoxAdapter(
-                  child: _buildErrorBanner(),
-                )
-              else ...[
-                // ── 4. RECOMMENDED FOR YOU ─────────────────────────────
-                SliverToBoxAdapter(
-                  child: _buildRecommendedSection(),
+      body: MediaQuery.withClampedTextScaling(
+        maxScaleFactor: _maxTextScale,
+        child: SafeArea(
+          bottom: false,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              _contentWidth = constraints.maxWidth - 2 * _gutter;
+              return RefreshIndicator(
+                color: AppColors.emerald,
+                backgroundColor: Colors.white,
+                onRefresh: _loadExploreData,
+                child: CustomScrollView(
+                  controller: _scrollController,
+                  physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+                  slivers: [
+                    SliverToBoxAdapter(child: _buildHeader()),
+                    SliverToBoxAdapter(child: _buildSearchRow()),
+                    SliverToBoxAdapter(child: _buildCategoryShortcuts()),
+                    const SliverToBoxAdapter(child: SizedBox(height: _sectionGap)),
+                    if (_isSearching)
+                      SliverToBoxAdapter(child: _buildSearchResults())
+                    else ...[
+                      // A load failure adds a banner; every section stays in place (never replaced).
+                      if (_loadError != null) SliverToBoxAdapter(child: _buildErrorBanner()),
+                      SliverToBoxAdapter(child: _buildRecommendedSection()),
+                      const SliverToBoxAdapter(child: SizedBox(height: _sectionGap)),
+                      SliverToBoxAdapter(child: _buildPropertiesNearYouSection()),
+                      const SliverToBoxAdapter(child: SizedBox(height: _sectionGap)),
+                      SliverToBoxAdapter(child: _buildVehiclesSection()),
+                      const SliverToBoxAdapter(child: SizedBox(height: _sectionGap)),
+                      SliverToBoxAdapter(child: _buildTopAgentsSection()),
+                      const SliverToBoxAdapter(child: SizedBox(height: _sectionGap)),
+                      SliverToBoxAdapter(child: _buildPersonalizeFeedCard()),
+                      const SliverToBoxAdapter(child: SizedBox(height: 32)),
+                    ],
+                  ],
                 ),
-
-                const SliverToBoxAdapter(
-                  child: SizedBox(height: 16),
-                ),
-
-                // ── 5. PROPERTIES NEAR YOU ─────────────────────────────
-                SliverToBoxAdapter(
-                  child: _buildPropertiesNearYouSection(),
-                ),
-
-                const SliverToBoxAdapter(
-                  child: SizedBox(height: 16),
-                ),
-
-                // ── 6. VEHICLES FOR SALE & HIRE ────────────────────────
-                SliverToBoxAdapter(
-                  child: _buildVehiclesSection(),
-                ),
-
-                const SliverToBoxAdapter(
-                  child: SizedBox(height: 16),
-                ),
-
-                // ── 7. TOP AGENTS & DEALERS ────────────────────────────
-                SliverToBoxAdapter(
-                  child: _buildTopAgentsSection(),
-                ),
-
-                const SliverToBoxAdapter(
-                  child: SizedBox(height: 20),
-                ),
-
-                // ── 8. BUILD YOUR EXPLORE FEED ─────────────────────────
-                SliverToBoxAdapter(
-                  child: _buildPersonalizeFeedCard(),
-                ),
-
-                const SliverToBoxAdapter(
-                  child: SizedBox(height: 36),
-                ),
-              ],
-            ],
+              );
+            },
           ),
         ),
       ),
@@ -507,11 +471,85 @@ class _ExploreScreenState extends State<ExploreScreen> {
   }
 
   // ═════════════════════════════════════════════════════════════════════
+  // SHARED BUILDING BLOCKS
+  // ═════════════════════════════════════════════════════════════════════
+
+  /// Full-bleed horizontal row of cards. Cards scroll under the screen edge (not the page gutter),
+  /// and all cards in the row take the height of the tallest one, so nothing depends on a fixed
+  /// height that real fonts / larger text could overflow.
+  Widget _hList(List<Widget> children, {double gap = _gap}) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(_gutter, 2, _gutter, 10), // bottom room for card shadows
+      physics: const BouncingScrollPhysics(),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < children.length; i++) ...[
+              if (i > 0) SizedBox(width: gap),
+              children[i],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _padded(Widget child) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: _gutter),
+        child: child,
+      );
+
+  /// One section: padded header, then a full-bleed body.
+  Widget _section({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required VoidCallback onSeeAll,
+    required Widget body,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _padded(_buildSectionHeader(icon: icon, iconColor: iconColor, title: title, subtitle: subtitle, onSeeAll: onSeeAll)),
+        const SizedBox(height: 10),
+        body,
+      ],
+    );
+  }
+
+  /// Empty state that stays honest when the backend could not be reached.
+  Widget _emptyOrUnavailable({
+    required IconData icon,
+    required String title,
+    required String description,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
+    if (_loadError != null) {
+      return _padded(_buildCompactEmptyState(
+        icon: Icons.cloud_off_outlined,
+        title: "Couldn't load this section",
+        description: 'Tap Retry above or pull down to refresh.',
+      ));
+    }
+    return _padded(_buildCompactEmptyState(
+      icon: icon,
+      title: title,
+      description: description,
+      actionLabel: actionLabel,
+      onAction: onAction,
+    ));
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
   // 1. HEADER
   // ═════════════════════════════════════════════════════════════════════
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+      padding: const EdgeInsets.fromLTRB(_gutter, 12, _gutter, 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -522,19 +560,25 @@ class _ExploreScreenState extends State<ExploreScreen> {
               children: [
                 const Text(
                   'Explore',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 28,
+                    fontSize: 26,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: -0.6,
+                    letterSpacing: -0.5,
+                    height: 1.15,
                     color: AppColors.obsidian,
                   ),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(
                   'Discover properties, vehicles, agents and more',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 13.5,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w400,
+                    height: 1.2,
                     color: AppColors.textSecondary,
                   ),
                 ),
@@ -542,12 +586,13 @@ class _ExploreScreenState extends State<ExploreScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          // Notification Bell with unread indicator
+          // Notification bell with unread indicator
           Stack(
             clipBehavior: Clip.none,
             children: [
               _buildHeaderIconButton(
                 icon: Icons.notifications_none_rounded,
+                iconColor: AppColors.emeraldDark,
                 tooltip: 'Notifications',
                 onTap: () {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -561,24 +606,24 @@ class _ExploreScreenState extends State<ExploreScreen> {
               ),
               if (_unreadNotificationsCount > 0)
                 Positioned(
-                  top: 2,
-                  right: 2,
+                  top: 3,
+                  right: 3,
                   child: Container(
-                    width: 10,
-                    height: 10,
+                    width: 9,
+                    height: 9,
                     decoration: BoxDecoration(
                       color: AppColors.error,
                       shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
+                      border: Border.all(color: Colors.white, width: 1.5),
                     ),
                   ),
                 ),
             ],
           ),
           const SizedBox(width: 8),
-          // Filter / Settings Button
           _buildHeaderIconButton(
             icon: Icons.tune_rounded,
+            iconColor: AppColors.emeraldDark,
             tooltip: 'Filter & Preferences',
             onTap: _showQuickFilterSheet,
           ),
@@ -589,26 +634,26 @@ class _ExploreScreenState extends State<ExploreScreen> {
 
   Widget _buildHeaderIconButton({
     required IconData icon,
+    required Color iconColor,
     required String tooltip,
     required VoidCallback onTap,
   }) {
-    return Container(
-      width: 44,
-      height: 44,
-      decoration: BoxDecoration(
-        color: AppColors.gray50,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border, width: 1),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: AppColors.emeraldSurface,
           borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Icon(
-            icon,
-            size: 20,
-            color: AppColors.obsidian,
+          border: Border.all(color: const Color(0xFFD1FAE5), width: 1),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: onTap,
+            child: Icon(icon, size: 20, color: iconColor),
           ),
         ),
       ),
@@ -619,17 +664,17 @@ class _ExploreScreenState extends State<ExploreScreen> {
   // 2. SEARCH BAR & GREEN FILTER BUTTON
   // ═════════════════════════════════════════════════════════════════════
   Widget _buildSearchRow() {
+    const double barHeight = 48;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: _gutter, vertical: 6),
       child: Row(
         children: [
-          // Large Rounded Search Input Field
           Expanded(
             child: Container(
-              height: 52,
+              height: barHeight,
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: AppColors.border, width: 1),
                 boxShadow: [
                   BoxShadow(
@@ -643,18 +688,20 @@ class _ExploreScreenState extends State<ExploreScreen> {
                 controller: _searchController,
                 onChanged: _onSearchChanged,
                 textInputAction: TextInputAction.search,
+                // Explicit colours: typed text must be dark whatever the system appearance is.
+                style: const TextStyle(fontSize: 14, color: AppColors.obsidian, fontWeight: FontWeight.w500),
+                cursorColor: AppColors.emerald,
                 decoration: InputDecoration(
                   hintText: 'Search properties, vehicles, agents...',
-                  hintStyle: TextStyle(
-                    fontSize: 14,
+                  hintMaxLines: 1,
+                  hintStyle: const TextStyle(
+                    fontSize: 13.5,
                     color: AppColors.gray400,
                     fontWeight: FontWeight.w400,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  prefixIcon: const Icon(
-                    Icons.search_rounded,
-                    color: AppColors.gray400,
-                    size: 22,
-                  ),
+                  prefixIcon: const Icon(Icons.search_rounded, color: AppColors.gray500, size: 21),
+                  prefixIconConstraints: const BoxConstraints(minWidth: 44, minHeight: barHeight),
                   suffixIcon: _searchQuery.isNotEmpty
                       ? IconButton(
                           icon: const Icon(Icons.close_rounded, size: 18, color: AppColors.gray500),
@@ -664,23 +711,26 @@ class _ExploreScreenState extends State<ExploreScreen> {
                           },
                         )
                       : null,
+                  filled: false,
+                  isDense: true,
                   border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 15),
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 14),
                 ),
               ),
             ),
           ),
           const SizedBox(width: 10),
-          // Dedicated Vektolux Green Filter Button on the right
           Container(
-            width: 52,
-            height: 52,
+            width: barHeight,
+            height: barHeight,
             decoration: BoxDecoration(
               color: AppColors.emerald,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(14),
               boxShadow: [
                 BoxShadow(
-                  color: AppColors.emerald.withValues(alpha: 0.3),
+                  color: AppColors.emerald.withValues(alpha: 0.28),
                   blurRadius: 10,
                   offset: const Offset(0, 3),
                 ),
@@ -689,14 +739,10 @@ class _ExploreScreenState extends State<ExploreScreen> {
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(14),
                 onTap: _showQuickFilterSheet,
                 child: const Center(
-                  child: Icon(
-                    Icons.tune_rounded,
-                    color: Colors.white,
-                    size: 22,
-                  ),
+                  child: Icon(Icons.tune_rounded, color: Colors.white, size: 21),
                 ),
               ),
             ),
@@ -707,141 +753,122 @@ class _ExploreScreenState extends State<ExploreScreen> {
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // 3. CATEGORY SHORTCUTS (Horizontally scrollable cards with line icons)
+  // 3. CATEGORY SHORTCUTS — five equal cards across the screen
   // ═════════════════════════════════════════════════════════════════════
   Widget _buildCategoryShortcuts() {
-    return Container(
-      height: 82,
-      margin: const EdgeInsets.only(top: 8, bottom: 4),
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        scrollDirection: Axis.horizontal,
-        itemCount: _categoryItems.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
-        itemBuilder: (context, index) {
-          final item = _categoryItems[index];
-          final isSelected = _selectedCategory == item.label;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(_gutter, 10, _gutter, 0),
+      child: SizedBox(
+        height: 72,
+        child: Row(
+          children: [
+            for (var i = 0; i < _categoryItems.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8),
+              Expanded(child: _buildCategoryTile(_categoryItems[i])),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 
-          return AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeInOut,
-            width: 80,
-            decoration: BoxDecoration(
-              color: isSelected ? AppColors.emeraldSurface : Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: isSelected ? AppColors.emerald : AppColors.border,
-                width: isSelected ? 1.5 : 1,
-              ),
-              boxShadow: isSelected
-                  ? [
-                      BoxShadow(
-                        color: AppColors.emerald.withValues(alpha: 0.15),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ]
-                  : [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.02),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-            ),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () => _onCategorySelected(item.label),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      item.icon,
-                      size: 26,
-                      color: isSelected
-                          ? AppColors.emerald
-                          : (item.defaultColor ?? AppColors.gray600),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      item.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                        color: isSelected ? AppColors.emeraldDark : AppColors.obsidian,
-                      ),
-                    ),
-                  ],
+  Widget _buildCategoryTile(_ExploreCategoryItem item) {
+    final isSelected = _selectedCategory == item.label;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeInOut,
+      decoration: BoxDecoration(
+        color: isSelected ? AppColors.emeraldSurface : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isSelected ? AppColors.emerald : AppColors.border,
+          width: isSelected ? 1.5 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isSelected ? AppColors.emerald.withValues(alpha: 0.15) : Colors.black.withValues(alpha: 0.02),
+            blurRadius: isSelected ? 8 : 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _onCategorySelected(item.label),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  item.icon,
+                  size: 24,
+                  color: isSelected ? AppColors.emerald : (item.defaultColor ?? AppColors.gray600),
                 ),
-              ),
+                const SizedBox(height: 5),
+                // One line, always: shrinks a little on narrow phones instead of wrapping.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    item.label,
+                    maxLines: 1,
+                    softWrap: false,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                      color: isSelected ? AppColors.emeraldDark : AppColors.obsidian,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // 4. RECOMMENDED FOR YOU
+  // 4. RECOMMENDED FOR YOU — two cards across
   // ═════════════════════════════════════════════════════════════════════
+  double get _recommendedCardWidth => ((_contentWidth - _gap) / 2).clamp(150.0, 320.0);
+  double get _carouselCardWidth => ((_contentWidth - 2 * _gap) / 2.55).clamp(124.0, 220.0);
+  double get _agentCardWidth => ((_contentWidth - 2 * 8) / 3).clamp(112.0, 190.0);
+
   Widget _buildRecommendedSection() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionHeader(
-            icon: Icons.star_rounded,
-            iconColor: AppColors.emerald,
-            title: 'Recommended for You',
-            subtitle: 'Properties and vehicles you may like',
-            onSeeAll: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Recommendations update automatically as you explore.'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
-            },
+    final w = _recommendedCardWidth;
+    return _section(
+      icon: Icons.star_rounded,
+      iconColor: AppColors.emerald,
+      title: 'Recommended for You',
+      subtitle: 'Properties and vehicles you may like',
+      onSeeAll: () {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Recommendations update automatically as you explore.'),
+            duration: Duration(seconds: 2),
           ),
-          const SizedBox(height: 12),
-          if (_isLoading)
-            _buildHorizontalSkeletonCarousel()
-          else if (_recommended.isEmpty)
-            // Empty / New User State (strictly no fake data)
-            _buildCompactEmptyState(
-              icon: Icons.auto_awesome_outlined,
-              title: 'No recommendations yet',
-              description: 'Explore properties and vehicles to start building your recommendations.',
-              actionLabel: 'Start Exploring',
-              onAction: () {
-                _onCategorySelected('Properties');
-                _scrollToTop();
-              },
-            )
-          else
-            // Real Database Data State
-            SizedBox(
-              height: 290,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _recommended.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 14),
-                itemBuilder: (context, index) {
-                  final item = _recommended[index];
-                  final isProperty = item['type'] == 'property';
-                  return isProperty
-                      ? _buildPropertyCard(item, width: 260)
-                      : _buildVehicleCard(item, width: 260);
-                },
-              ),
-            ),
-        ],
-      ),
+        );
+      },
+      body: _isLoading
+          ? _hList([for (var i = 0; i < 2; i++) _skeletonCard(w)])
+          : _recommended.isEmpty
+              ? _emptyOrUnavailable(
+                  icon: Icons.auto_awesome_outlined,
+                  title: 'No recommendations yet',
+                  description: 'Explore properties and vehicles to start building your recommendations.',
+                  actionLabel: 'Start Exploring',
+                  onAction: () {
+                    _onCategorySelected('Properties');
+                    _scrollToTop();
+                  },
+                )
+              : _hList([
+                  for (final item in _recommended)
+                    item['type'] == 'property' ? _buildPropertyCard(item, width: w) : _buildVehicleCard(item, width: w),
+                ]),
     );
   }
 
@@ -849,49 +876,24 @@ class _ExploreScreenState extends State<ExploreScreen> {
   // 5. PROPERTIES NEAR YOU
   // ═════════════════════════════════════════════════════════════════════
   Widget _buildPropertiesNearYouSection() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionHeader(
-            icon: Icons.home_work_outlined,
-            iconColor: AppColors.obsidian,
-            title: 'Properties Near You',
-            subtitle: 'Find properties available in your area',
-            onSeeAll: () {
-              MainNavigationShell.switchToTab(context, 2);
-            },
-          ),
-          const SizedBox(height: 12),
-          if (_isLoading)
-            _buildHorizontalSkeletonCarousel()
-          else if (_propertiesNearYou.isEmpty)
-            // Empty / New User State
-            _buildCompactEmptyState(
-              icon: Icons.apartment_outlined,
-              title: 'No properties nearby yet',
-              description: 'New property listings will appear here when available.',
-              actionLabel: 'Browse Real Estate Market →',
-              onAction: () {
-                MainNavigationShell.switchToTab(context, 2);
-              },
-            )
-          else
-            // Real Database Data State
-            SizedBox(
-              height: 290,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _propertiesNearYou.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 14),
-                itemBuilder: (context, index) {
-                  return _buildPropertyCard(_propertiesNearYou[index], width: 250);
-                },
-              ),
-            ),
-        ],
-      ),
+    final w = _carouselCardWidth;
+    return _section(
+      icon: Icons.home_work_outlined,
+      iconColor: AppColors.obsidian,
+      title: 'Properties Near You',
+      subtitle: 'Find the best properties in your area',
+      onSeeAll: () => MainNavigationShell.switchToTab(context, 2),
+      body: _isLoading
+          ? _hList([for (var i = 0; i < 3; i++) _skeletonCard(w)])
+          : _propertiesNearYou.isEmpty
+              ? _emptyOrUnavailable(
+                  icon: Icons.apartment_outlined,
+                  title: 'No properties nearby yet',
+                  description: 'New property listings will appear here when available.',
+                  actionLabel: 'Browse Real Estate Market →',
+                  onAction: () => MainNavigationShell.switchToTab(context, 2),
+                )
+              : _hList([for (final item in _propertiesNearYou) _buildPropertyCard(item, width: w)]),
     );
   }
 
@@ -899,187 +901,121 @@ class _ExploreScreenState extends State<ExploreScreen> {
   // 6. VEHICLES FOR SALE & HIRE
   // ═════════════════════════════════════════════════════════════════════
   Widget _buildVehiclesSection() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionHeader(
-            icon: Icons.directions_car_outlined,
-            iconColor: AppColors.obsidian,
-            title: 'Vehicles for Sale & Hire',
-            subtitle: 'Cars, vans and trucks from verified sellers',
-            onSeeAll: () {
-              MainNavigationShell.switchToTab(context, 3);
-            },
-          ),
-          const SizedBox(height: 12),
-          if (_isLoading)
-            _buildHorizontalSkeletonCarousel()
-          else if (_vehiclesForSaleAndHire.isEmpty)
-            // Empty / New User State
-            _buildCompactEmptyState(
-              icon: Icons.directions_car_outlined,
-              title: 'No vehicles available yet',
-              description: 'Vehicles listed by verified dealers and owners will appear here.',
-              actionLabel: 'Browse Auto Marketplace →',
-              onAction: () {
-                MainNavigationShell.switchToTab(context, 3);
-              },
-            )
-          else
-            // Real Database Data State
-            SizedBox(
-              height: 285,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _vehiclesForSaleAndHire.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 14),
-                itemBuilder: (context, index) {
-                  return _buildVehicleCard(_vehiclesForSaleAndHire[index], width: 250);
-                },
-              ),
-            ),
-        ],
-      ),
+    final w = _carouselCardWidth;
+    return _section(
+      icon: Icons.directions_car_outlined,
+      iconColor: AppColors.obsidian,
+      title: 'Vehicles for Sale & Hire',
+      subtitle: 'Latest cars, vans and trucks',
+      onSeeAll: () => MainNavigationShell.switchToTab(context, 3),
+      body: _isLoading
+          ? _hList([for (var i = 0; i < 3; i++) _skeletonCard(w)])
+          : _vehiclesForSaleAndHire.isEmpty
+              ? _emptyOrUnavailable(
+                  icon: Icons.directions_car_outlined,
+                  title: 'No vehicles available yet',
+                  description: 'Vehicles listed by verified dealers and owners will appear here.',
+                  actionLabel: 'Browse Auto Marketplace →',
+                  onAction: () => MainNavigationShell.switchToTab(context, 3),
+                )
+              : _hList([for (final item in _vehiclesForSaleAndHire) _buildVehicleCard(item, width: w)]),
     );
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // 7. TOP AGENTS & DEALERS
+  // 7. TOP AGENTS & DEALERS — three cards across
   // ═════════════════════════════════════════════════════════════════════
   Widget _buildTopAgentsSection() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionHeader(
-            icon: Icons.groups_outlined,
-            iconColor: AppColors.obsidian,
-            title: 'Top Agents & Dealers',
-            subtitle: 'Trusted professionals near you',
-            onSeeAll: () {
-              _onCategorySelected('Agents');
-            },
-          ),
-          const SizedBox(height: 12),
-          if (_isLoading)
-            _buildAgentsSkeletonRow()
-          else if (_topAgentsAndDealers.isEmpty)
-            // Empty / New User State
-            _buildCompactEmptyState(
-              icon: Icons.verified_user_outlined,
-              title: 'No agents or dealers yet',
-              description: 'Verified agents and dealers will appear here as they join Vektolux.',
-            )
-          else
-            // Real Database Data State
-            SizedBox(
-              height: 195,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _topAgentsAndDealers.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 12),
-                itemBuilder: (context, index) {
-                  return _buildAgentCard(_topAgentsAndDealers[index]);
-                },
-              ),
-            ),
-        ],
-      ),
+    final w = _agentCardWidth;
+    return _section(
+      icon: Icons.groups_outlined,
+      iconColor: AppColors.obsidian,
+      title: 'Top Agents & Dealers',
+      subtitle: 'Trusted professionals near you',
+      onSeeAll: () => _onCategorySelected('Agents'),
+      body: _isLoading
+          ? _hList([for (var i = 0; i < 3; i++) _skeletonAgentCard(w)], gap: 8)
+          : _topAgentsAndDealers.isEmpty
+              ? _emptyOrUnavailable(
+                  icon: Icons.verified_user_outlined,
+                  title: 'No agents or dealers yet',
+                  description: 'Verified agents and dealers will appear here as they join Vektolux.',
+                )
+              : _hList([for (final a in _topAgentsAndDealers) _buildAgentCard(a, width: w)], gap: 8),
     );
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // 8. BUILD YOUR EXPLORE FEED (Promotional Card)
+  // 8. BUILD YOUR EXPLORE FEED (promotional card)
   // ═════════════════════════════════════════════════════════════════════
   Widget _buildPersonalizeFeedCard() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Container(
-        padding: const EdgeInsets.all(16),
+    void findAgents() {
+      _onCategorySelected('Agents');
+      _scrollToTop();
+    }
+
+    final button = ElevatedButton(
+      onPressed: findAgents,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFF0F5132), // dark emerald
+        foregroundColor: Colors.white,
+        elevation: 0,
+        minimumSize: const Size(0, 38),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+      ),
+      child: const FittedBox(fit: BoxFit.scaleDown, child: Text('Find Agents →', maxLines: 1, softWrap: false)),
+    );
+
+    final text = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          'Build your Explore feed',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.obsidian, letterSpacing: -0.2),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'Follow agents and dealers to personalize what you see.',
+          style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w400, color: AppColors.textSecondary, height: 1.3),
+        ),
+      ],
+    );
+
+    final icon = Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(color: AppColors.emerald.withValues(alpha: 0.15), shape: BoxShape.circle),
+      child: const Icon(Icons.groups_rounded, size: 21, color: AppColors.emeraldDark),
+    );
+
+    return _padded(
+      Container(
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFFEBF7EE), // Soft light-green accent
+          color: const Color(0xFFEBF7EE),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(color: const Color(0xFFD1FAE5), width: 1.2),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.02),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 8, offset: const Offset(0, 2))],
         ),
-        child: Row(
-          children: [
-            // Left Network / People Icon
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: AppColors.emerald.withValues(alpha: 0.15),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.groups_rounded,
-                size: 22,
-                color: AppColors.emeraldDark,
-              ),
-            ),
-            const SizedBox(width: 14),
-            // Middle Description
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    'Build your Explore feed',
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.obsidian,
-                      letterSpacing: -0.2,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'Follow agents and dealers to personalize what you see.',
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w400,
-                      color: AppColors.textSecondary,
-                      height: 1.3,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            // Right CTA Button
-            ElevatedButton(
-              onPressed: () {
-                _onCategorySelected('Agents');
-                _scrollToTop();
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF0F5132), // Dark emerald green
-                foregroundColor: Colors.white,
-                elevation: 0,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                textStyle: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              child: const Text('Find Agents →'),
-            ),
-          ],
-        ),
+        // Wide: icon | text | button. Narrow: the button drops below so the text never gets squeezed.
+        child: LayoutBuilder(builder: (context, c) {
+          if (c.maxWidth < 330) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [icon, const SizedBox(width: 12), Expanded(child: text)]),
+                const SizedBox(height: 10),
+                SizedBox(width: double.infinity, child: button),
+              ],
+            );
+          }
+          return Row(
+            children: [icon, const SizedBox(width: 12), Expanded(child: text), const SizedBox(width: 10), button],
+          );
+        }),
       ),
     );
   }
@@ -1106,47 +1042,37 @@ class _ExploreScreenState extends State<ExploreScreen> {
             children: [
               Text(
                 title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: 17,
+                  fontSize: 16,
                   fontWeight: FontWeight.w700,
+                  height: 1.2,
                   color: AppColors.obsidian,
                   letterSpacing: -0.3,
                 ),
               ),
-              const SizedBox(height: 1),
               Text(
                 subtitle,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w400,
-                  color: AppColors.textSecondary,
-                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w400, height: 1.25, color: AppColors.textSecondary),
               ),
             ],
           ),
         ),
+        const SizedBox(width: 8),
         GestureDetector(
           onTap: onSeeAll,
           behavior: HitTestBehavior.opaque,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6, horizontal: 2),
             child: Row(
               mainAxisSize: MainAxisSize.min,
-              children: const [
-                Text(
-                  'See All',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.emerald,
-                  ),
-                ),
-                SizedBox(width: 2),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  size: 16,
-                  color: AppColors.emerald,
-                ),
+              children: [
+                Text('See All', maxLines: 1, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.emerald)),
+                SizedBox(width: 1),
+                Icon(Icons.chevron_right_rounded, size: 16, color: AppColors.emerald),
               ],
             ),
           ),
@@ -1157,7 +1083,6 @@ class _ExploreScreenState extends State<ExploreScreen> {
 
   // ═════════════════════════════════════════════════════════════════════
   // COMPACT & POLISHED EMPTY STATE COMPONENT
-  // (Conforms strictly to Section 9: Empty-State Design Rule)
   // ═════════════════════════════════════════════════════════════════════
   Widget _buildCompactEmptyState({
     required IconData icon,
@@ -1168,78 +1093,50 @@ class _ExploreScreenState extends State<ExploreScreen> {
   }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFF9FAFB), // Very light neutral gray
+        color: const Color(0xFFF9FAFB),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE5E7EB), width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.015),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.015), blurRadius: 6, offset: const Offset(0, 2))],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: AppColors.emerald.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              icon,
-              size: 22,
-              color: AppColors.emerald,
-            ),
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(color: AppColors.emerald.withValues(alpha: 0.12), shape: BoxShape.circle),
+            child: Icon(icon, size: 21, color: AppColors.emerald),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Text(
             title,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 14.5,
-              fontWeight: FontWeight.w700,
-              color: AppColors.obsidian,
-            ),
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.obsidian),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
           Text(
             description,
             textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w400,
-              color: AppColors.textSecondary,
-              height: 1.35,
-            ),
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: AppColors.textSecondary, height: 1.35),
           ),
           if (actionLabel != null && onAction != null) ...[
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 34,
-              child: OutlinedButton(
-                onPressed: onAction,
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: AppColors.emerald, width: 1.2),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  backgroundColor: Colors.white,
-                ),
-                child: Text(
-                  actionLabel,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.emerald,
-                  ),
-                ),
+            const SizedBox(height: 10),
+            OutlinedButton(
+              onPressed: onAction,
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: AppColors.emerald, width: 1.2),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                minimumSize: const Size(0, 34),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                backgroundColor: Colors.white,
+                foregroundColor: AppColors.emerald,
+              ),
+              child: Text(
+                actionLabel,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.emerald),
               ),
             ),
           ],
@@ -1249,388 +1146,249 @@ class _ExploreScreenState extends State<ExploreScreen> {
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // REAL PROPERTY LISTING CARD (Matches Visual Reference)
+  // LISTING CARDS (one shared implementation for properties and vehicles)
   // ═════════════════════════════════════════════════════════════════════
+
+  /// The database's pricing types are total_sale / per_day / per_trip ('daily' is accepted for older data).
+  /// (Explore used to test only for 'daily', so every rental showed as "For Sale" with no "/ day".)
+  bool _isDailyHire(String? pricingType) => pricingType == 'per_day' || pricingType == 'daily';
+
+  /// A real, public place label: the backend's generalized `location` when present, otherwise the
+  /// listing's public city. Never an invented default.
+  String? _publicPlace(Map<String, dynamic> item) {
+    final loc = (item['location'] as String?)?.trim();
+    if (loc != null && loc.isNotEmpty) return loc;
+    final city = (item['city'] as String?)?.trim();
+    if (city == null || city.isEmpty) return null;
+    return city.toLowerCase().contains('sierra leone') ? city : '$city, Sierra Leone';
+  }
+
   Widget _buildPropertyCard(Map<String, dynamic> item, {required double width}) {
     final id = item['id'] as String? ?? item['_id'] as String? ?? '';
-    final title = item['title'] as String? ?? 'Property';
-    final price = (item['price'] as num?)?.toDouble() ?? 0.0;
+    final price = (item['price'] as num?)?.toDouble();
     final currency = item['currency'] as String? ?? 'SLE';
-    final imageUrl = item['imageUrl'] as String?;
-    final city = item['city'] as String? ?? item['location'] as String? ?? 'Freetown, Sierra Leone';
-    final bedrooms = (item['bedrooms'] as num?)?.toInt() ?? 3;
-    final bathrooms = (item['bathrooms'] as num?)?.toInt() ?? 2;
-    final isVerified = item['isVerified'] == true;
-    final isFavorited = _favoritedListingIds.contains(id);
+    final category = item['category'] as String?;
 
-    return Container(
+    // Tag and price suffix come from the real listing category; unknown → no tag (nothing invented).
+    String? tag;
+    Color tagColor = AppColors.emerald;
+    String suffix = '';
+    switch (category) {
+      case 'sale':
+        tag = 'For Sale';
+        break;
+      case 'long_term_rent':
+        tag = 'For Rent';
+        tagColor = const Color(0xFF2563EB);
+        suffix = ' / year';
+        break;
+      case 'hourly_guesthouse':
+        tag = 'Short Stay';
+        tagColor = const Color(0xFFB45309);
+        break;
+    }
+
+    final beds = (item['bedrooms'] as num?)?.toInt();
+    final baths = (item['bathrooms'] as num?)?.toInt();
+    final area = (item['areaSqM'] as num?)?.toDouble();
+    final specs = <_CardSpec>[
+      if (beds != null && beds > 0) _CardSpec(Icons.bed_outlined, '$beds'),
+      if (baths != null && baths > 0) _CardSpec(Icons.bathtub_outlined, '$baths'),
+      if (area != null && area > 0) _CardSpec(Icons.crop_square_rounded, '${_currencyFormat.format(area.round())} m²'),
+    ];
+
+    return _buildListingCard(
       width: width,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border, width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: () => _navigateToProperty(item),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Image container with overlays
-              Stack(
-                children: [
-                  ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                    child: SizedBox(
-                      height: 140,
-                      width: double.infinity,
-                      child: VxNetworkImage(
-                        imageUrl: imageUrl,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                  ),
-                  // Top Left: Verified Badge
-                  if (isVerified)
-                    Positioned(
-                      top: 10,
-                      left: 10,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.emerald,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            Icon(Icons.check, size: 12, color: Colors.white),
-                            SizedBox(width: 3),
-                            Text(
-                              'Verified',
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  // Top Right: Favorite Button
-                  Positioned(
-                    top: 10,
-                    right: 10,
-                    child: GestureDetector(
-                      onTap: () => _toggleFavorite(id),
-                      child: Container(
-                        width: 30,
-                        height: 30,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.9),
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.1),
-                              blurRadius: 4,
-                            ),
-                          ],
-                        ),
-                        child: Icon(
-                          isFavorited ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                          size: 16,
-                          color: isFavorited ? AppColors.error : AppColors.obsidian,
-                        ),
-                      ),
-                    ),
-                  ),
-                  // Bottom Left: For Sale / For Rent Pill
-                  Positioned(
-                    bottom: 8,
-                    left: 10,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: AppColors.emerald,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Text(
-                        'For Sale',
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              // Card Details
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Price
-                    Text(
-                      '$currency ${_currencyFormat.format(price)}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.obsidian,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    // Title
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.obsidian,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    // Location
-                    Row(
-                      children: [
-                        const Icon(Icons.place_outlined, size: 13, color: AppColors.gray400),
-                        const SizedBox(width: 3),
-                        Expanded(
-                          child: Text(
-                            city,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    // Specs row: Bed, Bath, Sqft
-                    Row(
-                      children: [
-                        _buildSpecIcon(Icons.bed_outlined, '$bedrooms'),
-                        const SizedBox(width: 10),
-                        _buildSpecIcon(Icons.bathtub_outlined, '$bathrooms'),
-                        const SizedBox(width: 10),
-                        _buildSpecIcon(Icons.crop_square_rounded, '1,800 sqft'),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      id: id,
+      imageUrl: item['imageUrl'] as String?,
+      fallbackIcon: Icons.home_work_outlined,
+      isVerified: item['isVerified'] == true,
+      tag: tag,
+      tagColor: tagColor,
+      priceText: price == null ? null : '$currency ${_currencyFormat.format(price)}$suffix',
+      title: item['title'] as String? ?? 'Property',
+      place: _publicPlace(item),
+      specs: specs,
+      onTap: () => _navigateToProperty(item),
     );
   }
 
-  // ═════════════════════════════════════════════════════════════════════
-  // REAL VEHICLE LISTING CARD (Matches Visual Reference)
-  // ═════════════════════════════════════════════════════════════════════
   Widget _buildVehicleCard(Map<String, dynamic> item, {required double width}) {
     final id = item['id'] as String? ?? item['_id'] as String? ?? '';
-    final title = item['title'] as String? ?? 'Vehicle';
-    final price = (item['price'] as num?)?.toDouble() ?? 0.0;
+    final price = (item['price'] as num?)?.toDouble();
     final currency = item['currency'] as String? ?? 'SLE';
-    final imageUrl = item['imageUrl'] as String?;
-    final location = item['location'] as String? ?? 'Freetown, Sierra Leone';
-    final year = (item['year'] as num?)?.toInt() ?? 2021;
-    final pricingType = item['pricingType'] as String? ?? 'sale';
-    final isVerified = item['isVerified'] == true;
-    final isFavorited = _favoritedListingIds.contains(id);
+    final pricingType = item['pricingType'] as String?;
+    final isDaily = _isDailyHire(pricingType);
+    final isTrip = pricingType == 'per_trip';
 
-    final isDaily = pricingType == 'daily';
-    final tagLabel = isDaily ? 'For Hire' : 'For Sale';
-    final tagColor = isDaily ? const Color(0xFF2563EB) : AppColors.emerald;
+    final year = (item['year'] as num?)?.toInt();
+    final fuel = (item['fuelType'] as String?)?.trim();
+    final transmission = (item['transmission'] as String?)?.trim();
+    final specs = <_CardSpec>[
+      if (year != null && year > 0) _CardSpec(Icons.calendar_today_outlined, '$year'),
+      if (fuel != null && fuel.isNotEmpty) _CardSpec(Icons.local_gas_station_outlined, fuel),
+      if (transmission != null && transmission.isNotEmpty)
+        _CardSpec(Icons.settings_outlined, transmission.toLowerCase().startsWith('auto') ? 'Auto' : transmission),
+    ];
+
+    return _buildListingCard(
+      width: width,
+      id: id,
+      imageUrl: item['imageUrl'] as String?,
+      fallbackIcon: Icons.directions_car_outlined,
+      isVerified: item['isVerified'] == true,
+      tag: pricingType == null ? null : (isDaily || isTrip ? 'For Hire' : 'For Sale'),
+      tagColor: isDaily || isTrip ? const Color(0xFF2563EB) : AppColors.emerald,
+      priceText: price == null
+          ? null
+          : '$currency ${_currencyFormat.format(price)}${isDaily ? ' / day' : (isTrip ? ' / trip' : '')}',
+      title: item['title'] as String? ?? 'Vehicle',
+      place: _publicPlace(item),
+      specs: specs,
+      onTap: () => _navigateToVehicle(item),
+    );
+  }
+
+  Widget _buildListingCard({
+    required double width,
+    required String id,
+    required String? imageUrl,
+    required IconData fallbackIcon,
+    required bool isVerified,
+    required String? tag,
+    required Color tagColor,
+    required String? priceText,
+    required String title,
+    required String? place,
+    required List<_CardSpec> specs,
+    required VoidCallback onTap,
+  }) {
+    final isFavorited = _favoritedListingIds.contains(id);
+    const radius = 16.0;
+
+    Widget pill(String text, Color color, {IconData? icon, double radiusPx = 6}) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(radiusPx)),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[Icon(icon, size: 10, color: Colors.white), const SizedBox(width: 2)],
+              Text(text, maxLines: 1, style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: Colors.white)),
+            ],
+          ),
+        );
 
     return Container(
       width: width,
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(radius),
         border: Border.all(color: AppColors.border, width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 3))],
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: () => _navigateToVehicle(item),
+          borderRadius: BorderRadius.circular(radius),
+          onTap: onTap,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Vehicle Image Stack
+              // Image: a fixed ASPECT RATIO, so every card scales with its width.
               Stack(
                 children: [
                   ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                    child: SizedBox(
-                      height: 140,
-                      width: double.infinity,
-                      child: VxNetworkImage(
-                        imageUrl: imageUrl,
-                        fit: BoxFit.cover,
-                      ),
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(radius)),
+                    child: AspectRatio(
+                      aspectRatio: 1.45,
+                      child: VxNetworkImage(imageUrl: imageUrl, fit: BoxFit.cover, fallbackIcon: fallbackIcon),
                     ),
                   ),
                   if (isVerified)
-                    Positioned(
-                      top: 10,
-                      left: 10,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.emerald,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            Icon(Icons.check, size: 12, color: Colors.white),
-                            SizedBox(width: 3),
-                            Text(
-                              'Verified',
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    Positioned(top: 8, left: 8, child: pill('Verified', AppColors.emerald, icon: Icons.check, radiusPx: 20)),
                   Positioned(
-                    top: 10,
-                    right: 10,
+                    top: 8,
+                    right: 8,
                     child: GestureDetector(
                       onTap: () => _toggleFavorite(id),
+                      behavior: HitTestBehavior.opaque,
                       child: Container(
-                        width: 30,
-                        height: 30,
+                        width: 26,
+                        height: 26,
                         decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.9),
+                          color: Colors.white.withValues(alpha: 0.92),
                           shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.1),
-                              blurRadius: 4,
-                            ),
-                          ],
+                          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 4)],
                         ),
                         child: Icon(
                           isFavorited ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                          size: 16,
+                          size: 15,
                           color: isFavorited ? AppColors.error : AppColors.obsidian,
                         ),
                       ),
                     ),
                   ),
-                  Positioned(
-                    bottom: 8,
-                    left: 10,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: tagColor,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        tagLabel,
-                        style: const TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
+                  if (tag != null) Positioned(bottom: 6, left: 8, child: pill(tag, tagColor)),
                 ],
               ),
-              // Card Details
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Price
-                    Text(
-                      isDaily
-                          ? '$currency ${_currencyFormat.format(price)}/day'
-                          : '$currency ${_currencyFormat.format(price)}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.obsidian,
+                    if (priceText != null)
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          priceText,
+                          maxLines: 1,
+                          softWrap: false,
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.obsidian),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 3),
-                    // Title
+                    const SizedBox(height: 2),
                     Text(
                       title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.obsidian,
-                      ),
+                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppColors.obsidian),
                     ),
-                    const SizedBox(height: 4),
-                    // Location
-                    Row(
-                      children: [
-                        const Icon(Icons.place_outlined, size: 13, color: AppColors.gray400),
-                        const SizedBox(width: 3),
-                        Expanded(
-                          child: Text(
-                            location,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              color: AppColors.textSecondary,
+                    if (place != null) ...[
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          const Icon(Icons.place_outlined, size: 12, color: AppColors.gray400),
+                          const SizedBox(width: 2),
+                          Expanded(
+                            child: Text(
+                              place,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 10.5, color: AppColors.textSecondary),
                             ),
                           ),
+                        ],
+                      ),
+                    ],
+                    if (specs.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      // Real details only; scales down a touch rather than wrapping or overflowing.
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (var i = 0; i < specs.length; i++) ...[
+                              if (i > 0) const SizedBox(width: 8),
+                              _buildSpecIcon(specs[i].icon, specs[i].text),
+                            ],
+                          ],
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    // Specs row: Year, Fuel, Transmission
-                    Row(
-                      children: [
-                        _buildSpecIcon(Icons.calendar_today_outlined, '$year'),
-                        const SizedBox(width: 10),
-                        _buildSpecIcon(Icons.local_gas_station_outlined, 'Diesel'),
-                        const SizedBox(width: 10),
-                        _buildSpecIcon(Icons.settings_outlined, 'Auto'),
-                      ],
-                    ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -1645,112 +1403,108 @@ class _ExploreScreenState extends State<ExploreScreen> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 12.5, color: AppColors.gray500),
+        Icon(icon, size: 12, color: AppColors.gray500),
         const SizedBox(width: 3),
         Text(
           label,
-          style: TextStyle(
-            fontSize: 11,
-            color: AppColors.textSecondary,
-            fontWeight: FontWeight.w500,
-          ),
+          maxLines: 1,
+          softWrap: false,
+          style: TextStyle(fontSize: 10.5, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
         ),
       ],
     );
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // REAL AGENT & DEALER CARD (Matches Visual Reference)
+  // AGENT & DEALER CARD
   // ═════════════════════════════════════════════════════════════════════
-  Widget _buildAgentCard(Map<String, dynamic> agent) {
+  Widget _buildAgentCard(Map<String, dynamic> agent, {required double width}) {
     final id = agent['id'] as String? ?? '';
     final name = agent['name'] as String? ?? 'Professional';
-    final role = agent['role'] as String? ?? 'Real Estate Agent';
+    final role = agent['role'] as String? ?? '';
     final avatarUrl = agent['avatarUrl'] as String?;
     final isVerified = agent['isVerified'] == true;
-    final listingsCount = (agent['listingsCount'] as num?)?.toInt() ?? 0;
+    final listingsCount = (agent['listingsCount'] as num?)?.toInt();
     final isFollowing = _followingUserIds.contains(id);
+    final isAuto = role.toLowerCase().contains('auto') || role.toLowerCase().contains('dealer');
 
     return Container(
-      width: 175,
-      padding: const EdgeInsets.all(12),
+      width: width,
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.border, width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 8, offset: const Offset(0, 2))],
       ),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Avatar
-          GestureDetector(
-            onTap: () => _navigateToAgent(id),
-            child: VektoluxAvatar(
-              avatarUrl: avatarUrl,
-              name: name,
-              radius: 26,
-              borderColor: isVerified ? AppColors.emerald : AppColors.border,
-              borderWidth: 1.5,
-            ),
-          ),
-          const SizedBox(height: 8),
-          // Name with Verified Checkmark
           Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Flexible(
-                child: Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.obsidian,
-                  ),
+              GestureDetector(
+                onTap: () => _navigateToAgent(id),
+                child: VektoluxAvatar(
+                  avatarUrl: avatarUrl,
+                  name: name,
+                  radius: 18,
+                  borderColor: isVerified ? AppColors.emerald : AppColors.border,
+                  borderWidth: 1.5,
                 ),
               ),
-              if (isVerified) ...[
-                const SizedBox(width: 3),
-                const Icon(Icons.verified, size: 14, color: AppColors.emerald),
-              ],
+              const SizedBox(width: 7),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                          ),
+                        ),
+                        if (isVerified) ...[
+                          const SizedBox(width: 2),
+                          const Icon(Icons.verified, size: 12, color: AppColors.emerald),
+                        ],
+                      ],
+                    ),
+                    if (role.isNotEmpty)
+                      Text(
+                        role,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                          color: isAuto ? const Color(0xFF2563EB) : AppColors.emeraldDark,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 2),
-          // Role Subtitle
-          Text(
-            role,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-              color: role.toLowerCase().contains('auto')
-                  ? const Color(0xFF2563EB)
-                  : AppColors.emeraldDark,
+          if (listingsCount != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              listingsCount == 1 ? '1 listing' : '$listingsCount listings',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 10, color: AppColors.textSecondary),
             ),
-          ),
-          const SizedBox(height: 2),
-          // Listings Count
-          Text(
-            '$listingsCount+ listings',
-            style: TextStyle(
-              fontSize: 10,
-              color: AppColors.textSecondary,
-            ),
-          ),
-          const SizedBox(height: 10),
-          // Follow Button
+          ],
+          const SizedBox(height: 8),
           SizedBox(
             width: double.infinity,
-            height: 30,
+            height: 28,
             child: isFollowing
                 ? ElevatedButton(
                     onPressed: () => _toggleFollow(id),
@@ -1759,13 +1513,12 @@ class _ExploreScreenState extends State<ExploreScreen> {
                       foregroundColor: Colors.white,
                       elevation: 0,
                       padding: EdgeInsets.zero,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
+                      minimumSize: const Size(0, 28),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
-                    child: const Text(
-                      'Following ✓',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                    child: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text('Following ✓', maxLines: 1, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
                     ),
                   )
                 : OutlinedButton(
@@ -1773,18 +1526,14 @@ class _ExploreScreenState extends State<ExploreScreen> {
                     style: OutlinedButton.styleFrom(
                       side: const BorderSide(color: AppColors.emerald, width: 1.2),
                       padding: EdgeInsets.zero,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
+                      minimumSize: const Size(0, 28),
                       backgroundColor: Colors.white,
+                      foregroundColor: AppColors.emerald,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
-                    child: const Text(
-                      'Follow',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.emerald,
-                      ),
+                    child: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text('Follow', maxLines: 1, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.emerald)),
                     ),
                   ),
           ),
@@ -1794,145 +1543,96 @@ class _ExploreScreenState extends State<ExploreScreen> {
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // SKELETON / SHIMMER LOADERS
+  // SKELETON LOADERS (same widths and structure as the real cards)
   // ═════════════════════════════════════════════════════════════════════
-  Widget _buildHorizontalSkeletonCarousel() {
-    return SizedBox(
-      height: 270,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: 3,
-        separatorBuilder: (_, __) => const SizedBox(width: 14),
-        itemBuilder: (context, index) {
-          return Container(
-            width: 250,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.border),
+  Widget _skeletonBar(double? width, double height, {Color? color}) => Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(color: color ?? AppColors.gray100, borderRadius: BorderRadius.circular(4)),
+      );
+
+  Widget _skeletonCard(double width) {
+    return Container(
+      width: width,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AspectRatio(
+            aspectRatio: 1.45,
+            child: Container(
+              decoration: const BoxDecoration(
+                color: AppColors.gray100,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
             ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  height: 140,
-                  decoration: BoxDecoration(
-                    color: AppColors.gray100,
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: 90,
-                        height: 16,
-                        decoration: BoxDecoration(
-                          color: AppColors.gray200,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        width: 160,
-                        height: 14,
-                        decoration: BoxDecoration(
-                          color: AppColors.gray100,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Container(
-                        width: 120,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: AppColors.gray100,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                _skeletonBar(width * 0.5, 14, color: AppColors.gray200),
+                const SizedBox(height: 8),
+                _skeletonBar(width * 0.75, 11),
+                const SizedBox(height: 6),
+                _skeletonBar(width * 0.55, 10),
               ],
             ),
-          );
-        },
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildAgentsSkeletonRow() {
-    return SizedBox(
-      height: 185,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: 3,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemBuilder: (context, index) {
-          return Container(
-            width: 175,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: AppColors.gray100,
-                    shape: BoxShape.circle,
-                  ),
+  Widget _skeletonAgentCard(double width) {
+    return Container(
+      width: width,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(width: 36, height: 36, decoration: const BoxDecoration(color: AppColors.gray100, shape: BoxShape.circle)),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [_skeletonBar(null, 11, color: AppColors.gray200), const SizedBox(height: 5), _skeletonBar(width * 0.35, 9)],
                 ),
-                const SizedBox(height: 10),
-                Container(
-                  width: 90,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: AppColors.gray200,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Container(
-                  width: 70,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: AppColors.gray100,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  width: double.infinity,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: AppColors.gray100,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _skeletonBar(width * 0.4, 9),
+          const SizedBox(height: 10),
+          Container(
+            height: 28,
+            decoration: BoxDecoration(color: AppColors.gray100, borderRadius: BorderRadius.circular(14)),
+          ),
+        ],
       ),
     );
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // ERROR BANNER
+  // ERROR BANNER (sits above the sections; they stay on screen)
   // ═════════════════════════════════════════════════════════════════════
   Widget _buildErrorBanner() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      padding: const EdgeInsets.fromLTRB(_gutter, 4, _gutter, 14),
       child: Container(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
         decoration: BoxDecoration(
           color: AppColors.errorLight,
           borderRadius: BorderRadius.circular(14),
@@ -1940,17 +1640,19 @@ class _ExploreScreenState extends State<ExploreScreen> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.info_outline, color: AppColors.error),
-            const SizedBox(width: 12),
+            const Icon(Icons.info_outline, color: AppColors.error, size: 20),
+            const SizedBox(width: 10),
             Expanded(
               child: Text(
                 _loadError ?? 'Unable to sync Explore feed.',
-                style: const TextStyle(fontSize: 13, color: AppColors.error),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12.5, color: AppColors.error, height: 1.25),
               ),
             ),
             TextButton(
               onPressed: _loadExploreData,
-              child: const Text('Retry', style: TextStyle(fontWeight: FontWeight.w700)),
+              child: const Text('Retry', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.error)),
             ),
           ],
         ),
@@ -2501,6 +2203,12 @@ class _ExploreScreenState extends State<ExploreScreen> {
       ),
     );
   }
+}
+
+class _CardSpec {
+  final IconData icon;
+  final String text;
+  const _CardSpec(this.icon, this.text);
 }
 
 class _ExploreCategoryItem {

@@ -132,11 +132,15 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                 ),
               ],
             ),
+            // Respects the home-indicator inset; labels capped at 1.15× text scale so five equal
+            // tabs always fit on one line.
             child: SafeArea(
-              child: SizedBox(
-                height: 64,
+              top: false,
+              child: MediaQuery.withClampedTextScaling(
+                maxScaleFactor: 1.15,
+                child: SizedBox(
+                height: 58,
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
                     _buildNavItem(
                       index: 0,
@@ -171,6 +175,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                   ],
                 ),
               ),
+              ),
             ),
           ),
         );
@@ -186,17 +191,20 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
   }) {
     final isSelected = _currentIndex == index;
 
-    return InkWell(
+    // Five equal-width tabs (previously sized to their content, so long labels crowded the bar).
+    return Expanded(
+      child: InkWell(
       onTap: () => setTab(index),
       borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             AnimatedContainer(
               duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
               decoration: BoxDecoration(
                 color: isSelected
                     ? AppColors.emeraldSurface
@@ -210,16 +218,22 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
               ),
             ),
             const SizedBox(height: 2),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                color: isSelected ? AppColors.emeraldDark : AppColors.gray500,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label,
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  color: isSelected ? AppColors.emeraldDark : AppColors.gray500,
+                ),
               ),
             ),
           ],
         ),
+      ),
       ),
     );
   }

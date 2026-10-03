@@ -88,7 +88,11 @@ class VektoluxApp extends StatelessWidget {
           // ── Theme ───────────────────────────────────────────────────
           theme: AppTheme.light,
           darkTheme: AppTheme.dark,
-          themeMode: ThemeMode.system,
+          // LIGHT ONLY for now. The approved designs (Home, Explore, ...) hard-code white surfaces, so
+          // following the phone's Dark Mode switched unstyled text to near-white (AppTheme.dark body
+          // text is gray100) on those white surfaces — unreadable light-on-white text. Re-enable
+          // ThemeMode.system only after the screens are made dark-ready.
+          themeMode: ThemeMode.light,
 
           // ── Auth User Synchronization for Notifications ─────────────
           builder: (context, child) {
