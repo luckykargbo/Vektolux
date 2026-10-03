@@ -736,11 +736,15 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
                               children: [
                                 const Icon(Icons.location_on_outlined, size: 15, color: AppColors.gray500),
                                 const SizedBox(width: 4),
-                                Text(
-                                  widget.location ?? 'Freetown, Sierra Leone',
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    color: AppColors.textSecondary,
+                                Flexible(
+                                  child: Text(
+                                    widget.location ?? 'Freetown, Sierra Leone',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      color: AppColors.textSecondary,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -787,20 +791,24 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
                   ),
                   const SizedBox(height: 12),
 
-                  GridView.count(
-                    crossAxisCount: 2,
+                  GridView(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                    childAspectRatio: 2.6,
+                    // Fixed tile height (not an aspect ratio) so narrow phones keep room for both lines.
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
+                      mainAxisExtent: 60,
+                    ),
                     children: [
                       _buildSpecTile(Icons.calendar_today_rounded, 'Year', '${widget.year}'),
                       _buildSpecTile(Icons.directions_car_outlined, 'Type', widget.vehicleType.toUpperCase()),
-                      _buildSpecTile(Icons.settings_outlined, 'Transmission', widget.transmission ?? 'Automatic'),
-                      _buildSpecTile(Icons.local_gas_station_outlined, 'Fuel', widget.fuelType ?? 'Petrol'),
-                      _buildSpecTile(Icons.speed_outlined, 'Mileage', widget.mileage ?? '42,000 km'),
-                      _buildSpecTile(Icons.color_lens_outlined, 'Color', widget.color ?? 'Silver metallic'),
+                      // Only what the seller entered — nothing is assumed.
+                      _buildSpecTile(Icons.settings_outlined, 'Transmission', widget.transmission ?? 'Not specified'),
+                      _buildSpecTile(Icons.local_gas_station_outlined, 'Fuel', widget.fuelType ?? 'Not specified'),
+                      _buildSpecTile(Icons.speed_outlined, 'Mileage', widget.mileage ?? 'Not specified'),
+                      _buildSpecTile(Icons.color_lens_outlined, 'Color', widget.color ?? 'Not specified'),
                     ],
                   ),
 

@@ -283,11 +283,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
           const SizedBox(height: 20),
 
           Expanded(
-            child: GridView.count(
-              crossAxisCount: 2,
-              mainAxisSpacing: 14,
-              crossAxisSpacing: 14,
-              childAspectRatio: 0.95,
+            child: GridView(
+              // Fixed tile height (not an aspect ratio): narrow phones keep room for the text.
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 14,
+                crossAxisSpacing: 14,
+                mainAxisExtent: 184,
+              ),
               children: roles.map((role) {
                 final isSelected = _selectedRole == role;
                 return _RoleSelectionCard(
@@ -1004,6 +1007,8 @@ class _RoleSelectionCard extends StatelessWidget {
               Text(
                 role.displayName,
                 textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,

@@ -931,8 +931,11 @@ Amount to Transfer: SLE ${_currencyFormat.format(_totalEscrowInflow)}
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
             children: [
               const Text('Lease Duration', style: TextStyle(fontWeight: FontWeight.w700)),
               DropdownButton<int>(
@@ -1000,8 +1003,11 @@ Amount to Transfer: SLE ${_currencyFormat.format(_totalEscrowInflow)}
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 6,
           children: [
             Text(
               title,

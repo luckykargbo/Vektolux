@@ -377,10 +377,14 @@ class _MyEscrowOrdersScreenState extends State<MyEscrowOrdersScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Header: Type badge, Order Code, and User Role
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 6,
                 children: [
                   Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -403,12 +407,16 @@ class _MyEscrowOrdersScreenState extends State<MyEscrowOrdersScreen>
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Text(
-                        orderCode,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.obsidian,
+                      Flexible(
+                        child: Text(
+                          orderCode,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.obsidian,
+                          ),
                         ),
                       ),
                     ],
@@ -478,8 +486,11 @@ class _MyEscrowOrdersScreenState extends State<MyEscrowOrdersScreen>
               const SizedBox(height: 12),
 
               // Financial stats
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 6,
                 children: [
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -561,8 +572,11 @@ class _MyEscrowOrdersScreenState extends State<MyEscrowOrdersScreen>
               const SizedBox(height: 14),
 
               // Status Pill & Action Button
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 6,
                 children: [
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -595,6 +609,7 @@ class _MyEscrowOrdersScreenState extends State<MyEscrowOrdersScreen>
                     ),
                   ),
                   Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       if (status == 'HELD_IN_ESCROW' || status == 'PRE_INSPECTION_PENDING')
                         Padding(

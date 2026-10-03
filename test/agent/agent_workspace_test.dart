@@ -16,10 +16,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:vektolux/core/network/convex_client_wrapper.dart';
+import 'package:vektolux/core/theme/app_theme.dart';
+import 'package:vektolux/core/widgets/app_text_scale.dart';
 import 'package:vektolux/features/auth/domain/entities/user_entity.dart';
 import 'package:vektolux/features/auth/presentation/bloc/auth_bloc.dart';
 import 'package:vektolux/features/auth/presentation/bloc/auth_event.dart';
 import 'package:vektolux/features/auth/presentation/bloc/auth_state.dart';
+import 'package:vektolux/features/listings/presentation/views/property_detail_screen.dart';
 import 'package:vektolux/features/navigation/presentation/views/main_navigation_shell.dart';
 
 class _MockAuthBloc extends MockBloc<AuthEvent, AuthState> implements AuthBloc {}
@@ -240,7 +243,12 @@ Future<void> _pump(
       value: backend.client(),
       child: BlocProvider<AuthBloc>.value(
         value: bloc,
-        child: MaterialApp(theme: ThemeData(fontFamily: 'Roboto'), home: const MainNavigationShell()),
+        // The app's real theme and text-scale cap (as in main.dart), so theme-level layout rules are tested too.
+        child: MaterialApp(
+          theme: AppTheme.light,
+          builder: (context, child) => AppTextScale(child: child ?? const SizedBox.shrink()),
+          home: const MainNavigationShell(),
+        ),
       ),
     ),
   );
@@ -294,12 +302,15 @@ Future<void> _loadRealFont() async {
     cur = cur.parent;
   }
   if (dir == null || !dir.existsSync()) return;
-  final loader = FontLoader('Roboto');
-  for (final f in ['roboto-regular.ttf', 'roboto-medium.ttf', 'roboto-bold.ttf', 'roboto-black.ttf']) {
-    final file = File('${dir.path}/$f');
-    if (file.existsSync()) loader.addFont(Future.value(ByteData.view(file.readAsBytesSync().buffer)));
+  // The theme names Poppins / Inter (not bundled: phones use their system font); measure with Roboto.
+  for (final family in ['Roboto', 'Inter', 'Poppins']) {
+    final loader = FontLoader(family);
+    for (final f in ['roboto-regular.ttf', 'roboto-medium.ttf', 'roboto-bold.ttf', 'roboto-black.ttf']) {
+      final file = File('${dir.path}/$f');
+      if (file.existsSync()) loader.addFont(Future.value(ByteData.view(file.readAsBytesSync().buffer)));
+    }
+    await loader.load();
   }
-  await loader.load();
 }
 
 void main() {
@@ -566,6 +577,19 @@ void main() {
       expect(find.byKey(const Key('agent-listing-l1')), findsOneWidget);
       expect(find.byKey(const Key('agent-listing-l2')), findsNothing);
       expect(find.textContaining('Hidden Close'), findsNothing);
+      await _tearDown(tester);
+    });
+
+    testWidgets('opening a listing shows the buyer-facing detail page with public data only', (tester) async {
+      await _pump(tester, user: _agentUser, backend: _Backend(_agentRoutes()));
+      await _openTab(tester, 1);
+      await tester.tap(find.byKey(const Key('agent-listing-l1')));
+      await _settle(tester);
+      expect(find.byType(PropertyDetailScreen), findsOneWidget);
+      expect(find.textContaining('Hidden Close'), findsNothing);
+      expect(find.textContaining('555999'), findsNothing);
+      expect(find.textContaining('Starlink'), findsNothing, reason: 'no invented amenities');
+      _expectNoLayoutErrors(tester);
       await _tearDown(tester);
     });
 

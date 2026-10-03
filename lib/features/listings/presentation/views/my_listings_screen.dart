@@ -822,13 +822,16 @@ class _MyListingsScreenState extends State<MyListingsScreen>
                   ],
                 ),
                 const Divider(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+                // Actions wrap onto a second line on narrow phones.
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  runSpacing: 4,
                   children: [
                     OutlinedButton.icon(
                       icon: const Icon(Icons.price_change_outlined, size: 15, color: AppColors.emeraldDark),
                       label: const Text('Update Price', style: TextStyle(color: AppColors.emeraldDark, fontWeight: FontWeight.w700, fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
+                      style: OutlinedButton.styleFrom(minimumSize: const Size(0, 36),
                         side: const BorderSide(color: AppColors.emerald, width: 1.2),
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -957,13 +960,16 @@ class _MyListingsScreenState extends State<MyListingsScreen>
                   ],
                 ),
                 const Divider(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+                // Actions wrap onto a second line on narrow phones.
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  runSpacing: 4,
                   children: [
                     OutlinedButton.icon(
                       icon: const Icon(Icons.price_change_outlined, size: 15, color: AppColors.emeraldDark),
                       label: const Text('Update Price', style: TextStyle(color: AppColors.emeraldDark, fontWeight: FontWeight.w700, fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
+                      style: OutlinedButton.styleFrom(minimumSize: const Size(0, 36),
                         side: const BorderSide(color: AppColors.emerald, width: 1.2),
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),

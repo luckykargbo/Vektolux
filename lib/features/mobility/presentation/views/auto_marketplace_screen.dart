@@ -535,14 +535,16 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                         _buildSpecChip(Icons.scale_rounded, capacity),
                       _buildSpecChip(Icons.settings_outlined, transmission),
                       _buildSpecChip(Icons.local_gas_station_outlined, fuel),
-                      _buildSpecChip(Icons.verified_outlined, 'Inspected'),
                     ],
                   ),
                   const SizedBox(height: 10),
                   const Divider(height: 1),
                   const SizedBox(height: 10),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
                       InkWell(
                         onTap: ownerId != null && ownerId.isNotEmpty
@@ -557,13 +559,14 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                                 );
                               }
                             : null,
-                        child: Row(
-                          children: const [
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
                             Icon(Icons.storefront_rounded,
                                 size: 14, color: AppColors.gray500),
                             SizedBox(width: 4),
                             Text(
-                              'Verified Auto Dealer',
+                              'View seller',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: AppColors.gray600,
@@ -574,6 +577,7 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                         ),
                       ),
                       Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           if (isDeliveryVan) ...[
                             InkWell(

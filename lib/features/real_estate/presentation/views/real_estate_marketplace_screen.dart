@@ -786,6 +786,8 @@ class _RealEstateMarketplaceScreenState
                     onTap: _showLocationPicker,
                     child: Text(
                       '$_selectedLocation, Sierra Leone',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
@@ -800,8 +802,8 @@ class _RealEstateMarketplaceScreenState
             OutlinedButton.icon(
               onPressed: _showLocationPicker,
               icon: const Icon(Icons.my_location_rounded, size: 14),
-              label: const Text('Change Location'),
-              style: OutlinedButton.styleFrom(
+              label: const Text('Change'),
+              style: OutlinedButton.styleFrom(minimumSize: const Size(0, 36),
                 foregroundColor: const Color(0xFF00A86B),
                 side: const BorderSide(color: Color(0xFF00A86B), width: 1.2),
                 shape: RoundedRectangleBorder(
@@ -1466,7 +1468,7 @@ class _RealEstateMarketplaceScreenState
                       _searchController.clear();
                     });
                   },
-                  style: OutlinedButton.styleFrom(
+                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 36),
                     side: const BorderSide(color: AppColors.emerald),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(20)),
@@ -1485,7 +1487,7 @@ class _RealEstateMarketplaceScreenState
               if (_selectedLocation != 'All Sierra Leone')
                 ElevatedButton(
                   onPressed: _showLocationPicker,
-                  style: ElevatedButton.styleFrom(
+                  style: ElevatedButton.styleFrom(minimumSize: const Size(0, 36),
                     backgroundColor: AppColors.emerald,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(20)),

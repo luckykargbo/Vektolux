@@ -234,15 +234,17 @@ class _ProfessionalSubscriptionScreenState extends State<ProfessionalSubscriptio
           children: [
             Text(p['name']?.toString() ?? '', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
             const SizedBox(height: 6),
-            Row(
+            // Price, old price and period wrap on narrow phones instead of overflowing.
+            Wrap(
+              spacing: 8,
+              runSpacing: 2,
+              crossAxisAlignment: WrapCrossAlignment.end,
               children: [
                 Text('$currency ${_fmt.format(price)}',
                     style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: AppColors.emeraldDark)),
-                const SizedBox(width: 8),
                 if (promo)
                   Text('$currency ${_fmt.format(base)}',
                       style: const TextStyle(decoration: TextDecoration.lineThrough, color: AppColors.gray500)),
-                const Spacer(),
                 Text('/ ${p['intervalDays']} days', style: const TextStyle(color: AppColors.gray600)),
               ],
             ),

@@ -391,7 +391,8 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
+              Expanded(
+                child: Row(
                 children: [
                   Icon(
                     isInspection
@@ -403,16 +404,22 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
                     color: AppColors.obsidian,
                   ),
                   const SizedBox(width: 6),
-                  Text(
-                    booking.bookingType.displayName.toUpperCase(),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.obsidian,
+                  Flexible(
+                    child: Text(
+                      booking.bookingType.displayName.toUpperCase(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.obsidian,
+                      ),
                     ),
                   ),
                 ],
+                ),
               ),
+              const SizedBox(width: 8),
               _buildStatusBadge(booking.status),
             ],
           ),
@@ -439,11 +446,15 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
               const Icon(Icons.schedule_rounded,
                   size: 14, color: AppColors.gray500),
               const SizedBox(width: 4),
-              Text(
-                DateFormat('EEE, MMM d, yyyy · h:mm a').format(startDate),
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textSecondary,
+              Flexible(
+                child: Text(
+                  DateFormat('EEE, MMM d, yyyy · h:mm a').format(startDate),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
                 ),
               ),
             ],
@@ -474,7 +485,10 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
                   ),
                 ],
               ),
-              Wrap(
+              const SizedBox(width: 8),
+              Flexible(
+                child: Wrap(
+                alignment: WrapAlignment.end,
                 spacing: 4,
                 children: [
                   // Paid & held: after the start the buyer confirms or reports a problem.
@@ -500,6 +514,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
                       child: const Text('Cancel', style: TextStyle(fontSize: 12)),
                     ),
                 ],
+                ),
               ),
             ],
           ),

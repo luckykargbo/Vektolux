@@ -1424,21 +1424,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 4,
+                              crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
-                                Flexible(
-                                  child: Text(
-                                    displayName,
-                                    style: const TextStyle(
-                                      fontSize: 17,
-                                      fontWeight: FontWeight.w700,
-                                      color: AppColors.obsidian,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                                Text(
+                                  displayName,
+                                  style: const TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.obsidian,
                                   ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                const SizedBox(width: 6),
                                 GestureDetector(
                                   onTap: () => _showVerificationInfoDialog(context, user),
                                   child: _buildVerificationBadge(user),
@@ -1468,7 +1468,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             // Role Badge
                             Row(
                               children: [
-                                Container(
+                                Flexible(
+                                  child: Container(
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 8,
                                     vertical: 3,
@@ -1489,15 +1490,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         color: AppColors.emeraldDark,
                                       ),
                                       const SizedBox(width: 4),
-                                      Text(
-                                        role.displayName,
-                                        style: const TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w700,
-                                          color: AppColors.emeraldDark,
+                                      Flexible(
+                                        child: Text(
+                                          role.displayName,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w700,
+                                            color: AppColors.emeraldDark,
+                                          ),
                                         ),
                                       ),
                                     ],
+                                  ),
                                   ),
                                 ),
                               ],
@@ -1835,7 +1841,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                         const SizedBox(width: 10),
                         ElevatedButton(
-                          style: ElevatedButton.styleFrom(
+                          style: ElevatedButton.styleFrom(minimumSize: const Size(0, 36),
                             backgroundColor: AppColors.emerald,
                             foregroundColor: AppColors.obsidian,
                             elevation: 0,
@@ -1937,7 +1943,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                         const SizedBox(width: 10),
                         ElevatedButton(
-                          style: ElevatedButton.styleFrom(
+                          style: ElevatedButton.styleFrom(minimumSize: const Size(0, 36),
                             backgroundColor: AppColors.emerald,
                             foregroundColor: AppColors.obsidian,
                             elevation: 0,
@@ -2302,14 +2308,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         onTap: () => _showWalletPinModal(context, user),
                       ),
                       const Divider(height: 1, indent: 56),
-                      SwitchListTile(
+                      Material(type: MaterialType.transparency, child: SwitchListTile(
                         secondary: const Icon(Icons.fingerprint_rounded, color: AppColors.gray600),
                         title: const Text('Biometric / FaceID Authorization', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                         subtitle: const Text('Require FaceID / TouchID to authorize escrow transactions', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
                         value: _escrowBiometricEnabled,
                         activeThumbColor: AppColors.emerald,
                         onChanged: (val) => setState(() => _escrowBiometricEnabled = val),
-                      ),
+                      )),
                       const Divider(height: 1, indent: 56),
                       _buildSettingsTile(
                         icon: Icons.qr_code_2_rounded,
@@ -2338,23 +2344,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   child: Column(
                     children: [
-                      SwitchListTile(
+                      Material(type: MaterialType.transparency, child: SwitchListTile(
                         secondary: const Icon(Icons.notifications_outlined, color: AppColors.gray500),
                         title: const Text('Push Notifications', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                         subtitle: const Text('Real-time order & inspection alerts', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
                         value: _pushNotifications,
                         activeThumbColor: AppColors.emerald,
                         onChanged: (val) => setState(() => _pushNotifications = val),
-                      ),
+                      )),
                       const Divider(height: 1, indent: 56),
-                      SwitchListTile(
+                      Material(type: MaterialType.transparency, child: SwitchListTile(
                         secondary: const Icon(Icons.sms_outlined, color: AppColors.gray500),
                         title: const Text('SMS Status Receipts', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                         subtitle: const Text('Receive backup SMS updates in Sierra Leone', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
                         value: _smsAlerts,
                         activeThumbColor: AppColors.emerald,
                         onChanged: (val) => setState(() => _smsAlerts = val),
-                      ),
+                      )),
                       const Divider(height: 1, indent: 56),
                       _buildSettingsTile(
                         icon: Icons.school_outlined,
@@ -2728,7 +2734,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     Widget? trailing,
     required VoidCallback onTap,
   }) {
-    return ListTile(
+    // Own (transparent) Material: the rows sit on white cards, which would hide the ink.
+    return Material(
+      type: MaterialType.transparency,
+      child: ListTile(
       leading: Container(
         width: 36,
         height: 36,
@@ -2757,6 +2766,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       trailing: trailing ?? const Icon(Icons.chevron_right_rounded, color: AppColors.gray400, size: 18),
       onTap: onTap,
+      ),
     );
   }
 
@@ -3618,7 +3628,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
                 const SizedBox(height: 3),
-                Row(
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  runSpacing: 4,
                   children: [
                     Text(
                       method.maskedNumber,
@@ -3884,13 +3896,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  SwitchListTile(
+                  Material(type: MaterialType.transparency, child: SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Set as default payment method', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                     value: setAsDefault,
                     activeThumbColor: AppColors.emerald,
                     onChanged: (val) => setModalState(() => setAsDefault = val),
-                  ),
+                  )),
                   const SizedBox(height: 18),
                   SizedBox(
                     width: double.infinity,
@@ -4064,7 +4076,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               width: isSelected ? 1.5 : 1.0,
                             ),
                           ),
-                          child: ListTile(
+                          child: Material(type: MaterialType.transparency, child: ListTile(
                             contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
                             leading: _buildProviderIcon(account.providerCode),
                             title: Text(
@@ -4096,7 +4108,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               onSelected(account.accountNumber);
                               Navigator.of(sheetCtx).pop();
                             },
-                          ),
+                          )),
                         );
                       }),
                       const SizedBox(height: 16),
@@ -4128,7 +4140,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    CheckboxListTile(
+                    Material(type: MaterialType.transparency, child: CheckboxListTile(
                       contentPadding: EdgeInsets.zero,
                       value: saveAsDefault,
                       activeColor: AppColors.emerald,
@@ -4138,7 +4150,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
                       ),
                       controlAffinity: ListTileControlAffinity.leading,
-                    ),
+                    )),
 
                     if (localError != null) ...[
                       const SizedBox(height: 8),

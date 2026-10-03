@@ -5,11 +5,11 @@ import 'package:vektolux/features/auth/domain/repositories/auth_repository.dart'
 void main() {
   group('Safe Numeric & Auth Serialization Parsing', () {
     test('asNullableInt correctly parses doubles, ints, strings, and null without throwing TypeError', () {
-      final doubleTimestamp = 1789731599135.0;
+      const doubleTimestamp = 1789731599135.0;
       expect(asNullableInt(doubleTimestamp), equals(1789731599135));
       expect((doubleTimestamp as num?)?.toInt(), equals(1789731599135));
 
-      final intTimestamp = 1789731599135;
+      const intTimestamp = 1789731599135;
       expect(asNullableInt(intTimestamp), equals(1789731599135));
       expect((intTimestamp as num?)?.toInt(), equals(1789731599135));
 
@@ -18,11 +18,11 @@ void main() {
     });
 
     test('asDouble and asNullableDouble parse currency and balance fields safely', () {
-      final intBalance = 500;
+      const intBalance = 500;
       expect(asDouble(intBalance), equals(500.0));
       expect((intBalance as num?)?.toDouble(), equals(500.0));
 
-      final doubleBalance = 500.75;
+      const doubleBalance = 500.75;
       expect(asDouble(doubleBalance), equals(500.75));
       expect((doubleBalance as num?)?.toDouble(), equals(500.75));
 

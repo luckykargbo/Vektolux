@@ -1963,7 +1963,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
           ),
           OutlinedButton(
             onPressed: () => _navigateToAgent(id),
-            style: OutlinedButton.styleFrom(
+            style: OutlinedButton.styleFrom(minimumSize: const Size(0, 36),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               side: const BorderSide(color: AppColors.emerald),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

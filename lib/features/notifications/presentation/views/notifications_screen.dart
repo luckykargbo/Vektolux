@@ -231,7 +231,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           Container(
             color: Colors.white,
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: Row(
+            // Scrolls sideways on narrow phones instead of overflowing.
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
               children: [
                 _buildFilterChip('All', 'all', _notifications.length),
                 const SizedBox(width: 8),
@@ -243,6 +246,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   _notifications.where((n) => n['targetType'] == 'all_users').length,
                 ),
               ],
+            ),
             ),
           ),
 

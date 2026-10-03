@@ -461,11 +461,15 @@ Amount to Transfer: SLE ${NumberFormat('#,##0.00').format(_totalEscrowInflow)}
                 ),
                 child: Column(
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      runSpacing: 6,
                       children: [
                         const Text('Duration (Days):', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
                         Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
                               onPressed: _rentalDays > 1 ? () => setState(() => _rentalDays--) : null,
@@ -481,7 +485,7 @@ Amount to Transfer: SLE ${NumberFormat('#,##0.00').format(_totalEscrowInflow)}
                       ],
                     ),
                     const Divider(),
-                    ListTile(
+                    Material(type: MaterialType.transparency, child: ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.calendar_today_rounded, color: AppColors.emerald),
                       title: const Text('Start Date', style: TextStyle(fontSize: 12, color: AppColors.gray500)),
@@ -496,7 +500,7 @@ Amount to Transfer: SLE ${NumberFormat('#,##0.00').format(_totalEscrowInflow)}
                         );
                         if (picked != null) setState(() => _startDate = picked);
                       },
-                    ),
+                    )),
                   ],
                 ),
               ),
@@ -864,8 +868,11 @@ Amount to Transfer: SLE ${NumberFormat('#,##0.00').format(_totalEscrowInflow)}
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 6,
           children: [
             Text(
               title,

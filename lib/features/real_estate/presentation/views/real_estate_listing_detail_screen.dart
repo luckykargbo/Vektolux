@@ -719,7 +719,7 @@ class _RealEstateListingDetailScreenState
                 OutlinedButton.icon(
                   icon: const Icon(Icons.qr_code_scanner_rounded, size: 16, color: AppColors.obsidian),
                   label: const Text('Viewing Pass', style: TextStyle(color: AppColors.obsidian, fontWeight: FontWeight.w700, fontSize: 12)),
-                  style: OutlinedButton.styleFrom(
+                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 36),
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     side: const BorderSide(color: AppColors.border),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),

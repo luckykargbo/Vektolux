@@ -13,6 +13,7 @@ import 'core/theme/app_theme.dart';
 import 'core/network/connectivity_monitor.dart';
 import 'core/network/convex_client_wrapper.dart';
 import 'core/constants/app_constants.dart';
+import 'core/widgets/app_text_scale.dart';
 import 'features/auth/auth.dart';
 import 'core/services/notification_service.dart';
 import 'core/services/payment_methods_service.dart';
@@ -105,7 +106,8 @@ class VektoluxApp extends StatelessWidget {
                   NotificationService.instance.updateUser(null);
                 }
               },
-              child: child ?? const SizedBox.shrink(),
+              // Phone font-size settings are honoured up to a cap so every screen fits.
+              child: AppTextScale(child: child ?? const SizedBox.shrink()),
             );
           },
 

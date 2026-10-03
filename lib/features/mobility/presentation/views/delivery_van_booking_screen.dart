@@ -218,12 +218,16 @@ class _DeliveryVanBookingScreenState extends State<DeliveryVanBookingScreen> {
                             const Icon(Icons.local_shipping_rounded,
                                 size: 20, color: AppColors.mobility),
                             const SizedBox(width: 8),
-                            Text(
-                              '$make $model ($year)',
-                              style: const TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.textPrimary,
+                            Flexible(
+                              child: Text(
+                                '$make $model ($year)',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.textPrimary,
+                                ),
                               ),
                             ),
                           ],

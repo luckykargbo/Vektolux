@@ -94,16 +94,23 @@ class _UniversalPhoneInputState extends State<UniversalPhoneInput> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              widget.label,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 13,
-                color: AppColors.obsidian,
+            Expanded(
+              child: Text(
+                widget.label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                  color: AppColors.obsidian,
+                ),
               ),
             ),
-            Row(
+            const SizedBox(width: 8),
+            Flexible(
+              child: Row(
               mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 // Clear override button
                 if (_isOverridden)
@@ -140,11 +147,14 @@ class _UniversalPhoneInputState extends State<UniversalPhoneInput> {
                     ),
                   ),
                 // Tappable carrier badge
-                CarrierBadgeWidget(
-                  carrier: effective,
-                  onOverride: widget.enabled ? _applyOverride : null,
+                Flexible(
+                  child: CarrierBadgeWidget(
+                    carrier: effective,
+                    onOverride: widget.enabled ? _applyOverride : null,
+                  ),
                 ),
               ],
+              ),
             ),
           ],
         ),

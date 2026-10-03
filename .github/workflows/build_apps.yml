@@ -76,8 +76,8 @@ jobs:
           BLD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PL")
           echo "Bundle ID: $BID  Version: $VER  Build: $BLD"
           test "$BID" = "com.vektolux.app"
-          test "$VER" = "1.0.27"
-          test "$BLD" = "28"
+          test "$VER" = "1.0.28"
+          test "$BLD" = "29"
           lipo -info build/ios/iphoneos/Runner.app/Runner
           lipo -info build/ios/iphoneos/Runner.app/Runner | grep -q arm64
           unzip -tq Vektolux.ipa
@@ -95,7 +95,7 @@ jobs:
           retention-days: 30
 
   release:
-    name: Publish Release (APK & IPA)
+    name: Publish Release (IPA)
     # The iPhone test build is published as soon as the IPA is ready; it no longer waits for
     # (or is blocked by) the Android build, which can hang.
     needs: [build-ios]
@@ -115,18 +115,56 @@ jobs:
       - name: Organize Release Assets
         run: |
           mkdir -p release-assets
-          if [ -d apk-dir ] && [ -f apk-dir/app-release.apk ]; then cp apk-dir/app-release.apk release-assets/; fi
-          if [ -d ipa-dir ] && [ -f ipa-dir/Vektolux.ipa ]; then cp ipa-dir/Vektolux.ipa release-assets/; fi
+          cp ipa-dir/Vektolux.ipa release-assets/
           ls -lh release-assets/
 
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           # Test build for physical-iPhone testing (unsigned IPA, signed by Sideloadly on install).
-          tag_name: vektolux-ios-test-1.0.27-28
-          name: "Vektolux iPhone Test Build 1.0.27 (28)"
+          tag_name: vektolux-ios-test-1.0.28-29
+          name: "Vektolux Test Build 1.0.28 (29): iPhone & Android"
           body_path: docs/IOS_TEST_BUILD.md
           files: release-assets/*
+          prerelease: true
+          make_latest: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-android:
+    name: Attach Android APK to the Release
+    # Runs after the iPhone release (never racing it to create the release) and never delays the IPA.
+    needs: [build-android, release]
+    if: always() && needs.build-android.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Repository (release notes)
+        uses: actions/checkout@v4
+
+      - name: Download Android APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: apk-dir
+
+      - name: Validate and name the APK
+        run: |
+          mkdir -p release-assets
+          cp apk-dir/app-release.apk release-assets/Vektolux.apk
+          unzip -tq release-assets/Vektolux.apk
+          SIZE=$(stat -c%s release-assets/Vektolux.apk); echo "APK size: $SIZE bytes"
+          test "$SIZE" -gt 5000000
+          ls -lh release-assets/
+
+      - name: Add the APK to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vektolux-ios-test-1.0.28-29
+          name: "Vektolux Test Build 1.0.28 (29): iPhone & Android"
+          body_path: docs/IOS_TEST_BUILD.md
+          files: release-assets/Vektolux.apk
           prerelease: true
           make_latest: false
         env:

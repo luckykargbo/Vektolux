@@ -148,8 +148,14 @@ class VxNetworkImage extends StatelessWidget {
               color: Colors.white.withValues(alpha: 0.04),
             ),
           ),
-          Column(
+          // Scales down to fit any size (small thumbnails included).
+          Padding(
+            padding: const EdgeInsets.all(6),
+            child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Container(
                 padding: const EdgeInsets.all(10),
@@ -168,8 +174,9 @@ class VxNetworkImage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
+              // A placeholder never claims anything about the listing.
               Text(
-                fallbackLabel ?? 'VEKTOLUX VERIFIED',
+                fallbackLabel ?? 'PHOTO UNAVAILABLE',
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.85),
                   fontSize: 10,
@@ -178,6 +185,8 @@ class VxNetworkImage extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+            ),
           ),
         ],
       ),

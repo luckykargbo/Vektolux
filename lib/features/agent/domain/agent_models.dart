@@ -212,6 +212,9 @@ class AgentListing {
   final String title;
   final String description;
 
+  /// The listing's owner (the agent for their own listings; the owner for represented ones).
+  final String ownerId;
+
   /// sale | long_term_rent | hourly_guesthouse
   final String category;
   final double price;
@@ -239,6 +242,7 @@ class AgentListing {
     required this.id,
     required this.title,
     this.description = '',
+    this.ownerId = '',
     required this.category,
     required this.price,
     this.hourlyRate,
@@ -264,6 +268,7 @@ class AgentListing {
         id: _str(m['_id']),
         title: _str(m['title'], 'Untitled listing'),
         description: _str(m['description']),
+        ownerId: _str(m['ownerId']),
         category: _str(m['category']),
         price: _double(m['price']),
         hourlyRate: _optDouble(m['hourlyRate']),
@@ -289,6 +294,7 @@ class AgentListing {
         id: _str(m['_id']),
         title: _str(m['title'], 'Untitled listing'),
         description: _str(m['description']),
+        ownerId: _str(m['ownerId']),
         category: _str(m['category']),
         price: _double(m['price']),
         hourlyRate: _optDouble(m['hourlyRate']),

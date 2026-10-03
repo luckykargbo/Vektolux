@@ -65,7 +65,7 @@ class _HeroImageCarouselState extends State<HeroImageCarousel> {
               ),
               const SizedBox(height: 10),
               const Text(
-                'VEKTOLUX VERIFIED PROPERTY',
+                'NO PHOTOS YET',
                 style: TextStyle(
                   color: Colors.white70,
                   fontSize: 11,

@@ -470,7 +470,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('New Marketplace Listing'),
+            const Flexible(child: Text('New Marketplace Listing', overflow: TextOverflow.ellipsis)),
             if (_canPublish) ...[ 
               const SizedBox(width: 8),
               const VerifiedBadge(size: VerifiedBadgeSize.small, showLabel: true),

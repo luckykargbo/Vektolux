@@ -490,7 +490,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
     required bool isActive,
     required VoidCallback onTap,
   }) {
-    return ListTile(
+    return Material(type: MaterialType.transparency, child: ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Container(
         padding: const EdgeInsets.all(8),
@@ -520,7 +520,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
           ? const Icon(Icons.check_circle_rounded, color: AppColors.emerald, size: 20)
           : null,
       onTap: onTap,
-    );
+    ));
   }
 
   Widget _buildWorkspaceSelector(UserRole activeWorkspace) {
@@ -662,7 +662,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
           ),
           const SizedBox(width: 10),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
+            style: ElevatedButton.styleFrom(minimumSize: const Size(0, 36),
               backgroundColor: AppColors.emeraldDark,
               foregroundColor: Colors.white,
               padding:

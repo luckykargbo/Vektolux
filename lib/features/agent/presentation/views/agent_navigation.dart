@@ -14,9 +14,9 @@ import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../auth/presentation/bloc/auth_event.dart';
 import '../../../auth/presentation/views/login_screen.dart';
 import '../../../bookings/presentation/views/my_bookings_screen.dart';
+import '../../../listings/presentation/views/property_detail_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
 import '../../../real_estate/presentation/views/my_real_estate_escrows_screen.dart';
-import '../../../real_estate/presentation/views/real_estate_listing_detail_screen.dart';
 import '../../../subscriptions/presentation/views/professional_subscription_screen.dart';
 import '../../domain/agent_models.dart';
 import '../bloc/agent_workspace_cubit.dart';
@@ -84,15 +84,30 @@ Future<void> showPostingBlockedSheet(BuildContext context, String reason) {
   );
 }
 
+/// Opens the listing exactly as buyers see it (the marketplace's detail screen), with the public
+/// data only: generalised location, never the street address, coordinates or a private phone.
 void openListingDetail(BuildContext context, AgentListing listing) {
   final user = AgentShellScope.of(context).user;
   Navigator.of(context).push(MaterialPageRoute(
-    builder: (_) => RealEstateListingDetailScreen(
-      listingId: listing.id,
-      currentUserId: user.id,
-      userEmail: user.email,
-      userPhone: user.phone,
-      userName: user.name,
+    builder: (_) => PropertyDetailScreen(
+      id: listing.id,
+      title: listing.title,
+      description: listing.description,
+      category: listing.category,
+      price: listing.price,
+      hourlyRate: listing.hourlyRate,
+      address: listing.publicLocation,
+      // Same generic city-level values the marketplace passes: never the property's GPS position.
+      latitude: 8.484,
+      longitude: -13.234,
+      imageUrls: listing.imageUrls,
+      ownerId: listing.ownerId.isNotEmpty ? listing.ownerId : user.id,
+      bedrooms: listing.bedrooms,
+      bathrooms: listing.bathrooms,
+      squareMeters: listing.areaSqM,
+      // Only what the listing really has (the screen's defaults would invent amenities).
+      amenities: listing.amenities,
+      isFurnished: listing.amenities.contains('Furnished'),
     ),
   ));
 }

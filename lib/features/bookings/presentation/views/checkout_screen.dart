@@ -840,8 +840,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 6,
                     children: [
                       const Text(
                         'Platform & Escrow Protection (5%)',
@@ -862,8 +865,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     ],
                   ),
                   const Divider(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 6,
                     children: [
                       const Text(
                         'Total Payable',
@@ -966,11 +972,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         children: [
                           const Icon(Icons.lock_outline_rounded, size: 18),
                           const SizedBox(width: 8),
-                          Text(
-                            'Pay SLE ${_currencyFormat.format(widget.totalAmount)} from wallet',
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
+                          // The full amount stays visible: the label scales down on small phones.
+                          Flexible(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                'Pay SLE ${_currencyFormat.format(widget.totalAmount)} from wallet',
+                                maxLines: 1,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                             ),
                           ),
                         ],

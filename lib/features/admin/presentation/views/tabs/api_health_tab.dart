@@ -336,7 +336,7 @@ class _ApiHealthTabState extends State<ApiHealthTab> {
                   onPressed: _seedDefaultKeys,
                   icon: const Icon(Icons.add_link, size: 16),
                   label: const Text('Seed Gateways', style: TextStyle(fontSize: 12)),
-                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.emerald),
+                  style: ElevatedButton.styleFrom(minimumSize: const Size(0, 36), backgroundColor: AppColors.emerald),
                 )
               else
                 IconButton(

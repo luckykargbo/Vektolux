@@ -62,7 +62,7 @@ class _AgentListingsScreenState extends State<AgentListingsScreen> {
                           onPressed: () => openAddListing(context),
                           icon: Icon(canPost ? Icons.add_circle_outline_rounded : Icons.lock_outline_rounded, size: 18),
                           label: const Text('Add New'),
-                          style: agentPrimaryButtonStyle().copyWith(
+                          style: agentPrimaryButtonStyle().copyWith(minimumSize: const WidgetStatePropertyAll(Size(0, 40)),
                             backgroundColor: WidgetStatePropertyAll(canPost ? AppColors.emeraldDark : AppColors.gray300),
                             foregroundColor: WidgetStatePropertyAll(canPost ? Colors.white : AppColors.gray700),
                             padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 14, vertical: 10)),

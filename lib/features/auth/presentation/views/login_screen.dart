@@ -400,8 +400,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   // ── Switch to Registration ─────────────────────────
                   Center(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
+                    // Wraps onto two lines on narrow phones instead of overflowing.
+                    child: Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         const Text(
                           'Don\'t have an account? ',

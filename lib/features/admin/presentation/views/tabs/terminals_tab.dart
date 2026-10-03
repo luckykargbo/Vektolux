@@ -452,7 +452,7 @@ class _TerminalsTabState extends State<TerminalsTab> {
                 onPressed: () => _showTerminalDialog(),
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('Add', style: TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(
+                style: ElevatedButton.styleFrom(minimumSize: const Size(0, 36),
                   backgroundColor: AppColors.emerald,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

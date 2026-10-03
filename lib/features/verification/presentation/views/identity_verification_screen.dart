@@ -630,15 +630,17 @@ class _IdentityVerificationScreenState
                 children: [
                   Row(
                     children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15,
-                          color: isSelected ? AppColors.emerald : AppColors.obsidian,
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                            color: isSelected ? AppColors.emerald : AppColors.obsidian,
+                          ),
                         ),
                       ),
-                      const Spacer(),
+                      const SizedBox(width: 8),
                       Icon(
                         isSelected ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
                         color: isSelected ? AppColors.emerald : const Color(0xFF94A3B8),

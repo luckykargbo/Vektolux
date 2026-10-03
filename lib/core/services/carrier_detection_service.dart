@@ -364,12 +364,16 @@ class CarrierBadgeWidget extends StatelessWidget {
             color: carrier.brandColor,
           ),
           const SizedBox(width: 5),
-          Text(
-            compact ? carrier.shortName : carrier.displayName,
-            style: TextStyle(
-              fontSize: compact ? 11 : 12,
-              fontWeight: FontWeight.w700,
-              color: carrier.brandColor,
+          Flexible(
+            child: Text(
+              compact ? carrier.shortName : carrier.displayName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: compact ? 11 : 12,
+                fontWeight: FontWeight.w700,
+                color: carrier.brandColor,
+              ),
             ),
           ),
           if (tappable) ...[
