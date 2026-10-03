@@ -20,6 +20,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: 'gradle'
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -29,6 +30,15 @@ jobs:
 
       - name: Install Dependencies
         run: flutter pub get
+
+      # android/gradle.properties is tuned for a low-memory PC (1 GB Gradle heap). On CI that heap
+      # makes the release build thrash and stall; ~/.gradle/gradle.properties takes precedence.
+      - name: Give Gradle enough memory on CI
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8" >> ~/.gradle/gradle.properties
+          echo "kotlin.daemon.jvmOptions=-Xmx2g" >> ~/.gradle/gradle.properties
+          cat ~/.gradle/gradle.properties
 
       - name: Build Release APK
         run: flutter build apk --release
