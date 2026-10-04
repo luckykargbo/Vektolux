@@ -17,6 +17,7 @@ import '../../../../core/widgets/vx_video_player.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../messaging/data/messaging_api.dart';
 import '../../../messaging/presentation/buyer_messaging.dart';
+import '../../../saved/presentation/saved_hearts.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
 import '../../../bookings/presentation/widgets/booking_modals.dart';
 import '../../../real_estate/domain/entities/property_listing_entity.dart';
@@ -103,10 +104,47 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
   int _activeImageIndex = 0;
   final _currencyFormat = NumberFormat('#,##0', 'en_US');
 
+  /// The heart: saved on the server against the signed-in account.
+  late final SavedHearts _hearts = SavedHearts.of(context);
+
+  @override
+  void initState() {
+    super.initState();
+    _hearts.addListener(_onHeartsChanged);
+    _hearts.load();
+    _recordView();
+  }
+
   @override
   void dispose() {
+    _hearts.removeListener(_onHeartsChanged);
+    _hearts.dispose();
     _pageController.dispose();
     super.dispose();
+  }
+
+  void _onHeartsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Tells the server this signed-in user opened the listing (counted once per day, never for the
+  /// owner or the listing's agent; guests are not counted). Fire and forget: it must never get in
+  /// the way of reading the listing.
+  Future<void> _recordView() async {
+    try {
+      final user = context.read<AuthBloc>().state.user;
+      if (user == null || widget.id.isEmpty || _isOwnListing) return;
+      await context.read<ConvexClientWrapper>().mutation('listingStats:recordPropertyView', args: {'listingId': widget.id});
+    } catch (_) {
+      // not counted; nothing to tell the user
+    }
+  }
+
+  Future<void> _toggleHeart() async {
+    final error = await _hearts.toggle(widget.id);
+    if (error != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), behavior: SnackBarBehavior.floating));
+    }
   }
 
   bool get _isHourly => widget.category == 'hourly_guesthouse';
@@ -270,18 +308,17 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.share_outlined, color: AppColors.white),
-            tooltip: 'Share listing',
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Property link copied to clipboard.'),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-            },
-          ),
+          // Save / un-save (a server record). Your own listing cannot be saved.
+          if (!_isOwnListing)
+            IconButton(
+              key: const Key('property-heart'),
+              icon: Icon(
+                _hearts.isSaved(widget.id) ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                color: _hearts.isSaved(widget.id) ? AppColors.error : AppColors.white,
+              ),
+              tooltip: _hearts.isSaved(widget.id) ? 'Remove from saved' : 'Save property',
+              onPressed: _toggleHeart,
+            ),
         ],
       ),
       body: SingleChildScrollView(
@@ -725,7 +762,8 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
                       onPressed: _handlePrimaryAction,
                     )
                   : VxButton(
-                      label: 'Book Site Visit / Inspection',
+                      key: const Key('property-request-viewing'),
+                      label: 'Request a Viewing',
                       icon: Icons.calendar_today_rounded,
                       onPressed: _handlePrimaryAction,
                     ),

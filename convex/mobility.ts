@@ -18,7 +18,7 @@ import {
 } from "./schema";
 import { encodeGeohash } from "./lib/geo";
 import { requireVerifiedSeller } from "./middleware";
-import { requireAdminSession, requireOwnedDoc, requireSelf } from "./lib/auth";
+import { requireAdminSession, requireOwnedDoc, requireSelf, resolveOptionalUser } from "./lib/auth";
 import { toPublicVehicle } from "./lib/publicListing";
 import { postingPermission } from "./lib/permissions";
 import { publicLocation } from "./lib/slLocations";
@@ -281,6 +281,8 @@ export const listVehicles = query({
 export const getVehicleById = query({
   args: {
     listingId: v.string(),
+    // Optional: lets the owner open their own unpublished / taken-down listing.
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const id = ctx.db.normalizeId("vehicleListings", args.listingId);
@@ -288,6 +290,10 @@ export const getVehicleById = query({
 
     const listing = await ctx.db.get(id);
     if (!listing || listing.isDeleted) return null;
+    if (listing.isPublished === false || listing.status === "TAKEN_DOWN") {
+      const viewer = args.sessionToken ? await resolveOptionalUser(ctx, { sessionToken: args.sessionToken }) : null;
+      if (!viewer || viewer.userId !== listing.ownerId) return null;
+    }
 
     // Fetch owner details
     const owner = await ctx.db.get(listing.ownerId);

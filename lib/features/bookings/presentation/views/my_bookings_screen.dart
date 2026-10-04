@@ -2,6 +2,8 @@
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — My Bookings & Trips
 // Tabbed browsing for Active vs Historical bookings powered directly by Convex Cloud.
+// With [viewingsOnly] it is "My Viewings": the free property viewing requests, each with the
+// server's status (Requested → Confirmed or Declined with the agent's reason).
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
@@ -16,10 +18,14 @@ class MyBookingsScreen extends StatefulWidget {
   final ConvexClientWrapper convexClient;
   final UserEntity currentUser;
 
+  /// Show only the free property viewing requests.
+  final bool viewingsOnly;
+
   const MyBookingsScreen({
     super.key,
     required this.convexClient,
     required this.currentUser,
+    this.viewingsOnly = false,
   });
 
   @override
@@ -78,6 +84,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
   }
 
   Future<void> _cancelBooking(BookingEntity booking) async {
+    final isRequest = booking.status == BookingStatus.requested;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) {
@@ -86,7 +93,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
           backgroundColor: isDark ? const Color(0xFF1E293B) : AppColors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: Text(
-            'Cancel Booking?',
+            isRequest ? 'Withdraw Request?' : 'Cancel Booking?',
             style: TextStyle(
               color: isDark ? AppColors.white : AppColors.obsidian,
               fontWeight: FontWeight.w700,
@@ -94,9 +101,11 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
             ),
           ),
           content: Text(
-            booking.isEscrowHeld
-                ? 'Cancel "${booking.listingTitle}"? Your payment will be refunded to your wallet in full.'
-                : 'Are you sure you want to cancel "${booking.listingTitle}"?',
+            isRequest
+                ? 'Withdraw your viewing request for "${booking.listingTitle}"?'
+                : booking.isEscrowHeld
+                    ? 'Cancel "${booking.listingTitle}"? Your payment will be refunded to your wallet in full.'
+                    : 'Are you sure you want to cancel "${booking.listingTitle}"?',
             style: TextStyle(
               color: isDark ? const Color(0xFFCBD5E1) : const Color(0xFF475569),
               fontSize: 14,
@@ -106,7 +115,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
               child: Text(
-                'Keep Booking',
+                isRequest ? 'Keep Request' : 'Keep Booking',
                 style: TextStyle(
                   color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
                   fontWeight: FontWeight.w600,
@@ -122,7 +131,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
                   borderRadius: BorderRadius.circular(10),
                 ),
               ),
-              child: const Text('Yes, Cancel'),
+              child: Text(isRequest ? 'Yes, Withdraw' : 'Yes, Cancel'),
             ),
           ],
         );
@@ -150,7 +159,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
             SnackBar(
               content: Text(refunded > 0
                   ? 'Booking cancelled. SLE ${_currencyFormat.format(refunded)} was refunded to your wallet.'
-                  : 'Booking cancelled.'),
+                  : (isRequest ? 'Viewing request withdrawn.' : 'Booking cancelled.')),
               behavior: SnackBarBehavior.floating,
             ),
           );
@@ -240,16 +249,21 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
 
   @override
   Widget build(BuildContext context) {
-    final activeBookings = _allBookings
+    final bookings = widget.viewingsOnly
+        ? _allBookings.where((b) => b.bookingType == BookingType.propertyInspection).toList()
+        : _allBookings;
+    final activeBookings = bookings
         .where((b) =>
             b.status != BookingStatus.completed &&
-            b.status != BookingStatus.cancelled)
+            b.status != BookingStatus.cancelled &&
+            b.status != BookingStatus.declined)
         .toList();
 
-    final historicalBookings = _allBookings
+    final historicalBookings = bookings
         .where((b) =>
             b.status == BookingStatus.completed ||
-            b.status == BookingStatus.cancelled)
+            b.status == BookingStatus.cancelled ||
+            b.status == BookingStatus.declined)
         .toList();
 
     return Scaffold(
@@ -258,9 +272,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
         backgroundColor: AppColors.obsidian,
         foregroundColor: AppColors.white,
         elevation: 0,
-        title: const Text(
-          'My Bookings & Trips',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        title: Text(
+          widget.viewingsOnly ? 'My Viewings' : 'My Bookings & Trips',
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
         actions: [
           IconButton(
@@ -286,9 +300,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
           unselectedLabelColor: AppColors.gray400,
           labelStyle:
               const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-          tabs: const [
-            Tab(text: 'Active Bookings'),
-            Tab(text: 'History / Completed'),
+          tabs: [
+            Tab(text: widget.viewingsOnly ? 'Upcoming' : 'Active Bookings'),
+            Tab(text: widget.viewingsOnly ? 'Past' : 'History / Completed'),
           ],
         ),
       ),
@@ -297,11 +311,11 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
         children: [
           _buildBookingList(
             list: activeBookings,
-            emptyMessage: 'No upcoming stays or trips scheduled.',
+            emptyMessage: widget.viewingsOnly ? 'No viewing requests yet.' : 'No upcoming stays or trips scheduled.',
           ),
           _buildBookingList(
             list: historicalBookings,
-            emptyMessage: 'No past completed or cancelled bookings.',
+            emptyMessage: widget.viewingsOnly ? 'No past viewings.' : 'No past completed or cancelled bookings.',
           ),
         ],
       ),
@@ -506,19 +520,36 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
                   // Unpaid, or paid and not started yet (full refund).
                   if (booking.status != BookingStatus.cancelled &&
                       booking.status != BookingStatus.completed &&
+                      booking.status != BookingStatus.declined &&
                       booking.status != BookingStatus.disputed &&
                       (!booking.isEscrowHeld || DateTime.now().millisecondsSinceEpoch < booking.startTime))
                     TextButton(
                       onPressed: () => _cancelBooking(booking),
                       style: TextButton.styleFrom(foregroundColor: AppColors.error),
-                      child: const Text('Cancel', style: TextStyle(fontSize: 12)),
+                      child: Text(booking.status == BookingStatus.requested ? 'Withdraw' : 'Cancel', style: const TextStyle(fontSize: 12)),
                     ),
                 ],
                 ),
               ),
             ],
           ),
-          if (booking.status == BookingStatus.disputed)
+          if (booking.status == BookingStatus.requested)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'Viewing request sent. Waiting for the agent to confirm.',
+                style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+              ),
+            )
+          else if (booking.status == BookingStatus.declined)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                booking.declineReason == null ? 'The agent declined this request.' : 'Declined: ${booking.declineReason}',
+                style: const TextStyle(fontSize: 11, color: AppColors.error),
+              ),
+            )
+          else if (booking.status == BookingStatus.disputed)
             const Padding(
               padding: EdgeInsets.only(top: 8),
               child: Text(
@@ -547,6 +578,14 @@ class _MyBookingsScreenState extends State<MyBookingsScreen>
     String label = status.displayName;
 
     switch (status) {
+      case BookingStatus.requested:
+        bg = AppColors.amberSurface;
+        fg = AppColors.amber;
+        break;
+      case BookingStatus.declined:
+        bg = AppColors.errorLight;
+        fg = AppColors.error;
+        break;
       case BookingStatus.confirmed:
         bg = AppColors.emeraldSurface;
         fg = AppColors.emeraldDark;

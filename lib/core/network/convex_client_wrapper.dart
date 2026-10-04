@@ -472,6 +472,15 @@ class ConvexClientWrapper {
     'messaging:sendMessage',
     'messaging:markThreadRead',
     'bookings:getVendorBookings',
+    // saved listings (hearts), listing statistics, viewing requests and the agent's listing actions
+    'savedListings:toggleSavedListing',
+    'savedListings:getMySavedListingIds',
+    'savedListings:getMySavedListings',
+    'listingStats:recordPropertyView',
+    'bookings:getMyViewingRequests',
+    'bookings:respondToViewingRequest',
+    'realEstate:archivePropertyListing',
+    'realEstate:restorePropertyListing',
   };
 
   static bool _acceptsSessionToken(String functionPath) =>

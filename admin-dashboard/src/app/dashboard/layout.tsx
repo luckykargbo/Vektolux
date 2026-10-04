@@ -1,6 +1,6 @@
 "use client";
 // src/app/dashboard/layout.tsx — Shared dashboard shell with sidebar nav
-import { LayoutDashboard, Users, FileCheck, FolderOpen, Zap, ShieldCheck, Building2, Bell, CreditCard, Activity, Landmark, Percent, Undo2, UserCheck, Scale, Hotel } from "lucide-react";
+import { LayoutDashboard, Users, FileCheck, FolderOpen, Zap, ShieldCheck, Building2, Bell, CreditCard, Activity, Landmark, Percent, Undo2, UserCheck, Scale, Hotel, ClipboardCheck, BadgeCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import type { AdminSession } from "@/lib/types";
@@ -53,6 +53,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { href: "/dashboard/real-estate-escrow", label: "Property Escrow", icon: <Building2 size={18} /> },
     { href: "/dashboard/users", label: "User Directory", icon: <Users size={18} /> },
     { href: "/dashboard/verifications", label: "Verification Queue", icon: <FileCheck size={18} /> },
+    { href: "/dashboard/listing-review", label: "Listing Review", icon: <ClipboardCheck size={18} /> },
+    { href: "/dashboard/roles", label: "Business Roles", icon: <BadgeCheck size={18} /> },
     { href: "/dashboard/listings", label: "Listings Inspector", icon: <FolderOpen size={18} /> },
     { href: "/dashboard/seed", label: "Quick Seed", icon: <Zap size={18} /> },
   ];

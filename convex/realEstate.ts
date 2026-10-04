@@ -10,9 +10,10 @@ import { Id } from "./_generated/dataModel";
 import { realEstateCategory } from "./schema";
 import { encodeGeohash } from "./lib/geo";
 import { requireVerifiedSeller } from "./middleware";
-import { requireOwnedDoc, requireSelf } from "./lib/auth";
-import { postingPermission } from "./lib/permissions";
-import { toPublicProperty } from "./lib/publicListing";
+import { requireOwnedDoc, requireSelf, resolveOptionalUser } from "./lib/auth";
+import { businessRole, postingPermission } from "./lib/permissions";
+import { isListingPublic, listingLifecycle, toPublicProperty } from "./lib/publicListing";
+import { activeListingAgent } from "./listingAgents";
 import { findDistrict, findTown } from "./lib/slLocations";
 import { isAcceptableContentType, isListingVideoContentType } from "./lib/uploads";
 
@@ -59,6 +60,23 @@ async function listingVideoUrl(ctx: { db: any; storage: any }, id: string): Prom
   const url = await storageUrl(ctx, id);
   if (!url) throw new Error("A video did not finish uploading. Remove it or upload it again.");
   return url;
+}
+
+/** Listings by Real Estate Agents are reviewed by an administrator before they go live. */
+function requiresReview(user: { role?: unknown }): boolean {
+  return businessRole(user as any) === "real_estate_agent";
+}
+
+/** Fields that send a listing to the admin review queue. */
+function reviewFields(now: number) {
+  return {
+    isPublished: true,
+    moderationStatus: "pending_review" as const,
+    submittedForReviewAt: now,
+    moderationReason: undefined,
+    moderatedAt: undefined,
+    moderatedBy: undefined,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -134,6 +152,15 @@ export const createPropertyListing = mutation({
     const geohash = hasCoords ? encodeGeohash(args.latitude!, args.longitude!, 7) : "";
     const now = Date.now();
 
+    // An agent's submitted listing waits for admin review; a draft stays private. Owners' listings
+    // are not reviewed (unchanged).
+    const publish = args.isPublished ?? true;
+    const publication = requiresReview(user)
+      ? publish
+        ? { isPublished: true, moderationStatus: "pending_review" as const, submittedForReviewAt: now }
+        : { isPublished: false }
+      : { isPublished: publish };
+
     // 5. Insert listing record
     const listingId = await ctx.db.insert("realEstateListings", {
       ownerId: userId,
@@ -161,8 +188,11 @@ export const createPropertyListing = mutation({
       isDeleted: false,
       availabilityStatus: "available",
       isFeatured: false,
-      isPublished: args.isPublished ?? true,
+      ...publication,
       viewCount: 0,
+      saveCount: 0,
+      inquiryCount: 0,
+      viewingRequestCount: 0,
       updatedAt: now,
     });
 
@@ -196,10 +226,8 @@ export const listProperties = query({
           .order("desc")
           .take(args.limit ?? 50);
 
-    // Exclude unpublished / draft / deleted listings from public discovery
-    let filtered = listings.filter(
-      (l) => l.isPublished !== false && l.isDeleted !== true
-    );
+    // Only public listings: no drafts, unpublished, archived, deleted, pending or rejected ones.
+    let filtered = listings.filter((l) => isListingPublic(l));
 
     // Apply price and city filters in-memory if requested
     if (args.minPrice !== undefined) {
@@ -271,7 +299,7 @@ export const getMyPropertyListings = query({
       .query("realEstateListings")
       .withIndex("by_owner", (q) => q.eq("ownerId", userId))
       .order("desc")
-      .collect();
+      .take(500);
 
     return listings
       .filter((l) => l.isDeleted !== true)
@@ -279,6 +307,13 @@ export const getMyPropertyListings = query({
         ...l,
         _id: l._id as string,
         ownerId: String(l.ownerId),
+        // Server-derived state and statistics (the app never computes or stores these).
+        lifecycleStatus: listingLifecycle(l),
+        moderationReason: l.moderationReason ?? null,
+        viewCount: l.viewCount ?? 0,
+        saveCount: l.saveCount ?? 0,
+        inquiryCount: l.inquiryCount ?? 0,
+        viewingRequestCount: l.viewingRequestCount ?? 0,
       }));
   },
 });
@@ -305,24 +340,78 @@ export const updatePropertyListing = mutation({
       ctx, "realEstateListings", args.listingId, args.sessionToken
     );
     const id = listing._id;
-    // (Re)publishing is publishing: it needs the same server-side permission as creating a listing
-    // (approved role + active subscription, or a legacy agent inside the fixed grace window).
-    if (args.isPublished === true && listing.isPublished === false) {
-      const permission = await postingPermission(ctx, auth.user, "property");
-      if (!permission.allowed) throw new Error(permission.reason);
+    if (listing.moderationStatus === "removed") {
+      throw new Error("This listing was removed by Vektolux and can no longer be changed.");
     }
-
-    const updates: Record<string, any> = { updatedAt: Date.now() };
+    const now = Date.now();
+    const updates: Record<string, any> = { updatedAt: now };
     if (args.title !== undefined) updates.title = args.title;
     if (args.description !== undefined) updates.description = args.description;
     if (args.price !== undefined) updates.price = args.price;
     if (args.hourlyRate !== undefined) updates.hourlyRate = args.hourlyRate;
     if (args.bedrooms !== undefined) updates.bedrooms = args.bedrooms;
     if (args.bathrooms !== undefined) updates.bathrooms = args.bathrooms;
-    if (args.isPublished !== undefined) updates.isPublished = args.isPublished;
+
+    let message = "Listing updated successfully";
+    // (Re)publishing — including resubmitting a rejected listing — is publishing: it needs the same
+    // server-side permission as creating one, and an agent's listing goes back to admin review.
+    const publishing =
+      args.isPublished === true && (listing.isPublished === false || listing.moderationStatus === "rejected");
+    if (publishing) {
+      if (typeof listing.archivedAt === "number") throw new Error("Restore this listing from the archive first.");
+      const permission = await postingPermission(ctx, auth.user, "property");
+      if (!permission.allowed) throw new Error(permission.reason);
+      if (requiresReview(auth.user)) {
+        Object.assign(updates, reviewFields(now));
+        message = "Submitted for review";
+      } else {
+        updates.isPublished = true;
+      }
+    } else if (args.isPublished === false && listing.isPublished !== false) {
+      updates.isPublished = false;
+      // Taking a listing out of the review queue turns it back into a draft.
+      if (listing.moderationStatus === "pending_review") {
+        updates.moderationStatus = undefined;
+        updates.submittedForReviewAt = undefined;
+      }
+    }
 
     await ctx.db.patch(id, updates);
-    return { success: true, message: "Listing updated successfully" };
+    return { success: true, message };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//                    ARCHIVE / RESTORE (OWNER)
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Takes a listing off the marketplace and keeps it (with its history) in the owner's archive. */
+export const archivePropertyListing = mutation({
+  args: { listingId: v.string(), sessionToken: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const { doc: listing } = await requireOwnedDoc(ctx, "realEstateListings", args.listingId, args.sessionToken);
+    if (listing.moderationStatus === "removed") throw new Error("This listing was removed by Vektolux.");
+    if (typeof listing.archivedAt === "number") return { success: true };
+    const now = Date.now();
+    await ctx.db.patch(listing._id, {
+      archivedAt: now,
+      isPublished: false,
+      // a listing waiting for review leaves the queue
+      ...(listing.moderationStatus === "pending_review" ? { moderationStatus: undefined, submittedForReviewAt: undefined } : {}),
+      updatedAt: now,
+    });
+    return { success: true };
+  },
+});
+
+/** Brings an archived listing back as a private draft (publishing it again goes through review). */
+export const restorePropertyListing = mutation({
+  args: { listingId: v.string(), sessionToken: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const { doc: listing } = await requireOwnedDoc(ctx, "realEstateListings", args.listingId, args.sessionToken);
+    if (typeof listing.archivedAt !== "number") throw new Error("This listing is not archived.");
+    await ctx.db.patch(listing._id, { archivedAt: undefined, isPublished: false, updatedAt: Date.now() });
+    return { success: true };
   },
 });
 
@@ -341,6 +430,10 @@ export const deletePropertyListing = mutation({
       ctx, "realEstateListings", args.listingId, args.sessionToken
     );
     const id = listing._id;
+    // A listing an administrator removed stays on record (with its reason): it cannot be deleted.
+    if (listing.moderationStatus === "removed") {
+      throw new Error("This listing was removed by Vektolux and cannot be deleted.");
+    }
 
     // Capture full data payload for local SQLite archival
     const archivedSnapshot = {
@@ -379,6 +472,9 @@ export const deletePropertyListing = mutation({
 export const getPropertyById = query({
   args: {
     listingId: v.string(),
+    // Optional: lets the owner or the listing's authorised agent open a listing that is not public
+    // (draft, under review, rejected, archived). Everyone else only ever sees public listings.
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const id = ctx.db.normalizeId("realEstateListings", args.listingId);
@@ -386,6 +482,13 @@ export const getPropertyById = query({
 
     const listing = await ctx.db.get(id);
     if (!listing || listing.isDeleted) return null;
+    if (!isListingPublic(listing)) {
+      const viewer = args.sessionToken ? await resolveOptionalUser(ctx, { sessionToken: args.sessionToken }) : null;
+      if (!viewer) return null;
+      const isOwner = viewer.userId === listing.ownerId;
+      const agent = isOwner ? null : await activeListingAgent(ctx, "property", listing._id as string);
+      if (!isOwner && agent?.agentId !== viewer.userId) return null;
+    }
 
     // Fetch owner details
     const owner = await ctx.db.get(listing.ownerId);
@@ -416,6 +519,8 @@ export const getPropertyById = query({
       ...cleanListing,
       _id: listing._id as string,
       imageUrls: resolvedUrls,
+      // Derived state only (a non-public listing is returned just to its owner / authorised agent).
+      lifecycleStatus: listingLifecycle(listing),
       contactAction: "in_app_request",
       owner: owner
         ? {

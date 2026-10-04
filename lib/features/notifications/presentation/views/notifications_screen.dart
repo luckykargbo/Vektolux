@@ -6,10 +6,14 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../agent/presentation/views/viewing_requests_entry.dart';
+import '../../../auth/presentation/bloc/auth_bloc.dart';
+import '../../../bookings/presentation/views/my_bookings_screen.dart';
 import '../../../messaging/data/messaging_api.dart';
 import '../../../messaging/presentation/buyer_messaging.dart';
 import '../../../messaging/presentation/conversation_screen.dart';
@@ -155,6 +159,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               ? ConversationScreen(api: api, conversationId: conversationId)
               : MessagesInboxScreen(api: api),
         ));
+        break;
+      case 'bookings':
+        final me = context.read<AuthBloc>().state.user;
+        if (me == null) break;
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => MyBookingsScreen(convexClient: widget.convexClient, currentUser: me, viewingsOnly: true),
+        ));
+        break;
+      case 'viewings':
+        final owner = context.read<AuthBloc>().state.user;
+        if (owner == null) break;
+        openViewingRequests(context, client: widget.convexClient, user: owner);
         break;
       case 'followers':
         final userId = widget.currentUserId;

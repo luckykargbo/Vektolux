@@ -114,10 +114,14 @@ class AgentApi {
     return mapList(v).map(AgentListing.fromOwn).where((l) => l.id.isNotEmpty).toList();
   }
 
-  /// Public, privacy-safe view of any listing (no street address, coordinates or private phone).
+  /// Privacy-safe view of a listing (no street address, coordinates or private phone). With the
+  /// agent's session the server also returns a listing that is not public yet (draft, under review)
+  /// when the agent owns it or is the owner's authorised agent.
   Future<Map<String, dynamic>?> publicProperty(String listingId) async {
-    final v = await _query('realEstate:getPropertyById', {'listingId': listingId});
-    return v is Map ? Map<String, dynamic>.from(v) : null;
+    final v = await _query('realEstate:getPropertyById', _session({'listingId': listingId}));
+    // A listing the server will not show returns null, which the HTTP wrapper hands back as the whole
+    // response envelope; a real record always has an `_id`.
+    return v is Map && v['_id'] != null ? Map<String, dynamic>.from(v) : null;
   }
 
   Future<List<AgentAuthorization>> myAuthorizations() async {
@@ -135,10 +139,23 @@ class AgentApi {
     await _mutation('listingAgents:revokeListingAgent', _session({'authorizationId': authorizationId, 'reason': reason}));
   }
 
-  /// Publishing re-checks the posting permission on the server; unpublishing hides the listing.
-  Future<void> setPublished(String listingId, bool publish) async {
-    await _mutation('realEstate:updatePropertyListing',
+  /// `publish: true` SUBMITS the listing for administrator review (the server re-checks the posting
+  /// permission and, for an agent, never makes it public directly); `false` unpublishes it or
+  /// withdraws it from review. Returns the server's message.
+  Future<String> setPublished(String listingId, bool publish) async {
+    final v = await _mutation('realEstate:updatePropertyListing',
         _session({'listingId': listingId, 'ownerId': userId, 'isPublished': publish}));
+    return v is Map ? (v['message']?.toString() ?? '') : '';
+  }
+
+  /// Takes a listing off the marketplace and keeps it in the archive.
+  Future<void> archiveListing(String listingId) async {
+    await _mutation('realEstate:archivePropertyListing', _session({'listingId': listingId}));
+  }
+
+  /// Brings an archived listing back as a private draft.
+  Future<void> restoreListing(String listingId) async {
+    await _mutation('realEstate:restorePropertyListing', _session({'listingId': listingId}));
   }
 
   Future<void> updateListingDetails(
@@ -191,12 +208,22 @@ class AgentApi {
     return v?.toString() ?? '';
   }
 
-  // ─── Viewing requests (bookings on the agent's listings) ─────────────
+  // ─── Viewing requests (free site visits on the agent's listings) ─────
 
   Future<List<ViewingRequest>> viewingRequests() async =>
-      parseViewingRequests(await _query('bookings:getVendorBookings', _session({'vendorId': userId})));
+      parseViewingRequests(await _query('bookings:getMyViewingRequests', _session()));
 
-  /// The listing side cancels a booking (the server applies the existing refund rules).
+  /// Accept or decline a pending request. The server checks that the caller manages the listing
+  /// and that the request is still pending; declining needs a reason.
+  Future<void> respondToViewing(String bookingId, {required bool accept, String? reason}) async {
+    await _mutation('bookings:respondToViewingRequest', _session({
+      'bookingId': bookingId,
+      'decision': accept ? 'accept' : 'decline',
+      if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+    }));
+  }
+
+  /// Cancels a CONFIRMED visit (a pending request is accepted or declined, not cancelled).
   Future<void> cancelViewing(String bookingId, String reason) async {
     await _mutation('bookings:cancelBooking', _session({'bookingId': bookingId, 'userId': userId, 'reason': reason}));
   }

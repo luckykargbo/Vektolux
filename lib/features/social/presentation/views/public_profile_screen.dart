@@ -185,6 +185,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     final role = _profile!['role'] as String? ?? 'client';
     final isOwnProfile = _currentUserId == widget.userId;
     final isVerifiedSeller = _profile!['isVerifiedSeller'] == true;
+    // The professional identity the SERVER derives from the approved roles, e.g. "Real Estate Agent &
+    // Car Dealer" (an older server sends none: the role name is used).
+    final serverTitle = (_profile!['professionalTitle'] as String?)?.trim();
+    final professionalTitle = (serverTitle != null && serverTitle.isNotEmpty && serverTitle != 'Client') ? serverTitle : _roleName(role);
 
     final propertyPosts = _posts.where((p) => p['type'] == 'property').toList();
     final vehiclePosts = _posts.where((p) => p['type'] == 'vehicle').toList();
@@ -263,7 +267,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
             alignment: Alignment.centerLeft,
             child: Text(
               isVerifiedSeller
-                  ? _roleName(role)
+                  ? professionalTitle
                   : 'Verified Client & Buyer',
               style: TextStyle(
                 fontSize: 13,

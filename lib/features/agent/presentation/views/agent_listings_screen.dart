@@ -2,7 +2,8 @@
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Real Estate Agent "My Listings" (Listings tab).
 //
-// • The agent's own listings (realEstate:getMyPropertyListings) with their real server status.
+// • The agent's own listings (realEstate:getMyPropertyListings) with their real server status
+//   (active, pending review, rejected, removed, unpublished, off-market, archived) and statistics.
 // • Listings the agent represents for an owner (owner-authorised listing agents): read-only
 //   here — the owner keeps control; the agent can view it or stop representing it.
 // • Pending owner invitations to represent a listing (accept / decline on the server).
@@ -42,6 +43,11 @@ class _AgentListingsScreenState extends State<AgentListingsScreen> {
             builder: (context, s) {
               final portfolio = s.portfolio;
               final canPost = s.status.postingBlockedReason == null;
+              // A filter that no longer matches anything (the last pending listing was approved)
+              // falls back to All.
+              final filter = portfolio != null && _filter != ListingFilter.all && countMatching(portfolio, _filter) == 0
+                  ? ListingFilter.all
+                  : _filter;
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -73,7 +79,8 @@ class _AgentListingsScreenState extends State<AgentListingsScreen> {
                   ),
                   const SizedBox(height: 12),
                   _FilterChips(
-                    selected: _filter,
+                    selected: filter,
+                    filters: portfolio == null ? const [ListingFilter.all] : visibleFilters(portfolio, selected: filter),
                     counts: {
                       for (final f in ListingFilter.values) f: portfolio == null ? null : countMatching(portfolio, f),
                     },
@@ -95,7 +102,7 @@ class _AgentListingsScreenState extends State<AgentListingsScreen> {
                               message: 'Listings you represent for owners could not load: ${s.representedListings.error}',
                               onRetry: cubit.loadRepresentations,
                             ),
-                          ..._listings(context, s, portfolio, canPost),
+                          ..._listings(context, s, portfolio, canPost, filter),
                         ],
                       ),
                     ),
@@ -124,7 +131,8 @@ class _AgentListingsScreenState extends State<AgentListingsScreen> {
     ];
   }
 
-  List<Widget> _listings(BuildContext context, AgentWorkspaceState s, List<AgentListing>? portfolio, bool canPost) {
+  List<Widget> _listings(
+      BuildContext context, AgentWorkspaceState s, List<AgentListing>? portfolio, bool canPost, ListingFilter filter) {
     final cubit = context.read<AgentWorkspaceCubit>();
     if (portfolio == null) {
       if (s.ownListings.error != null) {
@@ -144,13 +152,13 @@ class _AgentListingsScreenState extends State<AgentListingsScreen> {
         ),
       ];
     }
-    final visible = portfolio.where((l) => l.matches(_filter)).toList();
+    final visible = portfolio.where((l) => l.matches(filter)).toList();
     if (visible.isEmpty) {
       return [
         AgentEmptyState(
           icon: Icons.filter_list_rounded,
           title: 'Nothing here',
-          message: 'No listings match "${_filter.label}".',
+          message: 'No listings match "${filter.label}".',
         ),
       ];
     }
@@ -167,10 +175,11 @@ class _AgentListingsScreenState extends State<AgentListingsScreen> {
 
 class _FilterChips extends StatelessWidget {
   final ListingFilter selected;
+  final List<ListingFilter> filters;
   final Map<ListingFilter, int?> counts;
   final ValueChanged<ListingFilter> onSelected;
 
-  const _FilterChips({required this.selected, required this.counts, required this.onSelected});
+  const _FilterChips({required this.selected, required this.filters, required this.counts, required this.onSelected});
 
   @override
   Widget build(BuildContext context) {
@@ -179,8 +188,8 @@ class _FilterChips extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: AgentTokens.gutter),
       child: Row(
         children: [
-          for (final f in ListingFilter.values) ...[
-            if (f != ListingFilter.values.first) const SizedBox(width: 8),
+          for (final f in filters) ...[
+            if (f != filters.first) const SizedBox(width: 8),
             _chip(f),
           ],
         ],
@@ -214,7 +223,7 @@ class _FilterChips extends StatelessWidget {
   }
 }
 
-enum _ListingAction { view, edit, publish, unpublish, delete, stopRepresenting }
+enum _ListingAction { view, edit, submit, withdraw, unpublish, archive, restore, delete, stopRepresenting }
 
 /// Horizontal listing card (Listings tab) with the actions menu.
 class AgentListingRow extends StatelessWidget {
@@ -283,10 +292,46 @@ class AgentListingRow extends StatelessWidget {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     if (AgentListingSpecs.hasAny(listing)) AgentListingSpecs(listing: listing),
-                    AgentStatusPill(status: listing.liveStatus),
-                    if (inquiries > 0) AgentInquiryChip(count: inquiries),
+                    AgentStatusPill(status: listing.status),
                   ],
                 ),
+                if (listing.moderationReason != null &&
+                    (listing.status == ListingStatus.rejected || listing.status == ListingStatus.removed)) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    key: Key('agent-listing-reason-${listing.id}'),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    decoration: BoxDecoration(color: AppColors.errorLight, borderRadius: BorderRadius.circular(8)),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.info_outline_rounded, size: 14, color: AppColors.errorDark),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            listing.moderationReason!,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11.5, color: AppColors.errorDark, height: 1.3),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                if (!listing.isRepresented && listing.viewCount != null) ...[
+                  const SizedBox(height: 6),
+                  AgentListingStats(
+                    key: Key('agent-listing-stats-${listing.id}'),
+                    views: listing.viewCount,
+                    saves: listing.saveCount,
+                    inquiries: listing.inquiryCount ?? inquiries,
+                    viewings: listing.viewingRequestCount,
+                  ),
+                ] else if (inquiries > 0) ...[
+                  const SizedBox(height: 6),
+                  AgentInquiryChip(count: inquiries),
+                ],
                 if (listing.isRepresented) ...[
                   const SizedBox(height: 6),
                   const AgentPill(
@@ -323,12 +368,16 @@ class AgentListingRow extends StatelessWidget {
     }
     return [
       item(_ListingAction.view, Icons.visibility_outlined, 'View listing'),
-      item(_ListingAction.edit, Icons.edit_outlined, 'Edit details'),
-      if (listing.isPublished)
-        item(_ListingAction.unpublish, Icons.visibility_off_outlined, 'Unpublish')
-      else
-        item(_ListingAction.publish, Icons.publish_rounded, 'Publish'),
-      item(_ListingAction.delete, Icons.delete_outline_rounded, 'Delete', color: AppColors.errorDark),
+      if (listing.canEdit) item(_ListingAction.edit, Icons.edit_outlined, 'Edit details'),
+      if (listing.canSubmitForReview) item(_ListingAction.submit, Icons.send_rounded, 'Submit for review'),
+      if (listing.canResubmit) item(_ListingAction.submit, Icons.replay_rounded, 'Resubmit for review'),
+      if (listing.canWithdraw) item(_ListingAction.withdraw, Icons.undo_rounded, 'Withdraw from review'),
+      if (listing.canUnpublish) item(_ListingAction.unpublish, Icons.visibility_off_outlined, 'Unpublish'),
+      if (listing.canArchive) item(_ListingAction.archive, Icons.archive_outlined, 'Archive'),
+      if (listing.canRestore) item(_ListingAction.restore, Icons.unarchive_outlined, 'Restore as draft'),
+      // A listing an administrator removed stays on record (it cannot be deleted).
+      if (listing.status != ListingStatus.removed)
+        item(_ListingAction.delete, Icons.delete_outline_rounded, 'Delete', color: AppColors.errorDark),
     ];
   }
 
@@ -347,20 +396,38 @@ class AgentListingRow extends StatelessWidget {
           builder: (_) => BlocProvider.value(value: cubit, child: _EditListingSheet(listing: listing)),
         );
         return;
-      case _ListingAction.publish:
+      case _ListingAction.submit:
         if (!await agentConfirm(context,
-            title: 'Publish listing?',
-            message: 'It will be visible on the Vektolux marketplace. Vektolux checks your posting permission first.',
-            confirmLabel: 'Publish')) {
+            title: 'Submit for review?',
+            message: 'An administrator reviews it before buyers can see it. Vektolux checks your posting permission first.',
+            confirmLabel: 'Submit')) {
           return;
         }
         final err = await cubit.setPublished(listing, true);
-        if (context.mounted) agentSnack(context, err ?? 'Listing published.', error: err != null);
+        if (context.mounted) agentSnack(context, err ?? 'Submitted for review.', error: err != null);
+        return;
+      case _ListingAction.withdraw:
+        final err = await cubit.setPublished(listing, false);
+        if (context.mounted) agentSnack(context, err ?? 'Withdrawn from review. It is a draft again.', error: err != null);
+        return;
+      case _ListingAction.archive:
+        if (!await agentConfirm(context,
+            title: 'Archive listing?',
+            message: 'It leaves the marketplace. You can restore it later.',
+            confirmLabel: 'Archive')) {
+          return;
+        }
+        final archiveErr = await cubit.archiveListing(listing);
+        if (context.mounted) agentSnack(context, archiveErr ?? 'Listing archived.', error: archiveErr != null);
+        return;
+      case _ListingAction.restore:
+        final restoreErr = await cubit.restoreListing(listing);
+        if (context.mounted) agentSnack(context, restoreErr ?? 'Restored as a draft.', error: restoreErr != null);
         return;
       case _ListingAction.unpublish:
         if (!await agentConfirm(context,
             title: 'Unpublish listing?',
-            message: 'Buyers will no longer see it. You can publish it again later.',
+            message: 'Buyers will no longer see it. Publishing it again goes through review.',
             confirmLabel: 'Unpublish')) {
           return;
         }
@@ -389,43 +456,13 @@ class AgentListingRow extends StatelessWidget {
     }
   }
 
-  Future<String?> _askReason(BuildContext context) async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setState) => AlertDialog(
-          backgroundColor: Colors.white,
-          title: const Text('Stop representing this listing?', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('The owner will be notified. Tell them why.',
-                  style: TextStyle(fontSize: 13, color: AppColors.gray600)),
-              const SizedBox(height: 10),
-              TextField(
-                controller: controller,
-                maxLength: 300,
-                maxLines: 2,
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(hintText: 'Reason (at least 3 characters)'),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
-            ElevatedButton(
-              onPressed: controller.text.trim().length < 3 ? null : () => Navigator.of(ctx).pop(controller.text.trim()),
-              style: ElevatedButton.styleFrom(backgroundColor: AppColors.error, foregroundColor: Colors.white, elevation: 0),
-              child: const Text('Stop representing'),
-            ),
-          ],
-        ),
-      ),
-    );
-    controller.dispose();
-    return result;
-  }
+  Future<String?> _askReason(BuildContext context) => showAgentReasonSheet(
+        context,
+        title: 'Stop representing this listing?',
+        subtitle: 'The owner will be notified. Tell them why.',
+        confirmLabel: 'Stop representing',
+        destructive: true,
+      );
 }
 
 class _InvitationCard extends StatefulWidget {

@@ -14,6 +14,8 @@ import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../auth/presentation/bloc/auth_event.dart';
 import '../../../auth/presentation/views/login_screen.dart';
 import '../../../bookings/presentation/views/my_bookings_screen.dart';
+import '../../../listings/presentation/views/create_listing_screen.dart';
+import '../../../listings/presentation/views/my_listings_screen.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
 import '../../../messaging/domain/messaging_models.dart';
 import '../../../messaging/presentation/conversation_screen.dart';
@@ -67,6 +69,27 @@ void openChatListing(BuildContext context, ChatListing listing) {
 }
 
 void openViewings(BuildContext context) => pushAgentPage(context, const AgentViewingsScreen());
+
+/// Auto tools: offered only to an approved Car Dealer (the server decides; every action is
+/// re-checked there). The agent's property flow never offers vehicles.
+void openAddVehicle(BuildContext context) {
+  final scope = AgentShellScope.of(context);
+  Navigator.of(context).push(MaterialPageRoute(
+    builder: (_) => CreateListingScreen(
+      convexClient: scope.convexClient,
+      currentUser: scope.user,
+      initialType: ListingType.vehicle,
+      lockType: true,
+    ),
+  ));
+}
+
+void openMyVehicles(BuildContext context) {
+  final scope = AgentShellScope.of(context);
+  Navigator.of(context).push(MaterialPageRoute(
+    builder: (_) => MyListingsScreen(convexClient: scope.convexClient, currentUser: scope.user, vehiclesOnly: true),
+  ));
+}
 
 /// The agent's public profile exactly as clients see it.
 void openPublicProfile(BuildContext context) {

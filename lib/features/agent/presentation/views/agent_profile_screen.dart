@@ -1,8 +1,8 @@
 // lib/features/agent/presentation/views/agent_profile_screen.dart
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Real Estate Agent profile (Profile tab).
-// Photo, real name, verified badge (server-computed), role, subscription label, bio and real
-// counts. Account details are edited only through the existing account functions (bio via
+// Photo, real name, verified badge (server-computed), professional title ("Real Estate Agent" or
+// "Real Estate Agent & Car Dealer"), subscription (plan, expiry, renew), bio and real counts. Account details are edited only through the existing account functions (bio via
 // users:updateBio); approval, badge and permissions cannot be changed from here.
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -58,6 +58,8 @@ class AgentProfileScreen extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 12),
+                  _SubscriptionCard(state: s),
+                  const SizedBox(height: 12),
                   _BioCard(bio: s.profile.data?.bio),
                   const SizedBox(height: 14),
                   _StatsRow(state: s),
@@ -76,7 +78,7 @@ class AgentProfileScreen extends StatelessWidget {
                         _MenuTile(
                           icon: Icons.event_available_outlined,
                           label: 'Viewing Requests',
-                          badge: s.upcomingViewingsAt(DateTime.now()),
+                          badge: s.pendingViewings,
                           onTap: () => openViewings(context),
                         ),
                         _MenuTile(
@@ -105,6 +107,19 @@ class AgentProfileScreen extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (s.status.showAutoTools) ...[
+                    const SizedBox(height: 14),
+                    AgentCard(
+                      key: const Key('agent-auto-menu'),
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Column(
+                        children: [
+                          _MenuTile(icon: Icons.add_circle_outline_rounded, label: 'Add Vehicle', onTap: () => openAddVehicle(context)),
+                          _MenuTile(icon: Icons.directions_car_outlined, label: 'My Vehicles', onTap: () => openMyVehicles(context), last: true),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 18),
                   SizedBox(
                     height: 50,
@@ -128,6 +143,75 @@ class AgentProfileScreen extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Plan, expiry and Renew / Subscribe — from the server's subscription records only.
+class _SubscriptionCard extends StatelessWidget {
+  final AgentWorkspaceState state;
+  const _SubscriptionCard({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final st = state.status;
+    final now = DateTime.now();
+    final sub = state.subscription;
+    final label = subscriptionLabel(st, sub, now: now);
+    final expiry = sub != null && sub.isActiveAt(now) ? sub.expiryDate : st.agentExpiresAt;
+    final (IconData icon, Color color, Color bg, String title, String? subtitle, String action) = st.hasActiveSubscription
+        ? (
+            Icons.workspace_premium_rounded,
+            AppColors.emeraldDark,
+            AppColors.emeraldSurface,
+            label ?? 'Active subscription',
+            expiry == null ? 'Active' : 'Active until ${formatDate(expiry)}',
+            'Renew',
+          )
+        : st.isInGracePeriod
+            ? (
+                Icons.hourglass_top_rounded,
+                AppColors.amberDark,
+                AppColors.amberSurface,
+                'Grace period',
+                st.gracePeriodEndsAt == null ? null : 'Until ${formatDate(st.gracePeriodEndsAt!)}',
+                'Subscribe',
+              )
+            : (
+                Icons.lock_clock_outlined,
+                AppColors.amberDark,
+                AppColors.amberSurface,
+                'No active subscription',
+                'Needed to submit listings',
+                'Subscribe',
+              );
+    return AgentCard(
+      key: const Key('agent-subscription-card'),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      onTap: () => openSubscription(context),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+            child: Icon(icon, color: color, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: AppColors.obsidian)),
+                if (subtitle != null)
+                  Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: AppColors.gray500)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          AgentPill(label: action, background: bg, foreground: color),
+        ],
       ),
     );
   }

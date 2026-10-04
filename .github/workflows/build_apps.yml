@@ -86,8 +86,8 @@ jobs:
           BLD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PL")
           echo "Bundle ID: $BID  Version: $VER  Build: $BLD"
           test "$BID" = "com.vektolux.app"
-          test "$VER" = "1.0.29"
-          test "$BLD" = "30"
+          test "$VER" = "1.0.30"
+          test "$BLD" = "31"
           lipo -info build/ios/iphoneos/Runner.app/Runner
           lipo -info build/ios/iphoneos/Runner.app/Runner | grep -q arm64
           unzip -tq Vektolux.ipa
@@ -132,8 +132,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           # Test build for physical-iPhone testing (unsigned IPA, signed by Sideloadly on install).
-          tag_name: vektolux-ios-test-1.0.29-30
-          name: "Vektolux Test Build 1.0.29 (30): iPhone & Android"
+          tag_name: vektolux-ios-test-1.0.30-31
+          name: "Vektolux Test Build 1.0.30 (31): iPhone & Android"
           body_path: docs/IOS_TEST_BUILD.md
           files: release-assets/*
           prerelease: true
@@ -171,8 +171,8 @@ jobs:
       - name: Add the APK to the GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: vektolux-ios-test-1.0.29-30
-          name: "Vektolux Test Build 1.0.29 (30): iPhone & Android"
+          tag_name: vektolux-ios-test-1.0.30-31
+          name: "Vektolux Test Build 1.0.30 (31): iPhone & Android"
           body_path: docs/IOS_TEST_BUILD.md
           files: release-assets/Vektolux.apk
           prerelease: true

@@ -10,7 +10,8 @@ import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { publicLocation } from "./lib/slLocations";
 import { Doc } from "./_generated/dataModel";
-import { businessRole, isRoleApproved, professionalBadge } from "./lib/permissions";
+import { businessRole, hasCarDealerCapability, isRoleApproved, professionalBadge, professionalTitle } from "./lib/permissions";
+import { isListingPublic } from "./lib/publicListing";
 
 /**
  * Public professional card for discovery. Only APPROVED professionals are listed; a Real Estate
@@ -23,7 +24,9 @@ async function publicProfessional(ctx: { db: any }, u: Doc<"users">): Promise<{ 
   if (role === "real_estate_owner") return { label: "Property Owner", verified: true };
   if (role === "real_estate_agent" || role === "hotel_owner") {
     const b = await professionalBadge(ctx, u);
-    if (role === "real_estate_agent" && b.verifiedAgent) return { label: "Real Estate Agent", verified: true };
+    if (role === "real_estate_agent" && b.verifiedAgent) return { label: professionalTitle(u), verified: true };
+    // An agent without an active subscription who is also an approved Car Dealer still sells cars.
+    if (role === "real_estate_agent" && hasCarDealerCapability(u)) return { label: "Vehicle Dealer", verified: true };
     if (role === "hotel_owner" && b.verifiedHotel) return { label: "Hotel / Guest House", verified: true };
   }
   return null;
@@ -66,10 +69,7 @@ export const getExploreFeed = query({
         .take(limit * 2);
 
       const publishedRe = reDocs.filter(
-        (doc) =>
-          doc.isDeleted !== true &&
-          doc.isPublished !== false &&
-          doc.availabilityStatus === "available"
+        (doc) => isListingPublic(doc) && doc.availabilityStatus === "available"
       );
 
       for (const p of publishedRe.slice(0, limit)) {
@@ -217,7 +217,10 @@ export const getExploreFeed = query({
           .withIndex("by_owner", (q) => q.eq("ownerId", u._id))
           .take(20);
 
-        const totalListings = reCount.length + vCount.length;
+        // public listings only (no drafts, listings under review, rejected, archived or removed)
+        const totalListings =
+          reCount.filter((l) => isListingPublic(l)).length +
+          vCount.filter((x) => x.isDeleted !== true && x.isPublished !== false && x.status !== "TAKEN_DOWN").length;
 
         topAgents.push({
           id: u._id as string,
@@ -331,8 +334,7 @@ export const searchExplore = query({
     const properties = reDocs
       .filter(
         (p) =>
-          p.isDeleted !== true &&
-          p.isPublished !== false &&
+          isListingPublic(p) &&
           (p.title.toLowerCase().includes(q) ||
             (p.city && p.city.toLowerCase().includes(q)) ||
             // (Street addresses are private and are NOT searchable.)

@@ -122,8 +122,18 @@ class AgentWorkspaceState {
     return out;
   }
 
-  int upcomingViewingsAt(DateTime now) =>
-      viewings.data?.where((v) => v.tabAt(now) == ViewingTab.upcoming).length ?? 0;
+  /// Site-visit requests waiting for the agent's answer (server status "requested").
+  int get pendingViewings => viewings.data?.where((v) => v.isRequested).length ?? 0;
+
+  /// The soonest confirmed visit that has not ended yet.
+  ViewingRequest? nextViewing(DateTime now) {
+    ViewingRequest? next;
+    for (final v in viewings.data ?? const <ViewingRequest>[]) {
+      if (!v.isConfirmed || v.isExpired(now)) continue;
+      if (next == null || v.startTime < next.startTime) next = v;
+    }
+    return next;
+  }
 }
 
 class AgentWorkspaceCubit extends Cubit<AgentWorkspaceState> {
@@ -231,7 +241,11 @@ class AgentWorkspaceCubit extends Cubit<AgentWorkspaceState> {
     _emit(state.copyWith(viewings: state.viewings.loading()));
     try {
       final list = await api.viewingRequests();
-      list.sort((a, b) => a.startTime.compareTo(b.startTime));
+      // Pending first (soonest first), then the rest by time.
+      list.sort((a, b) {
+        if (a.isRequested != b.isRequested) return a.isRequested ? -1 : 1;
+        return a.startTime.compareTo(b.startTime);
+      });
       _emit(state.copyWith(viewings: state.viewings.success(list)));
     } catch (e) {
       _emit(state.copyWith(viewings: state.viewings.failure(_message(e))));
@@ -293,8 +307,14 @@ class AgentWorkspaceCubit extends Cubit<AgentWorkspaceState> {
     }
   }
 
+  /// Submit for review (`publish: true`) or unpublish / withdraw (`false`); the server decides the
+  /// resulting state and the list is re-read.
   Future<String?> setPublished(AgentListing listing, bool publish) =>
       _run(() => api.setPublished(listing.id, publish), [loadListings]);
+
+  Future<String?> archiveListing(AgentListing listing) => _run(() => api.archiveListing(listing.id), [loadListings]);
+
+  Future<String?> restoreListing(AgentListing listing) => _run(() => api.restoreListing(listing.id), [loadListings]);
 
   Future<String?> deleteListing(AgentListing listing) => _run(() => api.deleteListing(listing.id), [loadListings]);
 
@@ -320,6 +340,9 @@ class AgentWorkspaceCubit extends Cubit<AgentWorkspaceState> {
     if (id == null) return Future.value('This is not a represented listing.');
     return _run(() => api.stopRepresenting(id, reason), [loadRepresentations]);
   }
+
+  Future<String?> respondToViewing(ViewingRequest viewing, {required bool accept, String? reason}) =>
+      _run(() => api.respondToViewing(viewing.id, accept: accept, reason: reason), [loadViewings, loadListings]);
 
   Future<String?> cancelViewing(ViewingRequest viewing, String reason) =>
       _run(() => api.cancelViewing(viewing.id, reason), [loadViewings]);

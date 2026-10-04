@@ -60,9 +60,13 @@ export default function ListingsPage() {
 
   async function handleTakeDown(listingId: string, listingType: string) {
     if (!session) return;
-    const reason = prompt("Enter reason for taking down this listing:");
+    const reason = prompt("Reason for taking this listing down (required, at least 5 characters; the owner will see it):");
     if (reason === null) return;
-    
+    if (reason.trim().length < 5) {
+      alert("A reason of at least 5 characters is required.");
+      return;
+    }
+
     setTakingDown(listingId);
     try {
       const res = await adminFetch("/api/listings/takedown", {
@@ -72,7 +76,7 @@ export default function ListingsPage() {
           adminId: session.user.id,
           listingId,
           listingType,
-          reason: reason || "Violation of terms"
+          reason: reason.trim()
         })
       });
       const data = await res.json();

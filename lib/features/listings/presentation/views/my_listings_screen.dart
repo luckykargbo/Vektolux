@@ -12,14 +12,81 @@ import '../../../../core/widgets/vx_network_image.dart';
 import '../../../auth/domain/entities/user_entity.dart';
 import 'create_listing_screen.dart';
 
+/// How a listing looks to its owner. The state is the one the SERVER derives (`lifecycleStatus`) —
+/// this screen never decides that a listing is live.
+class _ListingState {
+  final String label;
+  final Color color;
+
+  /// An administrator removed it: it stays on record but can no longer be edited or deleted.
+  final bool locked;
+  const _ListingState(this.label, this.color, {this.locked = false});
+}
+
+_ListingState _propertyState(Map<String, dynamic> item) {
+  // A server without `lifecycleStatus` (older) only tells us whether it is published.
+  final raw = item['lifecycleStatus']?.toString() ?? (item['isPublished'] == false ? 'unpublished' : 'active');
+  return switch (raw) {
+    'active' => const _ListingState('Active', AppColors.emeraldDark),
+    'off_market' => const _ListingState('Off-market', AppColors.gray600),
+    'pending_review' => const _ListingState('Pending review', AppColors.amber),
+    'rejected' => const _ListingState('Rejected', AppColors.error),
+    'removed' => const _ListingState('Removed', AppColors.error, locked: true),
+    'draft' => const _ListingState('Draft', AppColors.gray600),
+    'unpublished' => const _ListingState('Unpublished', AppColors.gray600),
+    'archived' => const _ListingState('Archived', AppColors.gray600),
+    _ => _ListingState(raw.replaceAll('_', ' '), AppColors.gray600),
+  };
+}
+
+_ListingState _vehicleState(Map<String, dynamic> item) {
+  if (item['status']?.toString() == 'TAKEN_DOWN') return const _ListingState('Removed', AppColors.error);
+  if (item['isPublished'] == false) return const _ListingState('Unpublished', AppColors.gray600);
+  return const _ListingState('Active', AppColors.emeraldDark);
+}
+
+String _categoryBadge(String category) => switch (category) {
+      'sale' => 'FOR SALE',
+      'long_term_rent' => 'FOR RENT',
+      'hourly_guesthouse' => 'SHORT STAY',
+      _ => category.replaceAll('_', ' ').toUpperCase(),
+    };
+
+/// The state as a dot + label. It shrinks (ellipsis) instead of overflowing on a narrow phone.
+class _StatePill extends StatelessWidget {
+  final _ListingState state;
+  const _StatePill({super.key, required this.state});
+
+  @override
+  Widget build(BuildContext context) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.circle, color: state.color, size: 8),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              state.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: state.color, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      );
+}
+
 class MyListingsScreen extends StatefulWidget {
   final ConvexClientWrapper convexClient;
   final UserEntity currentUser;
+
+  /// Shows (and creates) vehicles only — the Auto area of an approved Car Dealer.
+  final bool vehiclesOnly;
 
   const MyListingsScreen({
     super.key,
     required this.convexClient,
     required this.currentUser,
+    this.vehiclesOnly = false,
   });
 
   @override
@@ -38,7 +105,7 @@ class _MyListingsScreenState extends State<MyListingsScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: widget.vehiclesOnly ? 1 : 2, vsync: this);
     _loadMyListings();
   }
 
@@ -55,14 +122,16 @@ class _MyListingsScreenState extends State<MyListingsScreen>
     });
 
     try {
-      final propRes = await widget.convexClient.query(
-        'realEstate:getMyPropertyListings',
-        args: {
-          'ownerId': widget.currentUser.id,
-          if (widget.currentUser.sessionToken != null)
-            'sessionToken': widget.currentUser.sessionToken!,
-        },
-      );
+      final propRes = widget.vehiclesOnly
+          ? null
+          : await widget.convexClient.query(
+              'realEstate:getMyPropertyListings',
+              args: {
+                'ownerId': widget.currentUser.id,
+                if (widget.currentUser.sessionToken != null)
+                  'sessionToken': widget.currentUser.sessionToken!,
+              },
+            );
 
       final vehRes = await widget.convexClient.query(
         'mobility:getMyVehicleListings',
@@ -75,7 +144,7 @@ class _MyListingsScreenState extends State<MyListingsScreen>
 
       if (mounted) {
         setState(() {
-          _myProperties = propRes.success && propRes.value != null
+          _myProperties = propRes != null && propRes.success && propRes.value != null
               ? (propRes.value as List)
                   .map((e) => Map<String, dynamic>.from(e as Map))
                   .toList()
@@ -661,6 +730,8 @@ class _MyListingsScreenState extends State<MyListingsScreen>
                     builder: (_) => CreateListingScreen(
                       convexClient: widget.convexClient,
                       currentUser: widget.currentUser,
+                      initialType: widget.vehiclesOnly ? ListingType.vehicle : null,
+                      lockType: widget.vehiclesOnly,
                     ),
                   ),
                 ).then((_) => _loadMyListings());
@@ -675,10 +746,11 @@ class _MyListingsScreenState extends State<MyListingsScreen>
           indicatorWeight: 3,
           labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
           tabs: [
-            Tab(
-              icon: const Icon(Icons.home_work_rounded, size: 20),
-              text: 'Properties (${_myProperties.length})',
-            ),
+            if (!widget.vehiclesOnly)
+              Tab(
+                icon: const Icon(Icons.home_work_rounded, size: 20),
+                text: 'Properties (${_myProperties.length})',
+              ),
             Tab(
               icon: const Icon(Icons.directions_car_rounded, size: 20),
               text: 'Vehicles (${_myVehicles.length})',
@@ -713,7 +785,7 @@ class _MyListingsScreenState extends State<MyListingsScreen>
               : TabBarView(
                   controller: _tabController,
                   children: [
-                    _buildPropertiesList(),
+                    if (!widget.vehiclesOnly) _buildPropertiesList(),
                     _buildVehiclesList(),
                   ],
                 ),
@@ -743,8 +815,13 @@ class _MyListingsScreenState extends State<MyListingsScreen>
         final category = item['category']?.toString() ?? 'sale';
         final images = (item['imageUrls'] as List?)?.cast<String>() ?? [];
         final imageUrl = images.isNotEmpty ? images.first : null;
+        final id = item['_id']?.toString() ?? '$index';
+        final state = _propertyState(item);
+        final reason = item['moderationReason']?.toString().trim();
+        final showReason = reason != null && reason.isNotEmpty && (state.label == 'Rejected' || state.label == 'Removed');
 
         return Card(
+          key: Key('my-listing-$id'),
           elevation: 1,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           margin: const EdgeInsets.only(bottom: 16),
@@ -774,7 +851,10 @@ class _MyListingsScreenState extends State<MyListingsScreen>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -783,7 +863,7 @@ class _MyListingsScreenState extends State<MyListingsScreen>
                                   borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: Text(
-                                  category.toUpperCase(),
+                                  _categoryBadge(category),
                                   style: const TextStyle(
                                     fontSize: 10,
                                     fontWeight: FontWeight.w700,
@@ -791,10 +871,7 @@ class _MyListingsScreenState extends State<MyListingsScreen>
                                   ),
                                 ),
                               ),
-                              const Spacer(),
-                              const Icon(Icons.circle, color: AppColors.emerald, size: 8),
-                              const SizedBox(width: 4),
-                              const Text('Live', style: TextStyle(fontSize: 11, color: AppColors.emeraldDark, fontWeight: FontWeight.w600)),
+                              _StatePill(key: Key('my-listing-status-$id'), state: state),
                             ],
                           ),
                           const SizedBox(height: 6),
@@ -816,11 +893,23 @@ class _MyListingsScreenState extends State<MyListingsScreen>
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 12, color: AppColors.gray500),
                           ),
+                          if (showReason)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                'Reason: $reason',
+                                key: Key('my-listing-reason-$id'),
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 11.5, color: AppColors.error, height: 1.25),
+                              ),
+                            ),
                         ],
                       ),
                     ),
                   ],
                 ),
+                if (!state.locked) ...[
                 const Divider(height: 20),
                 // Actions wrap onto a second line on narrow phones.
                 Wrap(
@@ -852,6 +941,7 @@ class _MyListingsScreenState extends State<MyListingsScreen>
                     ),
                   ],
                 ),
+                ],
               ],
             ),
           ),
@@ -882,8 +972,11 @@ class _MyListingsScreenState extends State<MyListingsScreen>
         final intent = item['listingIntent']?.toString() ?? 'rental';
         final images = (item['imageUrls'] as List?)?.cast<String>() ?? [];
         final imageUrl = images.isNotEmpty ? images.first : null;
+        final id = item['_id']?.toString() ?? '$index';
+        final state = _vehicleState(item);
 
         return Card(
+          key: Key('my-vehicle-$id'),
           elevation: 1,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           margin: const EdgeInsets.only(bottom: 16),
@@ -912,7 +1005,10 @@ class _MyListingsScreenState extends State<MyListingsScreen>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -929,10 +1025,7 @@ class _MyListingsScreenState extends State<MyListingsScreen>
                                   ),
                                 ),
                               ),
-                              const Spacer(),
-                              const Icon(Icons.circle, color: AppColors.emerald, size: 8),
-                              const SizedBox(width: 4),
-                              const Text('Live', style: TextStyle(fontSize: 11, color: AppColors.emeraldDark, fontWeight: FontWeight.w600)),
+                              _StatePill(key: Key('my-vehicle-status-$id'), state: state),
                             ],
                           ),
                           const SizedBox(height: 6),

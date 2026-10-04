@@ -9,6 +9,8 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { encodeGeohash } from "./lib/geo";
 import { requireSelf } from "./lib/auth";
+import { applyListingModeration } from "./listingModeration";
+import { isListingPublic, listingLifecycle } from "./lib/publicListing";
 
 // ═══════════════════════════════════════════════════════════════════════
 //                   QUICK SEED LISTINGS (DEV/ADMIN)
@@ -380,6 +382,8 @@ export const getAdminListings = query({
       currency: v.string(),
       city: v.string(),
       isPublished: v.boolean(),
+      // property: lifecycle (active, pending_review, rejected, removed, draft, unpublished, off_market, archived)
+      status: v.string(),
       imageUrl: v.string(),
       createdAt: v.number(),
     })
@@ -396,6 +400,7 @@ export const getAdminListings = query({
       currency: string;
       city: string;
       isPublished: boolean;
+      status: string;
       imageUrl: string;
       createdAt: number;
     }> = [];
@@ -416,7 +421,8 @@ export const getAdminListings = query({
           price: p.price,
           currency: p.currency ?? "SLE",
           city: p.city ?? "Sierra Leone",
-          isPublished: p.isPublished ?? true,
+          isPublished: isListingPublic(p),
+          status: p.isDeleted === true ? "deleted" : listingLifecycle(p),
           imageUrl: p.imageUrls[0] ?? "",
           createdAt: p._creationTime,
         });
@@ -445,6 +451,7 @@ export const getAdminListings = query({
           currency: v.currency ?? "SLE",
           city: v.location || "Sierra Leone",
           isPublished: v.isPublished ?? (v.status === "AVAILABLE"),
+          status: v.isDeleted === true || v.status === "TAKEN_DOWN" ? "removed" : v.isPublished === false ? "unpublished" : "active",
           imageUrl: img,
           createdAt: v.createdAt ?? v._creationTime,
         });
@@ -684,12 +691,15 @@ export const takeDownListing = mutation({
     reason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await validateAdminSession(ctx, args.adminId, args.sessionToken);
+    const { adminDocId } = await validateAdminSession(ctx, args.adminId, args.sessionToken);
 
     if (args.listingType === "property") {
       const id = ctx.db.normalizeId("realEstateListings", args.listingId);
-      if (!id) throw new Error("Invalid property listing ID");
-      await ctx.db.patch(id, { isPublished: false, isDeleted: true, updatedAt: Date.now() });
+      const listing = id ? await ctx.db.get(id) : null;
+      if (!listing) throw new Error("Invalid property listing ID");
+      // A takedown is a recorded removal: reason required, audited, the owner is notified, and the
+      // owner can see why (never a silent disappearance).
+      await applyListingModeration(ctx, adminDocId, listing, "remove", args.reason);
     } else {
       const id = ctx.db.normalizeId("vehicleListings", args.listingId);
       if (!id) throw new Error("Invalid vehicle listing ID");

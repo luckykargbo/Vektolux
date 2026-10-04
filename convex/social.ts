@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
-import { toPublicProperty, toPublicVehicle } from "./lib/publicListing";
+import { isListingPublic, toPublicProperty, toPublicVehicle } from "./lib/publicListing";
 import { requireSelf } from "./lib/auth";
 
 export const toggleFollow = mutation({
@@ -160,6 +160,7 @@ export const getSocialFeed = query({
         .take(10);
         
       for (const item of realEstate) {
+        if (!isListingPublic(item)) continue; // not under review, rejected, archived or removed
         // Privacy Guard: Strip phone fields from public feed
         const { privateContactPhone: _p, contactPhone: _c, ...safeItem } =
           item as typeof item & { privateContactPhone?: string; contactPhone?: string };

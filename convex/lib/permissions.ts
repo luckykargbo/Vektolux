@@ -51,6 +51,39 @@ export function isRoleApproved(user: Doc<"users">): boolean {
   );
 }
 
+/**
+ * Car Dealer capability: an approved dealer, or an approved Real Estate Agent whose separate Car
+ * Dealer application was approved by an administrator (roles.ts). Never implied by any other role.
+ */
+export function hasCarDealerCapability(user: Doc<"users">): boolean {
+  if (!user.isActive || !isRoleApproved(user)) return false;
+  const role = businessRole(user);
+  if (role === "vehicle_dealer") return true;
+  return role === "real_estate_agent" && typeof user.vehicleDealerApprovedAt === "number";
+}
+
+/** Professional identity shown to the user and on public profiles (server-derived). */
+export function professionalTitle(user: Doc<"users">): string {
+  const role = businessRole(user);
+  if (role === "real_estate_agent") {
+    if (!isRoleApproved(user)) return "Client";
+    return hasCarDealerCapability(user) ? "Real Estate Agent & Car Dealer" : "Real Estate Agent";
+  }
+  if (!isRoleApproved(user)) return role === "admin" ? "Administrator" : "Client";
+  switch (role) {
+    case "real_estate_owner":
+      return "Real Estate Owner";
+    case "vehicle_dealer":
+      return "Car Dealer";
+    case "hotel_owner":
+      return "Hotel / Guest House Owner";
+    case "admin":
+      return "Administrator";
+    default:
+      return "Client";
+  }
+}
+
 /** The user's subscription for a professional role, only if active AND not expired. */
 export async function activeSubscription(
   ctx: { db: any },
@@ -184,6 +217,8 @@ export async function postingPermission(
   }
   if (kind === "vehicle") {
     if (role === "vehicle_dealer") return approved ? { allowed: true } : needApproval("Car Dealer / Vehicle Owner");
+    // A Real Estate Agent posts vehicles ONLY with a separately approved Car Dealer capability.
+    if (hasCarDealerCapability(user)) return { allowed: true };
     return needApproval("Car Dealer / Vehicle Owner");
   }
   // hotel

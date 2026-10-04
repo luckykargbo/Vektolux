@@ -40,6 +40,11 @@ extension BookingTypeX on BookingType {
 }
 
 enum BookingStatus {
+  /// A free property viewing the agent has not answered yet.
+  requested,
+
+  /// A viewing request the agent declined (the reason is on the booking).
+  declined,
   pendingPayment,
   confirmed,
   inProgress,
@@ -50,6 +55,8 @@ enum BookingStatus {
 
 extension BookingStatusX on BookingStatus {
   String get convexValue => switch (this) {
+        BookingStatus.requested => 'requested',
+        BookingStatus.declined => 'declined',
         BookingStatus.pendingPayment => 'pending_payment',
         BookingStatus.confirmed => 'confirmed',
         BookingStatus.inProgress => 'in_progress',
@@ -59,6 +66,8 @@ extension BookingStatusX on BookingStatus {
       };
 
   String get displayName => switch (this) {
+        BookingStatus.requested => 'Requested',
+        BookingStatus.declined => 'Declined',
         BookingStatus.pendingPayment => 'Pending Payment',
         BookingStatus.confirmed => 'Confirmed',
         BookingStatus.inProgress => 'In Progress',
@@ -69,6 +78,8 @@ extension BookingStatusX on BookingStatus {
 
   static BookingStatus fromString(String value) {
     return switch (value) {
+      'requested' => BookingStatus.requested,
+      'declined' => BookingStatus.declined,
       'pending_payment' => BookingStatus.pendingPayment,
       'confirmed' => BookingStatus.confirmed,
       'in_progress' => BookingStatus.inProgress,
@@ -106,6 +117,10 @@ class BookingEntity extends Equatable {
   final String? notes;
   final int updatedAt;
 
+  /// Why the agent declined the request / why the booking was cancelled (server text).
+  final String? declineReason;
+  final String? cancelReason;
+
   /// Server-driven escrow settlement: 'held' | 'disputed' | 'released' | 'refunded' (null if unpaid).
   final String? settlementStatus;
 
@@ -137,6 +152,8 @@ class BookingEntity extends Equatable {
     this.flwRef,
     this.notes,
     required this.updatedAt,
+    this.declineReason,
+    this.cancelReason,
     this.settlementStatus,
     this.releaseEligibleAt,
   });
@@ -178,6 +195,8 @@ class BookingEntity extends Equatable {
       updatedAt: (json['updatedAt'] as num?)?.toInt() ??
           (json['_creationTime'] as num?)?.toInt() ??
           DateTime.now().millisecondsSinceEpoch,
+      declineReason: json['declineReason'] as String?,
+      cancelReason: json['cancelReason'] as String?,
       settlementStatus: json['settlementStatus'] as String?,
       releaseEligibleAt: (json['releaseEligibleAt'] as num?)?.toInt(),
     );
@@ -209,6 +228,8 @@ class BookingEntity extends Equatable {
         flwRef,
         notes,
         updatedAt,
+        declineReason,
+        cancelReason,
         settlementStatus,
         releaseEligibleAt,
       ];

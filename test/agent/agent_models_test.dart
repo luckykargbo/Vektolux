@@ -3,6 +3,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vektolux/features/agent/domain/agent_models.dart';
+import 'package:vektolux/features/agent/presentation/bloc/agent_workspace_cubit.dart';
 
 Map<String, dynamic> _status({
   String role = 'real_estate_agent',
@@ -13,6 +14,7 @@ Map<String, dynamic> _status({
   bool grace = false,
   int? graceEnds,
   int? graceEnded,
+  bool carDealer = false,
   List<Map<String, dynamic>> applications = const [],
 }) =>
     {
@@ -28,7 +30,9 @@ Map<String, dynamic> _status({
       'legacyGraceEndedAt': graceEnded,
       'subscriptionPolicyConfigured': false,
       'canPostProperty': canPost,
-      'canPostVehicle': false,
+      'canPostVehicle': carDealer,
+      'isCarDealer': carDealer,
+      'professionalTitle': carDealer ? 'Real Estate Agent & Car Dealer' : 'Real Estate Agent',
       'canManageHotel': false,
       'applications': applications,
     };
@@ -40,6 +44,8 @@ Map<String, dynamic> _ownListing({
   String availability = 'available',
   num price = 2850000,
   num? hourlyRate,
+  String? lifecycle,
+  String? reason,
 }) =>
     {
       '_id': id,
@@ -67,6 +73,11 @@ Map<String, dynamic> _ownListing({
       'isFeatured': false,
       'isPublished': published,
       'viewCount': 48,
+      'saveCount': 5,
+      'inquiryCount': 3,
+      'viewingRequestCount': 2,
+      if (lifecycle != null) 'lifecycleStatus': lifecycle,
+      if (reason != null) 'moderationReason': reason,
       'updatedAt': 1700000000000,
     };
 
@@ -114,6 +125,34 @@ void main() {
       expect(ProfessionalStatus.fromMap(const {}).access, AgentAccess.none);
       expect(ProfessionalStatus.fromMap(const {'role': 'real_estate_agent', 'roleApproved': 'yes'}).access,
           AgentAccess.awaitingApproval);
+    });
+  });
+
+  group('professional identity (Real Estate Agent ± Car Dealer)', () {
+    test('an agent is only a Real Estate Agent: no Auto tools', () {
+      final s = ProfessionalStatus.fromMap(_status());
+      expect(s.professionalTitle, 'Real Estate Agent');
+      expect(s.isCarDealer, isFalse);
+      expect(s.showAutoTools, isFalse);
+    });
+
+    test('a separately approved Car Dealer adds the Auto tools to the same account (server flags only)', () {
+      final s = ProfessionalStatus.fromMap(_status(carDealer: true));
+      expect(s.access, AgentAccess.approved);
+      expect(s.professionalTitle, 'Real Estate Agent & Car Dealer');
+      expect(s.showAutoTools, isTrue);
+    });
+
+    test('the app never promotes: a flag without the server posting permission shows no Auto tools', () {
+      final s = ProfessionalStatus.fromMap({..._status(), 'isCarDealer': true, 'canPostVehicle': false});
+      expect(s.showAutoTools, isFalse);
+    });
+
+    test('an older server without the fields leaves the plain agent workspace', () {
+      final raw = _status()..remove('isCarDealer')..remove('canPostVehicle')..remove('professionalTitle');
+      final s = ProfessionalStatus.fromMap(raw);
+      expect(s.professionalTitle, 'Real Estate Agent');
+      expect(s.showAutoTools, isFalse);
     });
   });
 
@@ -179,24 +218,74 @@ void main() {
       expect(AgentListing.fromOwn(_ownListing(price: 0)).priceLabel, 'Price on request');
     });
 
-    test('status comes from the server fields', () {
-      expect(AgentListing.fromOwn(_ownListing()).liveStatus, ListingLiveStatus.live);
-      expect(AgentListing.fromOwn(_ownListing(published: false)).liveStatus, ListingLiveStatus.unpublished);
-      expect(AgentListing.fromOwn(_ownListing(availability: 'booked')).liveStatus, ListingLiveStatus.booked);
-      expect(AgentListing.fromOwn(_ownListing(availability: 'maintenance')).liveStatus.label, 'Maintenance');
-      expect(AgentListing.fromOwn(_ownListing(published: false)).liveStatus.label, 'Unpublished');
+    test('the status is the server\'s lifecycle; raw fields are only a fallback', () {
+      for (final (server, expected, label) in const [
+        ('active', ListingStatus.active, 'Active'),
+        ('pending_review', ListingStatus.pendingReview, 'Pending review'),
+        ('rejected', ListingStatus.rejected, 'Rejected'),
+        ('removed', ListingStatus.removed, 'Removed'),
+        ('draft', ListingStatus.draft, 'Draft'),
+        ('unpublished', ListingStatus.unpublished, 'Unpublished'),
+        ('off_market', ListingStatus.offMarket, 'Off-market'),
+        ('archived', ListingStatus.archived, 'Archived'),
+      ]) {
+        final l = AgentListing.fromOwn(_ownListing(lifecycle: server));
+        expect(l.status, expected, reason: server);
+        expect(l.status.label, label);
+      }
+      // an old response without lifecycleStatus
+      expect(AgentListing.fromOwn(_ownListing()).status, ListingStatus.active);
+      expect(AgentListing.fromOwn(_ownListing(published: false)).status, ListingStatus.unpublished);
+      expect(AgentListing.fromOwn(_ownListing(availability: 'booked')).status, ListingStatus.offMarket);
     });
 
-    test('filters and their counts', () {
+    test('a rejection / removal reason and the statistics are the server\'s numbers', () {
+      final l = AgentListing.fromOwn(_ownListing(lifecycle: 'rejected', reason: 'Photos do not show the property.'));
+      expect(l.moderationReason, 'Photos do not show the property.');
+      expect([l.viewCount, l.saveCount, l.inquiryCount, l.viewingRequestCount], [48, 5, 3, 2]);
+      // a listing from the public record has no statistics (nothing is invented)
+      final rep = AgentListing.fromPublic({'_id': 'p1', 'title': 'x', 'category': 'sale', 'price': 1}, representationId: 'a1');
+      expect([rep.viewCount, rep.saveCount, rep.inquiryCount, rep.viewingRequestCount], [null, null, null, null]);
+    });
+
+    test('what the owner may do depends on the state (the server re-checks every action)', () {
+      AgentListing st(String v) => AgentListing.fromOwn(_ownListing(lifecycle: v));
+      expect(st('draft').canSubmitForReview, isTrue);
+      expect(st('unpublished').canSubmitForReview, isTrue);
+      expect(st('pending_review').canWithdraw, isTrue);
+      expect(st('pending_review').canSubmitForReview, isFalse);
+      expect(st('rejected').canResubmit, isTrue);
+      expect(st('active').canUnpublish, isTrue);
+      expect(st('active').canArchive, isTrue);
+      expect(st('archived').canRestore, isTrue);
+      expect(st('archived').canEdit, isFalse);
+      final removed = st('removed');
+      expect([removed.canEdit, removed.canArchive, removed.canSubmitForReview, removed.canResubmit], [false, false, false, false]);
+      final represented = AgentListing.fromPublic({'_id': 'p1', 'title': 'x', 'category': 'sale', 'price': 1}, representationId: 'a1');
+      expect([represented.canEdit, represented.canSubmitForReview, represented.canArchive], [false, false, false]);
+    });
+
+    test('filters: All plus only the statuses that apply to some (not all) of the listings', () {
       final list = [
-        AgentListing.fromOwn(_ownListing(id: 'a')),
-        AgentListing.fromOwn(_ownListing(id: 'b', category: 'long_term_rent', published: false)),
-        AgentListing.fromOwn(_ownListing(id: 'c', category: 'hourly_guesthouse')),
+        AgentListing.fromOwn(_ownListing(id: 'a', lifecycle: 'active')),
+        AgentListing.fromOwn(_ownListing(id: 'b', category: 'long_term_rent', lifecycle: 'pending_review')),
+        AgentListing.fromOwn(_ownListing(id: 'c', category: 'hourly_guesthouse', lifecycle: 'rejected')),
+        AgentListing.fromOwn(_ownListing(id: 'd', lifecycle: 'draft')),
       ];
-      expect(countMatching(list, ListingFilter.all), 3);
-      expect(countMatching(list, ListingFilter.sale), 1);
+      expect(countMatching(list, ListingFilter.all), 4);
+      expect(countMatching(list, ListingFilter.active), 1);
+      expect(countMatching(list, ListingFilter.pendingReview), 1);
+      expect(countMatching(list, ListingFilter.rejected), 1);
+      expect(countMatching(list, ListingFilter.unpublished), 1, reason: 'drafts and unpublished listings');
+      expect(countMatching(list, ListingFilter.sale), 2);
       expect(countMatching(list, ListingFilter.rent), 2);
-      expect(countMatching(list, ListingFilter.unpublished), 1);
+      expect(visibleFilters(list),
+          [ListingFilter.all, ListingFilter.active, ListingFilter.pendingReview, ListingFilter.rejected, ListingFilter.unpublished, ListingFilter.sale, ListingFilter.rent]);
+      // nothing archived / removed / off-market → those filters are not offered
+      final onlyActive = [AgentListing.fromOwn(_ownListing(lifecycle: 'active'))];
+      expect(visibleFilters(onlyActive), [ListingFilter.all], reason: 'every listing is active: no redundant chips');
+      // the selected filter always stays visible
+      expect(visibleFilters(onlyActive, selected: ListingFilter.archived), [ListingFilter.all, ListingFilter.archived]);
     });
 
     test('a represented listing is marked as such', () {
@@ -229,22 +318,26 @@ void main() {
       expect(destinationFor(n('x', 'Application approved')), NotificationDestination.none);
     });
 
-    test('tabs: broadcasts are Admin; the rest by destination; anything else is Account; newest first', () {
+    test('the deep link decides the screen: viewings, bookings, listings (moderation), conversations', () {
+      expect(destinationFor(n('a', 'New viewing request', screen: 'viewings', linkId: 'b1')), NotificationDestination.viewings);
+      expect(destinationFor(n('b', 'Your viewing request has been accepted.', screen: 'bookings', linkId: 'b1')), NotificationDestination.bookings);
+      expect(destinationFor(n('c', 'Listing approved', screen: 'listings', linkId: 'l1')), NotificationDestination.listings);
+    });
+
+    test('tabs: Messages = conversations, Admin = broadcasts, System = everything else; newest first', () {
       final all = [
         n('1', 'New inquiry from Aminata', screen: 'messages', at: 5),
         n('2', 'Planned maintenance', target: 'all_users', read: true, at: 1),
         n('3', 'Booking confirmed', at: 4),
         n('4', 'Escrow funded', at: 3),
         n('5', 'Application approved', at: 2),
-        n('6', 'Listing agent invitation', at: 6),
+        n('6', 'Listing not approved', screen: 'listings', at: 6),
       ];
       expect(notificationsFor(all, NotificationTab.all).map((x) => x.id), ['6', '1', '3', '4', '5', '2']);
-      expect(notificationsFor(all, NotificationTab.messages).single.id, '1');
-      expect(notificationsFor(all, NotificationTab.admin).single.id, '2');
-      expect(notificationsFor(all, NotificationTab.viewings).single.id, '3');
-      expect(notificationsFor(all, NotificationTab.deals).single.id, '4');
-      expect(notificationsFor(all, NotificationTab.account).single.id, '5');
-      expect(notificationsFor(all, NotificationTab.listings).single.id, '6');
+      expect(notificationsFor(all, NotificationTab.messages).map((x) => x.id), ['1']);
+      expect(notificationsFor(all, NotificationTab.admin).map((x) => x.id), ['2']);
+      expect(notificationsFor(all, NotificationTab.system).map((x) => x.id), ['6', '3', '4', '5']);
+      expect(NotificationTab.values.map((t) => t.label), ['All', 'Messages', 'System', 'Admin']);
     });
 
     test('a server row keeps its deep link; marking read changes nothing else', () {
@@ -257,28 +350,53 @@ void main() {
     });
   });
 
-  group('viewing requests (existing booking states)', () {
-    int ms(DateTime d) => d.millisecondsSinceEpoch;
+  group('viewing requests (a request the agent accepts or declines)', () {
     final now = DateTime(2026, 10, 3, 12);
-    Map<String, dynamic> booking(String id, String status, DateTime start,
-            {String listingType = 'property', String type = 'property_inspection'}) =>
-        {
-          '_id': id, 'listingType': listingType, 'listingId': 'l1', 'listingTitle': 'Villa', 'bookingType': type,
-          'status': status, 'startTime': ms(start), 'endTime': ms(start.add(const Duration(hours: 1))), 'buyerName': 'Aminata',
+    Map<String, dynamic> row(String id, String status, DateTime start, {String? reason, String? phone}) => {
+          'id': id, 'listingId': 'l1', 'listingTitle': 'Villa', 'listingImage': 'https://cdn.example/v.jpg',
+          'publicLocation': 'Inside Lumley, Sierra Leone', 'representing': false, 'clientName': 'Aminata', 'status': status,
+          'startTime': start.millisecondsSinceEpoch, 'endTime': start.add(const Duration(hours: 1)).millisecondsSinceEpoch,
+          'notes': 'Can we meet at the gate?', if (reason != null) 'declineReason': reason, if (phone != null) 'clientPhone': phone,
+          'requestedAt': 1,
         };
 
-    test('only property bookings, tabbed by the server status and the time', () {
+    test('each server status lands in its tab; requested is Pending (never Confirmed)', () {
       final list = parseViewingRequests([
-        booking('b1', 'confirmed', DateTime(2026, 10, 4, 10)),
-        booking('b2', 'completed', DateTime(2026, 9, 30, 10)),
-        booking('b3', 'cancelled', DateTime(2026, 10, 5, 10)),
-        booking('b4', 'confirmed', DateTime(2026, 10, 4, 10), listingType: 'vehicle'),
-        booking('b5', 'confirmed', DateTime(2026, 9, 1, 10), type: 'short_stay'),
+        row('b1', 'requested', DateTime(2026, 10, 4, 10)),
+        row('b2', 'confirmed', DateTime(2026, 10, 5, 10), phone: '+23276123456'),
+        row('b3', 'declined', DateTime(2026, 10, 6, 10), reason: 'House being repainted'),
+        row('b4', 'cancelled', DateTime(2026, 10, 7, 10)),
+        row('b5', 'completed', DateTime(2026, 9, 1, 10)),
       ]);
-      expect(list.map((v) => v.id), ['b1', 'b2', 'b3', 'b5']);
-      expect(list.map((v) => v.tabAt(now)), [ViewingTab.upcoming, ViewingTab.past, ViewingTab.cancelled, ViewingTab.past]);
-      expect([list[0].typeLabel, list[0].statusLabel], ['Site visit', 'Confirmed']);
-      expect([list[3].typeLabel, list[1].statusLabel], ['Short stay', 'Completed']);
+      expect(list.map((v) => v.tab), [ViewingTab.pending, ViewingTab.confirmed, ViewingTab.declined, ViewingTab.cancelled, ViewingTab.confirmed]);
+      expect(list.map((v) => v.statusLabel), ['Pending', 'Confirmed', 'Declined', 'Cancelled', 'Completed']);
+      expect(list[0].isRequested, isTrue);
+      expect(list[0].isConfirmed, isFalse);
+      expect(list[2].declineReason, 'House being repainted');
+      expect(list[1].clientPhone, '+23276123456');
+      expect(list[0].clientPhone, isNull, reason: 'the server shares the phone only once the visit is confirmed');
+      expect(ViewingTab.values.map((t) => t.label), ['Pending', 'Confirmed', 'Declined', 'Cancelled']);
+    });
+
+    test('a request whose time has passed can only be declined', () {
+      final v = parseViewingRequests([row('b1', 'requested', DateTime(2026, 10, 1, 10))]).single;
+      expect(v.isExpired(now), isTrue);
+      expect(parseViewingRequests([row('b2', 'requested', DateTime(2026, 10, 4, 10))]).single.isExpired(now), isFalse);
+    });
+
+    test('the cubit state counts pending requests and picks the next confirmed visit from the server list', () {
+      final sooner = DateTime.now().add(const Duration(days: 1));
+      final later = DateTime.now().add(const Duration(days: 3));
+      final viewings = parseViewingRequests([
+        row('p', 'requested', sooner),
+        row('c2', 'confirmed', later),
+        row('c1', 'confirmed', sooner),
+        row('d', 'declined', sooner),
+      ]);
+      final state = AgentWorkspaceState(status: ProfessionalStatus.fromMap(_status()), viewings: Loadable<List<ViewingRequest>>(data: viewings));
+      expect(state.pendingViewings, 1);
+      expect(state.nextViewing(DateTime.now())?.id, 'c1');
+      expect(AgentWorkspaceState(status: ProfessionalStatus.fromMap(_status())).pendingViewings, 0, reason: 'nothing loaded → no invented number');
     });
   });
 

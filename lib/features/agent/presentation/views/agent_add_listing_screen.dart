@@ -7,7 +7,8 @@
 // approval + an active subscription and refuses media that never reached storage). Photos and
 // videos upload to the existing Convex storage with real progress; only confirmed uploads are
 // attached. The PUBLIC location (town/district) and the PRIVATE verification address + contact
-// phone are separate inputs. After submitting, the listing's REAL status is read back.
+// phone are separate inputs. "Submit for review" sends the listing to an administrator (it is not
+// public until approved); "Save as draft" keeps it private. The listing's REAL status is read back.
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
@@ -362,7 +363,7 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
                                       width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                                   : FittedBox(
                                       fit: BoxFit.scaleDown,
-                                      child: Text(_publishNow ? 'Submit & publish' : 'Save unpublished'),
+                                      child: Text(_publishNow ? 'Submit for review' : 'Save as draft'),
                                     ),
                             ),
                     ),
@@ -669,19 +670,36 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
         ),
       ),
       const SizedBox(height: 10),
-      AgentCard(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-        child: SwitchListTile.adaptive(
-          key: const Key('agent-add-publish-toggle'),
-          contentPadding: EdgeInsets.zero,
-          value: _publishNow,
-          activeTrackColor: AppColors.emeraldDark,
-          onChanged: (v) => setState(() => _publishNow = v),
-          title: const Text('Publish now', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.obsidian)),
-          subtitle: Text(_publishNow ? 'Visible to buyers once saved' : 'Only you can see it',
-              style: const TextStyle(fontSize: 12, color: AppColors.gray500)),
-        ),
+      Row(
+        children: [
+          Expanded(
+            child: _ModeCard(
+              key: const Key('agent-add-mode-review'),
+              selected: _publishNow,
+              icon: Icons.send_rounded,
+              label: 'Submit for review',
+              onTap: () => setState(() => _publishNow = true),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _ModeCard(
+              key: const Key('agent-add-mode-draft'),
+              selected: !_publishNow,
+              icon: Icons.edit_note_rounded,
+              label: 'Save as draft',
+              onTap: () => setState(() => _publishNow = false),
+            ),
+          ),
+        ],
       ),
+      const SizedBox(height: 6),
+      Text(
+        _publishNow ? 'An administrator reviews it before buyers can see it.' : 'Only you can see it until you submit it.',
+        key: const Key('agent-add-mode-note'),
+        style: const TextStyle(fontSize: 12, color: AppColors.gray500),
+      ),
+      const SizedBox(height: 10),
       if (!status.canPostProperty) ...[
         const SizedBox(height: 10),
         AgentInfoNote(
@@ -707,10 +725,11 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
 
   Widget _resultView() {
     final created = _created;
-    final status = created?.liveStatus;
+    final status = created?.status;
     final (title, message) = switch (status) {
-      ListingLiveStatus.live => ('Your listing is live', 'Buyers can find it on Vektolux now.'),
-      ListingLiveStatus.unpublished => ('Saved, not published', 'Publish it from My Listings when ready.'),
+      ListingStatus.pendingReview => ('Submitted for review', 'You will be notified when it is approved.'),
+      ListingStatus.draft || ListingStatus.unpublished => ('Draft saved', 'Submit it for review from My Listings when ready.'),
+      ListingStatus.active => ('Your listing is live', 'Buyers can find it on Vektolux now.'),
       null => ('Listing submitted', 'Its status could not be loaded. Check My Listings.'),
       _ => ('Listing saved', 'Current status: ${status.label}.'),
     };
@@ -897,6 +916,45 @@ class _ReviewLine extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ModeCard extends StatelessWidget {
+  final bool selected;
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _ModeCard({super.key, required this.selected, required this.icon, required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? AppColors.emeraldSurface : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: selected ? AppColors.emeraldDark : AppColors.border, width: selected ? 1.5 : 1),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+          child: Column(
+            children: [
+              Icon(icon, color: selected ? AppColors.emeraldDark : AppColors.gray500, size: 22),
+              const SizedBox(height: 6),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(label,
+                    maxLines: 1,
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: selected ? AppColors.emeraldDark : AppColors.obsidian)),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

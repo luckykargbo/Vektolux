@@ -41,6 +41,7 @@ import 'package:vektolux/features/auth/presentation/views/pending_verification_s
 import 'package:vektolux/features/auth/presentation/views/register_screen.dart';
 import 'package:vektolux/features/bookings/presentation/views/checkout_screen.dart';
 import 'package:vektolux/features/bookings/presentation/views/my_bookings_screen.dart';
+import 'package:vektolux/features/bookings/presentation/widgets/booking_modals.dart';
 import 'package:vektolux/features/discovery/presentation/views/discovery_feed_screen.dart';
 import 'package:vektolux/features/explore/presentation/views/explore_screen.dart';
 import 'package:vektolux/features/home/presentation/views/client_home_screen.dart';
@@ -64,6 +65,8 @@ import 'package:vektolux/features/real_estate/presentation/views/inspection_pass
 import 'package:vektolux/features/real_estate/presentation/views/my_real_estate_escrows_screen.dart';
 import 'package:vektolux/features/real_estate/presentation/views/real_estate_escrow_checkout_screen.dart';
 import 'package:vektolux/features/real_estate/presentation/views/real_estate_marketplace_screen.dart';
+import 'package:vektolux/features/saved/data/saved_listings_api.dart';
+import 'package:vektolux/features/saved/presentation/saved_properties_screen.dart';
 import 'package:vektolux/features/social/presentation/views/public_profile_screen.dart';
 import 'package:vektolux/features/social/presentation/views/social_feed_screen.dart';
 import 'package:vektolux/features/subscriptions/presentation/views/professional_subscription_screen.dart';
@@ -175,6 +178,25 @@ Map<String, dynamic> _property(int i, {String category = 'sale'}) => {
       'type': 'property',
     };
 
+/// One of the agent's own listings in the given lifecycle state (what the server derives), with the
+/// administrator's reason where there is one and large server-side statistics.
+Map<String, dynamic> _ownProperty(int i, String lifecycle, {String? reason, String category = 'sale'}) => {
+      ..._property(i, category: category),
+      'lifecycleStatus': lifecycle,
+      'isPublished': lifecycle == 'active' || lifecycle == 'pending_review' || lifecycle == 'rejected' || lifecycle == 'removed',
+      if (lifecycle == 'pending_review') 'moderationStatus': 'pending_review',
+      if (lifecycle == 'rejected') 'moderationStatus': 'rejected',
+      if (lifecycle == 'removed') 'moderationStatus': 'removed',
+      if (reason != null) 'moderationReason': reason,
+      'viewCount': 128450,
+      'saveCount': 3120,
+      'inquiryCount': 245,
+      'viewingRequestCount': 87,
+    };
+
+const _longReason =
+    'The photos do not show the property you describe, the location is not specific enough and the price looks like a typing mistake. Please correct these and submit it again.';
+
 Map<String, dynamic> _vehicle(int i, {String category = 'car_sale', String pricingType = 'total_sale'}) => {
       '_id': 'veh_$i',
       'id': 'veh_$i',
@@ -207,6 +229,38 @@ Map<String, dynamic> _vehicle(int i, {String category = 'car_sale', String prici
       'type': 'vehicle',
       'isPublished': true,
       'ownerName': _longName,
+    };
+
+/// A free site-visit request as `bookings:getMyViewingRequests` returns it to the owner / agent.
+Map<String, dynamic> _viewingRequest(String id, String status, {required String client, String? phone, String? reason}) => {
+      'id': id,
+      'listingId': 'prop_0',
+      'listingTitle': '$_longTitle #0',
+      'listingImage': null,
+      'publicLocation': 'Inside Hill Station, Sierra Leone',
+      'representing': false,
+      'clientName': client,
+      'clientAvatarUrl': null,
+      'clientPhone': status == 'confirmed' ? phone : null,
+      'status': status,
+      'startTime': _now + _day,
+      'endTime': _now + _day + 3600000,
+      'notes': 'Good afternoon, we would like to see the garden and the boys quarters on Saturday morning around ten.',
+      'declineReason': status == 'declined' ? reason : null,
+      'cancelReason': status == 'cancelled' ? reason : null,
+      'requestedAt': _now - 3600000,
+    };
+
+/// A free viewing the signed-in client asked for, as `bookings:getUserBookings` returns it.
+Map<String, dynamic> _visitBooking(int i, String status, {String? declineReason}) => {
+      ..._booking(i, status, 'none'),
+      'bookingType': 'property_inspection',
+      'paymentStatus': 'not_required',
+      'paymentMethod': null,
+      'subtotal': 0,
+      'serviceFee': 0,
+      'totalAmount': 0,
+      if (declineReason != null) 'declineReason': declineReason,
     };
 
 Map<String, dynamic> _booking(int i, String status, String settlement) => {
@@ -242,7 +296,46 @@ final Map<String, Object? Function(Map<String, dynamic>)> _routes = {
         _vehicle(1, category: 'car_rental', pricingType: 'per_day'),
         _vehicle(2, category: 'delivery_van', pricingType: 'per_trip'),
       ],
-  'realEstate:getMyPropertyListings': (_) => [_property(0), _property(1, category: 'long_term_rent')],
+  'realEstate:getMyPropertyListings': (_) => [
+        _ownProperty(0, 'active'),
+        _ownProperty(1, 'pending_review', category: 'long_term_rent'),
+        _ownProperty(2, 'rejected', reason: _longReason),
+        _ownProperty(3, 'removed', reason: _longReason),
+        _ownProperty(4, 'draft'),
+        _ownProperty(5, 'unpublished', category: 'hourly_guesthouse'),
+        _ownProperty(6, 'archived'),
+        _ownProperty(7, 'off_market'),
+      ],
+  'savedListings:getMySavedListingIds': (_) => [
+        {'listingType': 'property', 'listingId': 'prop_0'},
+        {'listingType': 'property', 'listingId': 'prop_1'},
+      ],
+  'savedListings:getMySavedListings': (_) => [
+        {
+          'listingType': 'property', 'listingId': 'prop_0', 'savedAt': _now - 60000, 'available': true, 'title': '$_longTitle #0',
+          'category': 'sale', 'price': 1250000000, 'hourlyRate': null, 'currency': 'SLE', 'location': 'Inside Hill Station, Sierra Leone',
+          'imageUrl': null, 'bedrooms': 5, 'bathrooms': 4, 'areaSqM': 1250, 'ownerId': 'owner_1',
+        },
+        {
+          'listingType': 'property', 'listingId': 'prop_1', 'savedAt': _now - 120000, 'available': true, 'title': '$_longTitle #1',
+          'category': 'long_term_rent', 'price': 36000000, 'hourlyRate': null, 'currency': 'SLE', 'location': 'Inside Hill Station, Sierra Leone',
+          'imageUrl': null, 'bedrooms': 5, 'bathrooms': 4, 'areaSqM': 1250, 'ownerId': 'owner_1',
+        },
+        {
+          'listingType': 'property', 'listingId': 'prop_2', 'savedAt': _now - 180000, 'available': true, 'title': '$_longTitle #2',
+          'category': 'hourly_guesthouse', 'price': 0, 'hourlyRate': 15000, 'currency': 'SLE', 'location': 'Inside Hill Station, Sierra Leone',
+          'imageUrl': null, 'bedrooms': null, 'bathrooms': null, 'areaSqM': null, 'ownerId': 'owner_1',
+        },
+        {'listingType': 'property', 'listingId': 'prop_gone', 'savedAt': _now - 240000, 'available': false},
+      ],
+  'listingStats:recordPropertyView': (_) => null,
+  'bookings:getMyViewingRequests': (_) => [
+        _viewingRequest('v1', 'requested', client: _buyer.name),
+        _viewingRequest('v2', 'requested', client: _longName),
+        _viewingRequest('v3', 'confirmed', client: _longName, phone: '+23276123456'),
+        _viewingRequest('v4', 'declined', client: _buyer.name, reason: _longReason),
+        _viewingRequest('v5', 'cancelled', client: _longName, reason: _longReason),
+      ],
   'mobility:getMyVehicleListings': (_) => [_vehicle(0)],
   'users:getWalletProfile': (_) => {
         'userId': 'user_1',
@@ -317,8 +410,16 @@ final Map<String, Object? Function(Map<String, dynamic>)> _routes = {
           },
         ],
       },
-  'bookings:getUserBookings': (_) =>
-      [_booking(0, 'confirmed', 'held'), _booking(1, 'pending', 'held'), _booking(2, 'disputed', 'disputed'), _booking(3, 'completed', 'released')],
+  'bookings:getUserBookings': (_) => [
+        _booking(0, 'confirmed', 'held'),
+        _booking(1, 'pending', 'held'),
+        _booking(2, 'disputed', 'disputed'),
+        _booking(3, 'completed', 'released'),
+        _visitBooking(4, 'requested'),
+        _visitBooking(5, 'confirmed'),
+        _visitBooking(6, 'declined', declineReason: _longReason),
+        _visitBooking(7, 'cancelled'),
+      ],
   'notifications:getUserNotifications': (_) => [
         {
           'id': 'n1', 'targetType': 'single_user', 'title': 'Booking payment released to your wallet successfully',
@@ -453,6 +554,29 @@ Map<String, dynamic> _conversation(String id, String role, {String status = 'pen
       'createdAt': _now - _day,
     };
 
+/// Opens the real "Request a Viewing" bottom sheet as soon as the page is up.
+class _OpenViewingSheet extends StatefulWidget {
+  final ConvexClientWrapper client;
+  const _OpenViewingSheet(this.client);
+
+  @override
+  State<_OpenViewingSheet> createState() => _OpenViewingSheetState();
+}
+
+class _OpenViewingSheetState extends State<_OpenViewingSheet> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      PropertyInspectionModal.show(context, property: _entity, currentUser: _buyer, convexClient: widget.client);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => const Scaffold(body: SizedBox.expand());
+}
+
 /// An agent page as the workspace pushes it (scope + workspace data loaded from the fake backend).
 Widget _agentPage(ConvexClientWrapper c, Widget page) => AgentShellScope(
       user: _seller,
@@ -511,6 +635,17 @@ final _screens = <(String, UserEntity, Widget Function(ConvexClientWrapper c))>[
   ('Agent notifications', _seller, (c) => _agentPage(c, const AgentNotificationsScreen())),
   ('Agent profile', _seller, (c) => _agentPage(c, const AgentProfileScreen())),
   ('Agent viewing requests', _seller, (c) => _agentPage(c, const AgentViewingsScreen())),
+  (
+    'Owner viewing requests (no agent workspace)',
+    _seller,
+    (c) => BlocProvider(
+          create: (_) => AgentWorkspaceCubit(
+            api: AgentApi(client: c, userId: _seller.id, sessionToken: _seller.sessionToken),
+            status: const ProfessionalStatus(role: 'real_estate_owner', roleApproved: true),
+          ),
+          child: const AgentViewingsScreen(),
+        ),
+  ),
   ('Agent add property', _seller, (c) => _agentPage(c, const AgentAddListingScreen())),
   ('Messages inbox', _buyer, (c) => MessagesInboxScreen(api: _messaging(c))),
   ('Conversation', _buyer, (c) => ConversationScreen(api: _messaging(c), conversationId: 'req_1', refreshEvery: Duration.zero)),
@@ -525,6 +660,13 @@ final _screens = <(String, UserEntity, Widget Function(ConvexClientWrapper c))>[
   ('Account (seller)', _seller, (c) => const ProfileScreen(currentUserId: 'owner_1', showBackButton: false)),
   ('Notifications', _buyer, (c) => NotificationsScreen(convexClient: c, currentUserId: 'user_1')),
   ('My bookings', _buyer, (c) => MyBookingsScreen(convexClient: c, currentUser: _buyer)),
+  ('My viewings', _buyer, (c) => MyBookingsScreen(convexClient: c, currentUser: _buyer, viewingsOnly: true)),
+  (
+    'Saved properties',
+    _buyer,
+    (c) => SavedPropertiesScreen(api: SavedListingsApi(client: c, sessionToken: _buyer.sessionToken), client: c),
+  ),
+  ('Request a viewing (sheet)', _buyer, (c) => _OpenViewingSheet(c)),
   ('My listings', _seller, (c) => MyListingsScreen(convexClient: c, currentUser: _seller)),
   ('Create listing', _seller, (c) => CreateListingScreen(convexClient: c, currentUser: _seller)),
   ('Public profile', _buyer, (c) => PublicProfileScreen(userId: 'owner_1', convexClient: c)),

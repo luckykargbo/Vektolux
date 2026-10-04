@@ -9,7 +9,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { requireAdmin } from "./lib/auth";
-import { roleForApplication } from "./lib/permissions";
+import { businessRole, isRoleApproved, roleForApplication } from "./lib/permissions";
 
 const statusValidator = v.union(
   v.literal("pending"),
@@ -98,18 +98,45 @@ export const adminDecideRoleApplication = mutation({
     let action: "ROLE_APPROVED" | "ROLE_REJECTED" | "ROLE_SUSPENDED";
     const label = ROLE_LABEL[app.targetRole] ?? app.targetRole;
 
+    const userIsApprovedAgent = businessRole(user) === "real_estate_agent" && isRoleApproved(user);
+    const userIsApprovedDealer = businessRole(user) === "vehicle_dealer" && isRoleApproved(user);
+    const isDealerApp = app.targetRole === "dealer" || app.targetRole === "merchant";
+
     if (args.decision === "approve") {
       const role = roleForApplication(app.targetRole);
       if (!role) throw new Error("This role is no longer offered and cannot be approved.");
-      await ctx.db.patch(user._id, {
-        role,
-        activeRole: role,
-        roleApprovedAt: now,
-        roleApprovedBy: adminId,
-        businessName: app.businessName ?? user.businessName,
-        tinNumber: app.tinNumber ?? user.tinNumber,
-        updatedAt: now,
-      });
+      if (isDealerApp && userIsApprovedAgent) {
+        // Real Estate Agent + Car Dealer: the dealer capability is ADDED; the agent role, its
+        // workspace and its subscription rules are untouched.
+        await ctx.db.patch(user._id, { vehicleDealerApprovedAt: now, vehicleDealerApprovedBy: adminId, updatedAt: now });
+      } else if (app.targetRole === "agent" && userIsApprovedDealer) {
+        // An approved Car Dealer becomes Real Estate Agent & Car Dealer: the agent role is primary
+        // and the earlier dealer approval is kept as the add-on capability.
+        await ctx.db.patch(user._id, {
+          role,
+          activeRole: role,
+          roleApprovedAt: now,
+          roleApprovedBy: adminId,
+          vehicleDealerApprovedAt: user.roleApprovedAt ?? now,
+          vehicleDealerApprovedBy: user.roleApprovedBy ?? adminId,
+          businessName: app.businessName ?? user.businessName,
+          tinNumber: app.tinNumber ?? user.tinNumber,
+          updatedAt: now,
+        });
+      } else {
+        await ctx.db.patch(user._id, {
+          role,
+          activeRole: role,
+          roleApprovedAt: now,
+          roleApprovedBy: adminId,
+          // a different primary role replaces any add-on capability
+          vehicleDealerApprovedAt: undefined,
+          vehicleDealerApprovedBy: undefined,
+          businessName: app.businessName ?? user.businessName,
+          tinNumber: app.tinNumber ?? user.tinNumber,
+          updatedAt: now,
+        });
+      }
       await ctx.db.patch(app._id, { status: "approved", reviewNotes: notes, reviewedBy: adminId, reviewedAt: now, updatedAt: now });
       action = "ROLE_APPROVED";
       title = "Application approved";
@@ -122,12 +149,37 @@ export const adminDecideRoleApplication = mutation({
       action = "ROLE_REJECTED";
       title = "Application not approved";
       body = `Your ${label} application was not approved: ${notes}`;
+    } else if (isDealerApp && userIsApprovedAgent) {
+      // Suspending only the Car Dealer add-on: the Real Estate Agent role stays.
+      await ctx.db.patch(user._id, { vehicleDealerApprovedAt: undefined, vehicleDealerApprovedBy: undefined, updatedAt: now });
+      await ctx.db.patch(app._id, { status: "suspended", reviewNotes: notes, reviewedBy: adminId, reviewedAt: now, updatedAt: now });
+      action = "ROLE_SUSPENDED";
+      title = "Business role suspended";
+      body = `Your ${label} role has been suspended: ${notes}. Your listings and history are kept.`;
+    } else if (app.targetRole === "agent" && userIsApprovedAgent && typeof user.vehicleDealerApprovedAt === "number") {
+      // Suspending the agent role of an Agent & Car Dealer: the separately approved dealer role stays.
+      await ctx.db.patch(user._id, {
+        role: "dealer",
+        activeRole: "dealer",
+        roleApprovedAt: user.vehicleDealerApprovedAt,
+        roleApprovedBy: user.vehicleDealerApprovedBy,
+        vehicleDealerApprovedAt: undefined,
+        vehicleDealerApprovedBy: undefined,
+        isVerifiedAgent: false,
+        updatedAt: now,
+      });
+      await ctx.db.patch(app._id, { status: "suspended", reviewNotes: notes, reviewedBy: adminId, reviewedAt: now, updatedAt: now });
+      action = "ROLE_SUSPENDED";
+      title = "Business role suspended";
+      body = `Your ${label} role has been suspended: ${notes}. Your Car Dealer role and your history are kept.`;
     } else {
       await ctx.db.patch(user._id, {
         role: "client",
         activeRole: "client",
         roleApprovedAt: undefined,
         roleApprovedBy: undefined,
+        vehicleDealerApprovedAt: undefined,
+        vehicleDealerApprovedBy: undefined,
         // legacy flags would otherwise keep the role "approved"
         isVerifiedAgent: false,
         isVerifiedMerchant: false,

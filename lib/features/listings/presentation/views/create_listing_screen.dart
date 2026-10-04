@@ -22,10 +22,18 @@ class CreateListingScreen extends StatefulWidget {
   final ConvexClientWrapper convexClient;
   final UserEntity currentUser;
 
+  /// Pre-selects the listing type (default: property). With [lockType] only that type is offered —
+  /// used by the Real Estate Agent workspace, where the Auto tools exist only for an approved
+  /// Car Dealer and the property flow never offers cars.
+  final ListingType? initialType;
+  final bool lockType;
+
   const CreateListingScreen({
     super.key,
     required this.convexClient,
     required this.currentUser,
+    this.initialType,
+    this.lockType = false,
   });
 
   @override
@@ -38,7 +46,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   int _currentStep = 0;
   bool _isSubmitting = false;
 
-  ListingType _listingType = ListingType.property;
+  late ListingType _listingType = widget.initialType ?? ListingType.property;
 
   // ── Property Form Controllers ─────────────────────────────────────
   final _propTitleController = TextEditingController();
@@ -546,23 +554,26 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
           const SizedBox(height: 32),
 
           // Property Option Card
-          _TypeOptionCard(
-            title: 'Real Estate Property',
-            subtitle: 'Houses, apartments, lands, or hourly guest houses',
-            icon: Icons.apartment_outlined,
-            isSelected: _listingType == ListingType.property,
-            onTap: () => setState(() => _listingType = ListingType.property),
-          ),
-          const SizedBox(height: 16),
+          if (!widget.lockType || _listingType == ListingType.property) ...[
+            _TypeOptionCard(
+              title: 'Real Estate Property',
+              subtitle: 'Houses, apartments, lands, or hourly guest houses',
+              icon: Icons.apartment_outlined,
+              isSelected: _listingType == ListingType.property,
+              onTap: () => setState(() => _listingType = ListingType.property),
+            ),
+            const SizedBox(height: 16),
+          ],
 
           // Vehicle Option Card
-          _TypeOptionCard(
-            title: 'Vehicle / Fleet Asset',
-            subtitle: 'Bikes, standard taxis, delivery vans, or heavy trucks',
-            icon: Icons.directions_car_outlined,
-            isSelected: _listingType == ListingType.vehicle,
-            onTap: () => setState(() => _listingType = ListingType.vehicle),
-          ),
+          if (!widget.lockType || _listingType == ListingType.vehicle)
+            _TypeOptionCard(
+              title: 'Vehicle / Fleet Asset',
+              subtitle: 'Bikes, standard taxis, delivery vans, or heavy trucks',
+              icon: Icons.directions_car_outlined,
+              isSelected: _listingType == ListingType.vehicle,
+              onTap: () => setState(() => _listingType = ListingType.vehicle),
+            ),
 
           const SizedBox(height: 32),
 

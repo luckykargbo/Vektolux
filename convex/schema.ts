@@ -97,6 +97,8 @@ export const universalBookingType = v.union(
 );
 
 export const universalBookingStatus = v.union(
+  v.literal("requested"), // free property site visit waiting for the owner / agent to accept
+  v.literal("declined"), // site-visit request declined by the owner / agent (reason stored)
   v.literal("pending_payment"),
   v.literal("confirmed"),
   v.literal("in_progress"),
@@ -428,6 +430,10 @@ export default defineSchema({
     // Business role approval (role is granted only by an administrator decision)
     roleApprovedAt: v.optional(v.number()),
     roleApprovedBy: v.optional(v.id("users")),
+    // Car Dealer capability held IN ADDITION to the Real Estate Agent role (admin-approved
+    // application; see roles.ts). Never set for a dealer whose primary role is already "dealer".
+    vehicleDealerApprovedAt: v.optional(v.number()),
+    vehicleDealerApprovedBy: v.optional(v.id("users")),
     driverVehicleId: v.optional(v.string()),
 
     // Social & Profile
@@ -468,6 +474,24 @@ export default defineSchema({
       searchField: "name",
       filterFields: ["role", "isActive"],
     }),
+
+  // ─── SAVED LISTINGS (the heart button; one row per account + listing) ─
+  saved_listings: defineTable({
+    userId: v.id("users"),
+    listingType: v.union(v.literal("property"), v.literal("vehicle")),
+    listingId: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_userId_and_listingId", ["userId", "listingId"])
+    .index("by_userId_and_createdAt", ["userId", "createdAt"])
+    .index("by_listingId", ["listingId"]),
+
+  // ─── LISTING VIEWS (one per signed-in viewer, listing and UTC day) ─
+  listing_views: defineTable({
+    listingId: v.id("realEstateListings"),
+    viewerId: v.id("users"),
+    day: v.number(), // floor(timestamp / 86_400_000)
+  }).index("by_listingId_and_viewerId_and_day", ["listingId", "viewerId", "day"]),
 
   // ─── FOLLOWS ───────────────────────────────────────────────────────
   follows: defineTable({
@@ -520,10 +544,27 @@ export default defineSchema({
     isPublished: v.optional(v.boolean()),
     viewCount: v.number(),
 
+    // Moderation (Real Estate Agent listings are reviewed by an administrator before going live).
+    // Unset = listing from before moderation existed / not subject to review: treated as approved.
+    moderationStatus: v.optional(
+      v.union(v.literal("pending_review"), v.literal("approved"), v.literal("rejected"), v.literal("removed"))
+    ),
+    moderationReason: v.optional(v.string()),
+    moderatedAt: v.optional(v.number()),
+    moderatedBy: v.optional(v.id("users")),
+    submittedForReviewAt: v.optional(v.number()),
+    archivedAt: v.optional(v.number()),
+
+    // Server-maintained counters (never written by a client).
+    saveCount: v.optional(v.number()),
+    inquiryCount: v.optional(v.number()),
+    viewingRequestCount: v.optional(v.number()),
+
     // Metadata
     updatedAt: v.number(),
   })
     .index("by_owner", ["ownerId"])
+    .index("by_moderationStatus_and_submittedForReviewAt", ["moderationStatus", "submittedForReviewAt"])
     .index("by_category_status", ["category", "availabilityStatus"])
     .index("by_geohash", ["geohash"])
     .index("by_category_price", ["category", "price"])
@@ -874,6 +915,12 @@ export default defineSchema({
     releasedBy: v.optional(v.union(v.literal("buyer"), v.literal("auto"), v.literal("admin"))),
     refundedAt: v.optional(v.number()),
     refundReason: v.optional(v.string()),
+    // Site-visit request decision (owner or the listing's authorised agent; see bookings.ts).
+    acceptedAt: v.optional(v.number()),
+    acceptedBy: v.optional(v.id("users")),
+    declinedAt: v.optional(v.number()),
+    declinedBy: v.optional(v.id("users")),
+    declineReason: v.optional(v.string()),
   })
     .index("by_settlement_eligible", ["settlementStatus", "releaseEligibleAt"])
     .index("by_buyer", ["buyerId"])
@@ -1247,7 +1294,8 @@ export default defineSchema({
     .index("by_property", ["propertyListingId"])
     .index("by_state", ["currentState"])
     .index("by_bank_ref", ["bankEscrowReference"])
-    .index("by_agent_authorization", ["agentAuthorizationId"]),
+    .index("by_agent_authorization", ["agentAuthorizationId"])
+    .index("by_agentId", ["agentId"]),
 
   // ─── REAL ESTATE ESCROW: LAND & PROPERTY MILESTONES (10/40/50) ────
   re_escrow_milestones: defineTable({
@@ -1540,7 +1588,11 @@ export default defineSchema({
       v.literal("RECOVERY_RETRIED"),
       v.literal("RECOVERY_CLOSED"),
       v.literal("RECOVERY_PROTECTION_CHANGED"),
-      v.literal("BOOKING_SETTLED")
+      v.literal("BOOKING_SETTLED"),
+      v.literal("LISTING_APPROVED"),
+      v.literal("LISTING_REJECTED"),
+      v.literal("LISTING_REMOVED"),
+      v.literal("LISTING_ARCHIVED")
     ),
     targetTransactionId: v.string(), // Claim ID or external carrier reference
     snapshot: v.string(), // JSON string snapshot of record state at resolution time

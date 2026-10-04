@@ -26,7 +26,6 @@ import 'package:vektolux/features/agent/domain/agent_models.dart';
 import 'package:vektolux/features/agent/presentation/bloc/agent_workspace_cubit.dart';
 import 'package:vektolux/features/agent/presentation/views/agent_add_listing_screen.dart';
 import 'package:vektolux/features/agent/presentation/views/agent_shell.dart';
-import 'package:vektolux/features/agent/presentation/widgets/agent_ui.dart';
 import 'package:vektolux/features/agent/presentation/widgets/listing_media_editor.dart';
 import 'package:vektolux/features/auth/domain/entities/user_entity.dart';
 import 'package:vektolux/features/auth/presentation/bloc/auth_bloc.dart';
@@ -103,6 +102,7 @@ Map<String, dynamic> _status({
   String role = 'real_estate_agent',
   bool approved = true,
   bool subscribed = true,
+  bool carDealer = false,
   List<Map<String, dynamic>> applications = const [],
 }) =>
     {
@@ -118,12 +118,24 @@ Map<String, dynamic> _status({
       'legacyGraceEndedAt': null,
       'subscriptionPolicyConfigured': false,
       'canPostProperty': approved && (subscribed || role == 'real_estate_owner'),
-      'canPostVehicle': false,
+      'canPostVehicle': carDealer,
+      'isCarDealer': carDealer,
+      'professionalTitle': carDealer ? 'Real Estate Agent & Car Dealer' : 'Real Estate Agent',
       'canManageHotel': false,
       'applications': applications,
     };
 
-Map<String, dynamic> _listing(String id, String title, {String category = 'sale', bool published = true, num price = 2850000}) => {
+Map<String, dynamic> _listing(
+  String id,
+  String title, {
+  String category = 'sale',
+  bool published = true,
+  num price = 2850000,
+  String? lifecycle,
+  String? reason,
+  int inquiries = 0,
+}) =>
+    {
       '_id': id,
       '_creationTime': _now - 1000 * id.hashCode.abs() % 100000,
       'ownerId': 'agent_1',
@@ -147,6 +159,12 @@ Map<String, dynamic> _listing(String id, String title, {String category = 'sale'
       'isFeatured': false,
       'isPublished': published,
       'viewCount': 0,
+      'saveCount': 0,
+      'inquiryCount': inquiries,
+      'viewingRequestCount': 0,
+      // the server derives this; the app never decides that a listing is live
+      'lifecycleStatus': lifecycle ?? (published ? 'active' : 'unpublished'),
+      if (reason != null) 'moderationReason': reason,
       'updatedAt': _now,
     };
 
@@ -180,25 +198,68 @@ class _Chat {
       {'conversation': conversation(), 'canSend': status != 'declined', 'truncated': false, 'messages': messages};
 }
 
-Map<String, dynamic> _viewing() => {
-      '_id': 'b1',
-      'listingType': 'property',
+Map<String, dynamic> _visit(
+  String id,
+  String status, {
+  int daysAhead = 1,
+  String client = 'Ibrahim Koroma',
+  String? phone,
+  String? reason,
+}) =>
+    {
+      'id': id,
       'listingId': 'l1',
       'listingTitle': 'Modern 3 Bedroom House',
-      'buyerId': 'client_9',
-      'buyerName': 'Ibrahim Koroma',
-      'vendorId': 'agent_1',
-      'bookingType': 'property_inspection',
-      'status': 'confirmed',
-      'startTime': _now + 86400000,
-      'endTime': _now + 86400000 + 3600000,
-      'subtotal': 0,
-      'serviceFee': 0,
-      'totalAmount': 0,
-      'currency': 'SLE',
-      'paymentStatus': 'paid',
-      'updatedAt': _now,
+      'listingImage': null,
+      'publicLocation': 'Aberdeen, Western Area Urban',
+      'representing': false,
+      'clientName': client,
+      'clientAvatarUrl': null,
+      'clientPhone': status == 'confirmed' ? phone : null,
+      'status': status,
+      'startTime': _now + daysAhead * 86400000,
+      'endTime': _now + daysAhead * 86400000 + 3600000,
+      'notes': 'Can we meet at the gate?',
+      'declineReason': status == 'declined' ? reason : null,
+      'cancelReason': status == 'cancelled' ? reason : null,
+      'requestedAt': _now - 3600000,
     };
+
+/// Site-visit requests with server-side state: a request is answered once (like convex/bookings.ts).
+class _Visits {
+  final List<Map<String, dynamic>> rows;
+  _Visits([List<Map<String, dynamic>>? initial])
+      : rows = initial ??
+            [
+              _visit('b1', 'requested', daysAhead: 1, client: 'Ibrahim Koroma'),
+              _visit('b2', 'confirmed', daysAhead: 3, client: 'Fatmata Conteh', phone: '+23276123456'),
+            ];
+
+  Object? respond(Map<String, dynamic> a) {
+    final i = rows.indexWhere((r) => r['id'] == a['bookingId']);
+    if (i < 0) return const _ServerError('Booking not found');
+    final row = rows[i];
+    if (row['status'] != 'requested') {
+      return _ServerError(row['status'] == 'confirmed' ? 'This request was already accepted.' : 'This request was already declined.');
+    }
+    if (a['decision'] == 'accept') {
+      rows[i] = {...row, 'status': 'confirmed', 'clientPhone': '+23276000999'};
+      return {'status': 'confirmed'};
+    }
+    final reason = (a['reason'] as String? ?? '').trim();
+    if (reason.length < 3) return const _ServerError('Please give a reason for declining.');
+    rows[i] = {...row, 'status': 'declined', 'declineReason': reason};
+    return {'status': 'declined'};
+  }
+
+  Object? cancel(Map<String, dynamic> a) {
+    final i = rows.indexWhere((r) => r['id'] == a['bookingId']);
+    if (i < 0) return const _ServerError('Booking not found');
+    if (rows[i]['status'] == 'requested') return const _ServerError('Accept or decline this viewing request instead.');
+    rows[i] = {...rows[i], 'status': 'cancelled', 'cancelReason': a['reason']};
+    return {'success': true, 'refunded': 0};
+  }
+}
 
 List<Map<String, dynamic>> _notifications() => [
       {
@@ -228,10 +289,11 @@ Map<String, _Route> _agentRoutes({
   Map<String, Map<String, dynamic>> publicProperties = const {},
   _Chat? chat,
   bool noConversations = false,
-  List<Map<String, dynamic>>? viewings,
+  _Visits? visits,
   int unread = 3,
 }) {
   final c = chat ?? _Chat();
+  final v = visits ?? _Visits();
   return {
     'subscriptions:getMyProfessionalStatus': (_) => status ?? _status(),
     'subscriptions:getUserActiveSubscription': (_) => (status ?? _status())['hasActiveSubscription'] == true
@@ -240,7 +302,7 @@ Map<String, _Route> _agentRoutes({
     'realEstate:getMyPropertyListings': (_) =>
         listings ??
         [
-          _listing('l1', 'Modern 3 Bedroom House'),
+          _listing('l1', 'Modern 3 Bedroom House', inquiries: 1), // the one conversation below is about l1
           _listing('l2', '2 Bedroom Apartment', category: 'long_term_rent', published: false, price: 1200000),
         ],
     'listingAgents:getMyAgentAuthorizations': (_) => authorizations,
@@ -259,7 +321,9 @@ Map<String, _Route> _agentRoutes({
       c.status = a['action'] == 'accepted' ? 'accepted' : 'declined';
       return {'status': c.status.toUpperCase()};
     },
-    'bookings:getVendorBookings': (_) => viewings ?? [_viewing()],
+    'bookings:getMyViewingRequests': (_) => v.rows,
+    'bookings:respondToViewingRequest': v.respond,
+    'bookings:cancelBooking': v.cancel,
     'notifications:getUnreadNotificationCount': (_) => unread,
     'notifications:getUserNotifications': (_) => _notifications(),
     'notifications:markAsRead': (_) => true,
@@ -356,11 +420,27 @@ Future<void> _openTab(WidgetTester tester, int index) async {
   await _settle(tester, 5);
 }
 
+/// The page's own (vertical) scrollable — not a horizontal chip row above it.
+Finder get _page => find.byWidgetPredicate((w) => w is Scrollable && w.axisDirection == AxisDirection.down).first;
+
+/// Back to the top of the page.
+Future<void> _scrollTop(WidgetTester tester) async {
+  await tester.drag(_page, const Offset(0, 4000));
+  await _settle(tester, 4);
+}
+
+/// A lazy list builds only what is near the viewport, in whichever direction the page was last scrolled.
+/// To get [finder] built: go back to the top first (it may be above), then scroll down until it appears.
+Future<void> _build(WidgetTester tester, Finder finder) async {
+  if (finder.evaluate().isNotEmpty) return;
+  await _scrollTop(tester);
+  if (finder.evaluate().isNotEmpty) return;
+  await tester.scrollUntilVisible(finder, 250, scrollable: _page);
+}
+
 /// Scrolls [finder] into view (building it first if a lazy list has not built it yet), then taps it.
 Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
-  if (finder.evaluate().isEmpty) {
-    await tester.scrollUntilVisible(finder, 250, scrollable: find.byType(Scrollable).first);
-  }
+  await _build(tester, finder);
   await tester.ensureVisible(finder);
   await _settle(tester, 3);
   await tester.tap(finder);
@@ -368,7 +448,8 @@ Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
 
 /// Scrolls the current page until [finder] is built and visible.
 Future<void> _reveal(WidgetTester tester, Finder finder) async {
-  await tester.scrollUntilVisible(finder, 250, scrollable: find.byType(Scrollable).first);
+  await _build(tester, finder);
+  await tester.ensureVisible(finder);
   await tester.pump();
 }
 
@@ -731,14 +812,21 @@ void main() {
       expect(find.descendant(of: find.byKey(const Key('agent-total-listings')), matching: find.text('2')), findsOneWidget);
       expect(find.descendant(of: find.byKey(const Key('agent-active-deals')), matching: find.text('1')), findsOneWidget);
       expect(find.descendant(of: find.byKey(const Key('agent-kpi-active')), matching: find.text('1')), findsOneWidget);
-      expect(find.descendant(of: find.byKey(const Key('agent-kpi-unpublished')), matching: find.text('1')), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const Key('agent-kpi-review')), matching: find.text('0')), findsOneWidget,
+          reason: 'nothing waits for an administrator');
       expect(find.descendant(of: find.byKey(const Key('agent-kpi-messages')), matching: find.text('1')), findsOneWidget,
           reason: 'unread client messages from the server counter');
       expect(find.descendant(of: find.byKey(const Key('agent-kpi-followers')), matching: find.text('7')), findsOneWidget);
       expect(find.text('SLE 1,250.50'), findsOneWidget);
       expect(find.text('2 payouts'), findsOneWidget);
       expect(find.descendant(of: find.byKey(const Key('agent-home-notifications')), matching: find.text('3')), findsOneWidget);
-      expect(find.byKey(const Key('agent-next-viewing')), findsOneWidget, reason: 'the confirmed site visit from the server');
+      expect(find.descendant(of: find.byKey(const Key('agent-viewing-pending')), matching: find.text('1 Pending')), findsOneWidget,
+          reason: 'the real count of requests waiting for an answer');
+      expect(find.byKey(const Key('agent-next-viewing')), findsOneWidget, reason: 'the soonest CONFIRMED visit (not the pending request)');
+      expect(find.descendant(of: find.byKey(const Key('agent-next-viewing')), matching: find.textContaining('Fatmata Conteh')), findsOneWidget);
+      await _reveal(tester, find.byKey(const Key('agent-recent-inquiries')));
+      expect(find.descendant(of: find.byKey(const Key('agent-recent-inquiries')), matching: find.text('Aminata Kamara')), findsOneWidget);
+      expect(find.byKey(const Key('agent-auto-add')), findsNothing, reason: 'no car tools without a separately approved Car Dealer');
       expect(find.text('Modern 3 Bedroom House'), findsWidgets);
       await _reveal(tester, find.byKey(const Key('agent-quick-Add Property')));
       for (final action in ['Add Property', 'My Listings', 'Messages', 'Viewings', 'Notifications']) {
@@ -826,10 +914,16 @@ void main() {
       expect(find.text('For Sale (1)'), findsOneWidget);
       expect(find.text('For Rent (1)'), findsOneWidget);
       expect(find.text('Unpublished (1)'), findsOneWidget);
+      expect(find.text('Active (1)'), findsOneWidget);
+      expect(find.text('Archived (0)'), findsNothing, reason: 'only filters that apply to some listings');
+      expect(find.text('Rejected (0)'), findsNothing);
       expect(find.byKey(const Key('agent-listing-l1')), findsOneWidget);
-      final l1Inquiries = find.descendant(of: find.byKey(const Key('agent-listing-l1')), matching: find.byType(AgentInquiryChip));
-      expect(tester.widget<AgentInquiryChip>(l1Inquiries).count, 1, reason: 'one real conversation is about l1');
-      expect(find.descendant(of: find.byKey(const Key('agent-listing-l2')), matching: find.byType(AgentInquiryChip)), findsNothing);
+      // statistics come from the server's counters on each listing (views, saves, inquiries, viewing requests)
+      final l1Stats = find.byKey(const Key('agent-listing-stats-l1'));
+      expect(l1Stats, findsOneWidget);
+      expect(find.descendant(of: l1Stats, matching: find.text('1')), findsOneWidget, reason: 'one real inquiry about l1');
+      expect(find.descendant(of: l1Stats, matching: find.text('0')), findsNWidgets(3));
+      expect(find.descendant(of: find.byKey(const Key('agent-listing-stats-l2')), matching: find.text('1')), findsNothing);
       expect(find.descendant(of: find.byKey(const Key('agent-listing-l2')), matching: find.text('Unpublished')), findsOneWidget);
       expect(find.descendant(of: find.byKey(const Key('agent-listing-l2')), matching: find.text('SLE 1,200,000 / year')), findsOneWidget);
 
@@ -911,6 +1005,24 @@ void main() {
       expect(args['accept'], true);
       await _tearDown(tester);
     });
+
+    testWidgets('an authorised listing the server no longer shows is left out — never an empty "Untitled listing"', (tester) async {
+      final backend = _Backend(_agentRoutes(
+        authorizations: [
+          {'id': 'auth1', 'listingType': 'property', 'listingId': 'p9', 'status': 'active', 'invitedAt': _now - 10000, 'acceptedAt': _now - 9000},
+          {'id': 'auth3', 'listingType': 'property', 'listingId': 'gone', 'status': 'active', 'invitedAt': _now - 10000, 'acceptedAt': _now - 9000},
+        ],
+        publicProperties: {
+          'p9': {'_id': 'p9', 'title': 'Owner Villa', 'category': 'sale', 'price': 5500000, 'currency': 'SLE', 'publicLocation': 'Inside Lumley, Sierra Leone', 'imageUrls': [], 'isPublished': true, 'availabilityStatus': 'available'},
+        },
+      ));
+      await _pump(tester, user: _agentUser, backend: backend);
+      await _openTab(tester, 1);
+      expect(find.text('Owner Villa'), findsOneWidget);
+      expect(find.text('Untitled listing'), findsNothing, reason: 'getPropertyById returned null for it');
+      expect(find.text('All (3)'), findsOneWidget, reason: 'two own listings and the one represented listing that exists');
+      await _tearDown(tester);
+    });
   });
 
   group('messages (real conversations)', () {
@@ -985,26 +1097,165 @@ void main() {
     });
   });
 
-  group('viewing requests and notifications', () {
-    testWidgets('viewing requests use the booking states; cancelling goes through the server', (tester) async {
-      final backend = _Backend(_agentRoutes());
+  group('viewing requests (accept / decline)', () {
+    testWidgets('requests open on Pending with Accept / Decline; confirmed, declined and cancelled have their own tabs', (tester) async {
+      final backend = _Backend(_agentRoutes(visits: _Visits([
+        _visit('b1', 'requested', daysAhead: 1, client: 'Ibrahim Koroma'),
+        _visit('b2', 'confirmed', daysAhead: 3, client: 'Fatmata Conteh', phone: '+23276123456'),
+        _visit('b3', 'declined', daysAhead: 4, client: 'Sorie Bangura', reason: 'House being repainted'),
+        _visit('b4', 'cancelled', daysAhead: 5, client: 'Kadiatu Jalloh', reason: 'Owner travelling'),
+      ])));
       await _pump(tester, user: _agentUser, backend: backend);
       await _tapVisible(tester, find.byKey(const Key('agent-quick-Viewings')));
       await _settle(tester);
+      for (final label in ['Pending (1)', 'Confirmed (1)', 'Declined (1)', 'Cancelled (1)']) {
+        expect(find.text(label), findsOneWidget, reason: label);
+      }
+      // opens on Pending: the request has Accept and Decline — and is NOT shown as confirmed
       expect(find.byKey(const Key('viewing-b1')), findsOneWidget);
-      expect(find.text('Ibrahim Koroma'), findsOneWidget);
-      expect(find.text('Confirmed'), findsWidgets);
+      expect(find.byKey(const Key('viewing-accept-b1')), findsOneWidget);
+      expect(find.byKey(const Key('viewing-decline-b1')), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const Key('viewing-status-b1')), matching: find.text('Pending')), findsOneWidget);
+      expect(find.text('Can we meet at the gate?'), findsOneWidget, reason: 'the client\'s note');
+      expect(find.byKey(const Key('viewing-b2')), findsNothing);
+
+      await _tapVisible(tester, find.byKey(const Key('viewings-tab-confirmed')));
+      await _settle(tester, 3);
+      expect(find.byKey(const Key('viewing-b2')), findsOneWidget);
+      expect(find.byKey(const Key('viewing-accept-b2')), findsNothing);
+      expect(find.byKey(const Key('viewing-cancel-b2')), findsOneWidget, reason: 'a confirmed visit can be cancelled, not accepted again');
+      expect(find.byKey(const Key('viewing-call-b2')), findsOneWidget, reason: 'the server shared the phone after confirmation');
+
+      await _tapVisible(tester, find.byKey(const Key('viewings-tab-declined')));
+      await _settle(tester, 3);
+      expect(find.text('Reason: House being repainted'), findsOneWidget);
       await _tapVisible(tester, find.byKey(const Key('viewings-tab-cancelled')));
       await _settle(tester, 3);
-      expect(find.byKey(const Key('viewing-b1')), findsNothing);
+      expect(find.text('Reason: Owner travelling'), findsOneWidget);
       _expectNoLayoutErrors(tester);
       await _tearDown(tester);
     });
 
-    testWidgets('notification tabs come from real rows; a message notification opens the conversation', (tester) async {
+    testWidgets('Accept goes to the server, the request becomes Confirmed and the pending count drops', (tester) async {
+      final backend = _Backend(_agentRoutes());
+      await _pump(tester, user: _agentUser, backend: backend);
+      expect(find.text('1 Pending'), findsOneWidget);
+      await _tapVisible(tester, find.byKey(const Key('agent-quick-Viewings')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('viewing-accept-b1')));
+      await _settle(tester);
+      final args = backend.lastArgs('bookings:respondToViewingRequest');
+      expect(args['bookingId'], 'b1');
+      expect(args['decision'], 'accept');
+      expect(args['sessionToken'], _agentUser.sessionToken);
+      expect(find.byKey(const Key('viewing-b1')), findsNothing, reason: 'it left the Pending tab (the screen stays on Pending)');
+      expect(find.text('No pending requests'), findsOneWidget);
+      await _tapVisible(tester, find.byKey(const Key('viewings-tab-confirmed')));
+      await _settle(tester, 3);
+      expect(find.byKey(const Key('viewing-b1')), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const Key('viewing-status-b1')), matching: find.text('Confirmed')), findsOneWidget);
+      await tester.pageBack();
+      await _settle(tester, 4);
+      await _scrollTop(tester);
+      expect(find.text('0 Pending'), findsOneWidget);
+      await _tearDown(tester);
+    });
+
+    testWidgets('Decline needs a reason; it is sent to the server and shown in the Declined tab', (tester) async {
+      final backend = _Backend(_agentRoutes());
+      await _pump(tester, user: _agentUser, backend: backend);
+      await _tapVisible(tester, find.byKey(const Key('agent-quick-Viewings')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('viewing-decline-b1')));
+      await _settle(tester, 4);
+      var confirm = tester.widget<ElevatedButton>(find.byKey(const Key('agent-reason-confirm')));
+      expect(confirm.onPressed, isNull, reason: 'no reason, no decline');
+      await tester.enterText(find.byKey(const Key('agent-reason-input')), 'Booked out that day');
+      await tester.pump();
+      confirm = tester.widget<ElevatedButton>(find.byKey(const Key('agent-reason-confirm')));
+      expect(confirm.onPressed, isNotNull);
+      await tester.tap(find.byKey(const Key('agent-reason-confirm')));
+      await _settle(tester);
+      final args = backend.lastArgs('bookings:respondToViewingRequest');
+      expect(args['decision'], 'decline');
+      expect(args['reason'], 'Booked out that day');
+      await _tapVisible(tester, find.byKey(const Key('viewings-tab-declined')));
+      await _settle(tester, 3);
+      expect(find.text('Reason: Booked out that day'), findsOneWidget);
+      await _tearDown(tester);
+    });
+
+    testWidgets('a request someone else already answered shows the server\'s message and stays unchanged', (tester) async {
+      final visits = _Visits();
+      final backend = _Backend(_agentRoutes(visits: visits));
+      await _pump(tester, user: _agentUser, backend: backend);
+      await _tapVisible(tester, find.byKey(const Key('agent-quick-Viewings')));
+      await _settle(tester);
+      // the owner accepted it from their own phone a moment ago
+      visits.rows[0] = {...visits.rows[0], 'status': 'confirmed'};
+      await tester.tap(find.byKey(const Key('viewing-accept-b1')));
+      await _settle(tester);
+      expect(find.text('This request was already accepted.'), findsOneWidget);
+      await _tearDown(tester);
+    });
+
+    testWidgets('a confirmed visit is cancelled with a reason through the existing booking rules', (tester) async {
+      final backend = _Backend(_agentRoutes());
+      await _pump(tester, user: _agentUser, backend: backend);
+      await _tapVisible(tester, find.byKey(const Key('agent-quick-Viewings')));
+      await _settle(tester);
+      await _tapVisible(tester, find.byKey(const Key('viewings-tab-confirmed')));
+      await _settle(tester, 3);
+      await tester.tap(find.byKey(const Key('viewing-cancel-b2')));
+      await _settle(tester, 4);
+      await tester.enterText(find.byKey(const Key('agent-reason-input')), 'Owner is travelling');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('agent-reason-confirm')));
+      await _settle(tester);
+      final args = backend.lastArgs('bookings:cancelBooking');
+      expect(args['bookingId'], 'b2');
+      expect(args['reason'], 'Owner is travelling');
+      expect(args['userId'], 'agent_1');
+      await _tearDown(tester);
+    });
+
+    testWidgets('an empty list is an honest empty state; an error offers Retry', (tester) async {
+      await _pump(tester, user: _agentUser, backend: _Backend(_agentRoutes(visits: _Visits([]))));
+      await _tapVisible(tester, find.byKey(const Key('agent-quick-Viewings')));
+      await _settle(tester);
+      expect(find.text('No pending requests'), findsOneWidget);
+      expect(find.text('0 Pending'), findsNothing);
+      await tester.pageBack();
+      await _settle(tester, 4);
+      await _scrollTop(tester);
+      expect(find.text('0 Pending'), findsOneWidget);
+      await _tearDown(tester);
+
+      var down = true;
+      final routes = _agentRoutes();
+      final real = routes['bookings:getMyViewingRequests']!;
+      routes['bookings:getMyViewingRequests'] = (a) => down ? const _ServerError('Viewings are unavailable') : real(a);
+      await _pump(tester, user: _agentUser, backend: _Backend(routes));
+      await _tapVisible(tester, find.byKey(const Key('agent-quick-Viewings')));
+      await _settle(tester);
+      expect(find.text('Viewings are unavailable'), findsWidgets);
+      down = false;
+      await tester.tap(find.text('Retry').first);
+      await _settle(tester);
+      expect(find.byKey(const Key('viewing-b1')), findsOneWidget);
+      await _tearDown(tester);
+    });
+  });
+
+  group('notifications', () {
+    testWidgets('four tabs from real rows: Messages = conversations, Admin = broadcasts, System = the rest', (tester) async {
       final backend = _Backend(_agentRoutes());
       await _pump(tester, user: _agentUser, backend: backend);
       await _openTab(tester, 3);
+      for (final t in ['all', 'messages', 'system', 'admin']) {
+        expect(find.byKey(Key('agent-notif-tab-$t')), findsOneWidget, reason: t);
+      }
+      expect(find.byKey(const Key('agent-notif-tab-viewings')), findsNothing);
       expect(find.text('Application approved'), findsOneWidget);
       expect(find.text('Planned maintenance'), findsOneWidget);
       expect(find.text('New inquiry from Aminata Kamara'), findsOneWidget);
@@ -1014,15 +1265,12 @@ void main() {
       expect(find.text('Planned maintenance'), findsOneWidget);
       expect(find.text('Application approved'), findsNothing);
 
-      await _tapVisible(tester, find.byKey(const Key('agent-notif-tab-account')));
+      await _tapVisible(tester, find.byKey(const Key('agent-notif-tab-system')));
       await _settle(tester, 3);
       expect(find.text('Application approved'), findsOneWidget);
+      expect(find.text('Booking confirmed'), findsOneWidget);
       expect(find.text('Planned maintenance'), findsNothing);
       expect(find.text('New inquiry from Aminata Kamara'), findsNothing);
-
-      await _tapVisible(tester, find.byKey(const Key('agent-notif-tab-viewings')));
-      await _settle(tester, 3);
-      expect(find.text('Booking confirmed'), findsOneWidget);
 
       await _tapVisible(tester, find.byKey(const Key('agent-notif-tab-messages')));
       await _settle(tester, 3);
@@ -1031,6 +1279,181 @@ void main() {
       await _settle(tester);
       expect(backend.lastArgs('notifications:markAsRead')['notificationId'], 'n3');
       expect(find.byKey(const Key('chat-input')), findsOneWidget, reason: 'the deep link opened conversation req1');
+      await _tearDown(tester);
+    });
+
+    testWidgets('a viewing notification opens the viewing requests; a moderation notice opens My Listings', (tester) async {
+      final routes = _agentRoutes();
+      routes['notifications:getUserNotifications'] = (_) => [
+            {
+              'id': 'v1', 'targetType': 'single_user', 'title': 'New viewing request', 'body': 'Ibrahim Koroma wants to view "Villa".',
+              'read': false, 'createdAt': _now - 1000, 'deepLinkScreen': 'viewings', 'deepLinkId': 'b1',
+            },
+            {
+              'id': 'm1', 'targetType': 'single_user', 'title': 'Listing not approved', 'body': '"Villa" was not approved: photos missing.',
+              'read': false, 'createdAt': _now - 2000, 'deepLinkScreen': 'listings', 'deepLinkId': 'l2',
+            },
+          ];
+      final backend = _Backend(routes);
+      await _pump(tester, user: _agentUser, backend: backend);
+      await _openTab(tester, 3);
+      await tester.tap(find.byKey(const Key('agent-notification-v1')));
+      await _settle(tester);
+      expect(find.text('Viewing Requests'), findsWidgets);
+      expect(find.byKey(const Key('viewing-accept-b1')), findsOneWidget);
+      await tester.pageBack();
+      await _settle(tester, 4);
+      await tester.tap(find.byKey(const Key('agent-notification-m1')));
+      await _settle(tester);
+      expect(find.byKey(const Key('agent-listing-l1')), findsOneWidget, reason: 'the Listings tab');
+      await _tearDown(tester);
+    });
+  });
+
+  group('listing lifecycle (administrator review) and Auto tools', () {
+    List<Map<String, dynamic>> lifecycleListings() => [
+          _listing('a1', 'Active Villa'),
+          _listing('p1', 'Waiting Villa', lifecycle: 'pending_review'),
+          _listing('r1', 'Rejected Villa', lifecycle: 'rejected', reason: 'Photos do not show the property.'),
+          _listing('x1', 'Removed Villa', lifecycle: 'removed', reason: 'Reported as a duplicate listing.'),
+          _listing('d1', 'Draft Villa', published: false, lifecycle: 'draft'),
+          _listing('z1', 'Archived Villa', lifecycle: 'archived'),
+        ];
+
+    testWidgets('every listing shows its real status; rejected and removed ones show the administrator\'s reason', (tester) async {
+      await _pump(tester, user: _agentUser, backend: _Backend(_agentRoutes(listings: lifecycleListings())));
+      await _openTab(tester, 1);
+      for (final (key, label) in const [
+        ('agent-status-active', 'Active'),
+        ('agent-status-pendingReview', 'Pending review'),
+        ('agent-status-rejected', 'Rejected'),
+        ('agent-status-removed', 'Removed'),
+        ('agent-status-draft', 'Draft'),
+        ('agent-status-archived', 'Archived'),
+      ]) {
+        await _reveal(tester, find.byKey(Key(key)));
+        expect(find.descendant(of: find.byKey(Key(key)), matching: find.text(label)), findsOneWidget, reason: label);
+      }
+      // the administrator's reason is shown on the rejected and on the removed listing (a lazy list: reveal each)
+      await _reveal(tester, find.byKey(const Key('agent-listing-reason-r1')));
+      expect(find.text('Photos do not show the property.'), findsOneWidget);
+      await _reveal(tester, find.byKey(const Key('agent-listing-reason-x1')));
+      expect(find.text('Reported as a duplicate listing.'), findsOneWidget);
+      // an active listing carries no reason; its real statistics come from the server record (all zero here)
+      await _scrollTop(tester);
+      expect(find.byKey(const Key('agent-listing-a1')), findsOneWidget);
+      expect(find.byKey(const Key('agent-listing-reason-a1')), findsNothing);
+      expect(find.byKey(const Key('agent-listing-stats-a1')), findsOneWidget);
+      _expectNoLayoutErrors(tester);
+      await _tearDown(tester);
+    });
+
+    testWidgets('filters appear only for statuses that exist, with their counts', (tester) async {
+      await _pump(tester, user: _agentUser, backend: _Backend(_agentRoutes(listings: lifecycleListings())));
+      await _openTab(tester, 1);
+      for (final f in ['all', 'active', 'pendingReview', 'rejected', 'unpublished', 'archived', 'removed']) {
+        expect(find.byKey(Key('agent-filter-$f')), findsOneWidget, reason: f);
+      }
+      expect(find.byKey(const Key('agent-filter-offMarket')), findsNothing, reason: 'nothing is off-market');
+      expect(find.byKey(const Key('agent-filter-sale')), findsNothing, reason: 'every listing is for sale: no redundant chip');
+      expect(find.byKey(const Key('agent-filter-rent')), findsNothing);
+      await _tapVisible(tester, find.byKey(const Key('agent-filter-pendingReview')));
+      await _settle(tester, 3);
+      expect(find.byKey(const Key('agent-listing-p1')), findsOneWidget);
+      expect(find.byKey(const Key('agent-listing-a1')), findsNothing);
+      await _tapVisible(tester, find.byKey(const Key('agent-filter-rejected')));
+      await _settle(tester, 3);
+      expect(find.byKey(const Key('agent-listing-r1')), findsOneWidget);
+      expect(find.byKey(const Key('agent-listing-p1')), findsNothing);
+      await _tearDown(tester);
+    });
+
+    testWidgets('the actions follow the status: draft → submit for review; pending → withdraw; rejected → resubmit; removed → no delete', (tester) async {
+      final backend = _Backend(_agentRoutes(listings: lifecycleListings()));
+      await _pump(tester, user: _agentUser, backend: backend);
+      await _openTab(tester, 1);
+
+      Future<void> openMenu(String id) async {
+        await _reveal(tester, find.byKey(Key('agent-listing-menu-$id')));
+        await tester.tap(find.byKey(Key('agent-listing-menu-$id')));
+        await _settle(tester, 3);
+      }
+
+      Future<void> closeMenu() async {
+        await tester.tapAt(const Offset(5, 5));
+        await _settle(tester, 3);
+      }
+
+      await openMenu('d1');
+      expect(find.text('Submit for review'), findsOneWidget);
+      expect(find.text('Delete'), findsOneWidget);
+      await closeMenu();
+
+      await openMenu('p1');
+      expect(find.text('Withdraw from review'), findsOneWidget);
+      expect(find.text('Submit for review'), findsNothing);
+      await closeMenu();
+
+      await openMenu('r1');
+      expect(find.text('Resubmit for review'), findsOneWidget);
+      await closeMenu();
+
+      await openMenu('x1');
+      expect(find.text('Delete'), findsNothing, reason: 'a removed listing stays on record');
+      expect(find.text('Edit details'), findsNothing);
+      expect(find.text('Submit for review'), findsNothing);
+      await closeMenu();
+
+      await openMenu('z1');
+      expect(find.text('Restore as draft'), findsOneWidget);
+      await tester.tap(find.text('Restore as draft'));
+      await _settle(tester);
+      expect(backend.lastArgs('realEstate:restorePropertyListing')['listingId'], 'z1');
+      await _tearDown(tester);
+    });
+
+    testWidgets('submitting a draft asks the server to put it in review (the app never publishes)', (tester) async {
+      final backend = _Backend(_agentRoutes(listings: lifecycleListings()));
+      await _pump(tester, user: _agentUser, backend: backend);
+      await _openTab(tester, 1);
+      await _reveal(tester, find.byKey(const Key('agent-listing-menu-d1')));
+      await tester.tap(find.byKey(const Key('agent-listing-menu-d1')));
+      await _settle(tester, 3);
+      await tester.tap(find.text('Submit for review'));
+      await _settle(tester, 3);
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Submit'));
+      await _settle(tester);
+      final args = backend.lastArgs('realEstate:updatePropertyListing');
+      expect(args['listingId'], 'd1');
+      expect(args['isPublished'], true);
+      expect(args['sessionToken'], _agentUser.sessionToken);
+      expect(args.keys.where((k) => k.toLowerCase().contains('moderation') || k.toLowerCase().contains('approv')), isEmpty,
+          reason: 'the client cannot choose a moderation status');
+      await _tearDown(tester);
+    });
+
+    testWidgets('Auto tools exist only for a separately approved Car Dealer (same account, same workspace)', (tester) async {
+      // a plain agent: nothing about cars, anywhere
+      await _pump(tester, user: _agentUser, backend: _Backend(_agentRoutes()));
+      expect(find.text('Real Estate Agent'), findsOneWidget);
+      expect(find.byKey(const Key('agent-auto-add')), findsNothing);
+      await _openTab(tester, 4);
+      await _reveal(tester, find.byKey(const Key('agent-logout')));
+      expect(find.byKey(const Key('agent-auto-menu')), findsNothing);
+      expect(find.textContaining('Vehicle'), findsNothing);
+      await _tearDown(tester);
+
+      // the same kind of account, approved as a Car Dealer by the server
+      await _pump(tester, user: _agentUser, backend: _Backend(_agentRoutes(status: _status(carDealer: true))));
+      expect(_showsAgentNav(), isTrue, reason: 'the real estate workspace is kept');
+      expect(find.text('Real Estate Agent & Car Dealer'), findsOneWidget);
+      await _reveal(tester, find.byKey(const Key('agent-auto-add')));
+      expect(find.byKey(const Key('agent-auto-add')), findsOneWidget);
+      expect(find.byKey(const Key('agent-auto-list')), findsOneWidget);
+      expect(find.byKey(const Key('agent-quick-Add Property')), findsOneWidget, reason: 'property tools unchanged');
+      await _openTab(tester, 4);
+      await _reveal(tester, find.byKey(const Key('agent-auto-menu')));
+      expect(find.byKey(const Key('agent-auto-menu')), findsOneWidget);
       await _tearDown(tester);
     });
   });
@@ -1051,6 +1474,8 @@ void main() {
       expect(find.descendant(of: find.byKey(const Key('agent-stat-Followers')), matching: find.text('7')), findsOneWidget);
       expect(find.descendant(of: find.byKey(const Key('agent-stat-Following')), matching: find.text('2')), findsOneWidget);
       expect(find.descendant(of: find.byKey(const Key('agent-stat-Active Deals')), matching: find.text('1')), findsOneWidget);
+      expect(find.byKey(const Key('agent-subscription-card')), findsOneWidget);
+      await _reveal(tester, find.byKey(const Key('agent-logout')));
       expect(find.byKey(const Key('agent-logout')), findsOneWidget);
 
       await _openTab(tester, 0);
@@ -1116,8 +1541,12 @@ void main() {
       final routes = _agentRoutes(listings: listings);
       routes['realEstate:createPropertyListing'] = (a) {
         created = a;
+        // like the server: an agent's submission waits for an administrator; a draft stays private
         listings.add(_listing('new1', a['title'] as String,
-            category: a['category'] as String, published: a['isPublished'] == true, price: a['price'] as num));
+            category: a['category'] as String,
+            published: a['isPublished'] == true,
+            price: a['price'] as num,
+            lifecycle: a['isPublished'] == true ? 'pending_review' : 'draft'));
         return 'new1';
       };
       final backend = _Backend(routes);
@@ -1195,7 +1624,42 @@ void main() {
       expect(created!.keys.where((k) => k.toLowerCase().contains('verif') || k.toLowerCase().contains('approv')), isEmpty,
           reason: 'the app never asks for its own listing to be verified or approved');
       expect(find.byKey(const Key('agent-add-result-title')), findsOneWidget);
-      expect(find.text('Your listing is live'), findsOneWidget, reason: 'the status read back from the server');
+      expect(find.text('Submitted for review'), findsOneWidget, reason: 'the status read back from the server: waiting for an administrator');
+      expect(find.text('Your listing is live'), findsNothing, reason: 'an agent\'s listing is never live before it is approved');
+      expect(find.byKey(const Key('agent-status-pendingReview')), findsOneWidget);
+      await _tearDown(tester);
+    });
+
+    testWidgets('Save as draft keeps the listing private: isPublished false, result "Draft saved"', (tester) async {
+      Map<String, dynamic>? created;
+      final listings = <Map<String, dynamic>>[];
+      final routes = _agentRoutes(listings: listings);
+      routes['realEstate:createPropertyListing'] = (a) {
+        created = a;
+        listings.add(_listing('new1', a['title'] as String,
+            published: a['isPublished'] == true, lifecycle: a['isPublished'] == true ? 'pending_review' : 'draft'));
+        return 'new1';
+      };
+      await _pumpAddListing(tester,
+          backend: _Backend(routes), picker: _FakePicker(photoBatches: [[_photo('front.png')]]), storage: _Storage());
+      await _fillBasics(tester, category: 'sale');
+      await _next(tester, 'Photos & video');
+      await tester.tap(find.byKey(const Key('media-add-photos')));
+      await _settle(tester);
+      await _next(tester, 'Details');
+      await _next(tester, 'Price & location');
+      await _fillPriceAndLocation(tester, price: '900000');
+      await _next(tester, 'Review');
+      // the default is to submit for review; the agent picks "Save as draft"
+      expect(find.widgetWithText(ElevatedButton, 'Submit for review'), findsOneWidget);
+      await _tapVisible(tester, find.byKey(const Key('agent-add-mode-draft')));
+      await _settle(tester, 2);
+      expect(find.widgetWithText(ElevatedButton, 'Save as draft'), findsOneWidget);
+      await _tapVisible(tester, find.byKey(const Key('agent-add-submit')));
+      await _settle(tester);
+      expect(created!['isPublished'], false);
+      expect(find.text('Draft saved'), findsOneWidget);
+      expect(find.byKey(const Key('agent-status-draft')), findsOneWidget);
       await _tearDown(tester);
     });
 

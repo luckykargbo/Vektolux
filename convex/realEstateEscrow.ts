@@ -25,6 +25,8 @@ import { reContractType } from "./schema";
 import { detectSierraLeoneCarrier } from "./lib/paymentErrors";
 import { requireSelf, requireParticipantOrAdmin, requireAdminSession } from "./lib/auth";
 import { activeListingAgent } from "./listingAgents";
+import { isListingPublic } from "./lib/publicListing";
+import { bumpListingCounter } from "./listingStats";
 import { publicLocation } from "./lib/slLocations";
 import {
   fundEscrowFromExternalPayment,
@@ -207,7 +209,7 @@ export const initiateInspectionPass = mutation({
   handler: async (ctx, args) => {
     const currentUserId = await resolveCallerUser(ctx, args.clientId, args.sessionToken);
     const property = await ctx.db.get(args.propertyListingId);
-    if (!property || property.isDeleted === true || property.isPublished === false) {
+    if (!property || !isListingPublic(property)) {
       throw new Error("This property is not available.");
     }
     if (property.ownerId === currentUserId) {
@@ -263,6 +265,7 @@ export const initiateInspectionPass = mutation({
       await fundInspectionPassFromWallet(ctx, passId); // throws INSUFFICIENT_FUNDS -> nothing is created
       status = "FUNDS_LOCKED";
     }
+    await bumpListingCounter(ctx, property._id, "viewingRequestCount");
 
     return {
       passId: passId as string,
@@ -430,7 +433,7 @@ export const initiateRealEstateEscrow = mutation({
   handler: async (ctx, args) => {
     const currentUserId = await resolveCallerUser(ctx, args.clientId, args.sessionToken);
     const property = await ctx.db.get(args.propertyListingId);
-    if (!property || property.isDeleted === true || property.isPublished === false) {
+    if (!property || !isListingPublic(property)) {
       throw new Error("This property is not available.");
     }
     if (property.ownerId === currentUserId) {
@@ -1065,10 +1068,12 @@ export const getMyRealEstateEscrows = query({
   handler: async (ctx, args) => {
     const userId = await resolveCallerUser(ctx, args.userId, args.sessionToken);
 
-    const asClient = await ctx.db.query("re_escrow_contracts").withIndex("by_client", (q: any) => q.eq("clientId", userId)).collect();
-    const asBeneficiary = await ctx.db.query("re_escrow_contracts").withIndex("by_beneficiary", (q: any) => q.eq("beneficiaryId", userId)).collect();
+    const asClient = await ctx.db.query("re_escrow_contracts").withIndex("by_client", (q: any) => q.eq("clientId", userId)).order("desc").take(200);
+    const asBeneficiary = await ctx.db.query("re_escrow_contracts").withIndex("by_beneficiary", (q: any) => q.eq("beneficiaryId", userId)).order("desc").take(200);
+    // Deals where the caller is the owner-authorised listing agent (their commission is part of it).
+    const asAgent = await ctx.db.query("re_escrow_contracts").withIndex("by_agentId", (q: any) => q.eq("agentId", userId)).order("desc").take(200);
     const contractMap = new Map();
-    for (const c of [...asClient, ...asBeneficiary]) contractMap.set(c._id, c);
+    for (const c of [...asClient, ...asBeneficiary, ...asAgent]) contractMap.set(c._id, c);
     const allContracts = Array.from(contractMap.values()).sort((a, b) => b.createdAt - a.createdAt);
 
     const hydratedContracts = [];
@@ -1081,11 +1086,13 @@ export const getMyRealEstateEscrows = query({
         propertyCity: prop ? publicLocation(prop.city, prop.district) : "Sierra Leone",
         propertyImage: prop?.imageUrls?.[0] ?? "",
         isOwner: c.beneficiaryId === userId,
+        // the authorised listing agent on someone else's listing (agentId is the owner when no agent)
+        isAgent: c.agentId === userId && c.beneficiaryId !== userId,
       });
     }
 
-    const passesAsClient = await ctx.db.query("re_inspection_passes").withIndex("by_client", (q: any) => q.eq("clientId", userId)).collect();
-    const passesAsAgent = await ctx.db.query("re_inspection_passes").withIndex("by_agent", (q: any) => q.eq("agentId", userId)).collect();
+    const passesAsClient = await ctx.db.query("re_inspection_passes").withIndex("by_client", (q: any) => q.eq("clientId", userId)).order("desc").take(200);
+    const passesAsAgent = await ctx.db.query("re_inspection_passes").withIndex("by_agent", (q: any) => q.eq("agentId", userId)).order("desc").take(200);
     const passMap = new Map();
     for (const p of [...passesAsClient, ...passesAsAgent]) passMap.set(p._id, p);
     const allPasses = Array.from(passMap.values()).sort((a, b) => b.createdAt - a.createdAt);
@@ -1096,11 +1103,14 @@ export const getMyRealEstateEscrows = query({
       const isAgent = p.agentId === userId;
       // The verification secrets belong to the client: the agent must not see them.
       const { otpCode, qrHash, ...rest } = p;
+      // The agent running the tour sees the client's display name only (no contact details).
+      const client: any = isAgent ? await ctx.db.get(p.clientId) : null;
       hydratedPasses.push({
         ...rest,
         ...(isAgent ? {} : { otpCode, qrHash }),
         propertyTitle: prop?.title ?? "Property Tour",
         propertyImage: prop?.imageUrls?.[0] ?? "",
+        ...(isAgent ? { clientName: client?.name ?? "Client" } : {}),
         isAgent,
       });
     }

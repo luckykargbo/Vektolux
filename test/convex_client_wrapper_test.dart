@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -78,6 +80,84 @@ void main() {
       final transport = TrackingClient((_, __) async => ok(null));
       ConvexClientWrapper(deploymentUrl: 'https://test.invalid', httpClient: transport).dispose();
       expect(transport.closed, isFalse);
+    });
+  });
+
+  group('the session token is attached only to server functions that declare it', () {
+    Future<Map<String, dynamic>> sentArgs(String path, {String? token, Map<String, dynamic> args = const {}}) async {
+      late Map<String, dynamic> sent;
+      final transport = TrackingClient((_, request) async {
+        sent = Map<String, dynamic>.from((jsonDecode((request as http.Request).body) as Map)['args'] as Map);
+        return ok(null);
+      });
+      final client = ConvexClientWrapper(deploymentUrl: 'https://test.invalid', httpClient: transport);
+      if (token != null) client.setAuthToken(token);
+      await client.mutation(path, args: args);
+      return sent;
+    }
+
+    test('saved properties, view counting, viewing requests and the agent\'s listing actions carry the session', () async {
+      for (final path in [
+        'savedListings:toggleSavedListing',
+        'savedListings:getMySavedListingIds',
+        'savedListings:getMySavedListings',
+        'listingStats:recordPropertyView',
+        'bookings:createBooking',
+        'bookings:getMyViewingRequests',
+        'bookings:respondToViewingRequest',
+        'bookings:cancelBooking',
+        'realEstate:archivePropertyListing',
+        'realEstate:restorePropertyListing',
+        'realEstate:updatePropertyListing',
+      ]) {
+        expect((await sentArgs(path, token: 'sess_abc'))['sessionToken'], 'sess_abc', reason: path);
+      }
+    });
+
+    test('logged out: no session is sent', () async {
+      expect((await sentArgs('savedListings:toggleSavedListing')).containsKey('sessionToken'), isFalse);
+    });
+
+    test('a public function never receives one (Convex rejects arguments a function does not declare)', () async {
+      expect((await sentArgs('realEstate:listProperties', token: 'sess_abc')).containsKey('sessionToken'), isFalse);
+      expect((await sentArgs('realEstate:getPropertyById', token: 'sess_abc', args: {'listingId': 'p1'})), {'listingId': 'p1'});
+    });
+
+    test('a session the caller already put in the arguments is kept as given', () async {
+      final sent = await sentArgs('savedListings:toggleSavedListing', token: 'sess_abc', args: {'sessionToken': 'sess_other'});
+      expect(sent['sessionToken'], 'sess_other');
+    });
+
+    // Convex rejects an argument a function does not declare, so a function listed here that does not
+    // declare `sessionToken` would fail for every logged-in user. Checked against the server source.
+    test('every function in the allowlist exists on the server and declares sessionToken', () {
+      final wrapper = File('lib/core/network/convex_client_wrapper.dart').readAsStringSync();
+      final block = RegExp(r'_sessionTokenFunctions\s*=\s*\{(.*?)\n  \};', dotAll: true).firstMatch(wrapper)!.group(1)!;
+      final entries = RegExp(r"'([A-Za-z0-9_]+:[A-Za-z0-9_]+)'")
+          .allMatches(block.replaceAll(RegExp(r'//[^\n]*'), ''))
+          .map((m) => m.group(1)!)
+          .toList();
+      expect(entries.length, greaterThan(100), reason: 'the allowlist was found');
+
+      final problems = <String>[];
+      for (final entry in entries) {
+        final parts = entry.split(':');
+        final file = File('convex/${parts[0]}.ts');
+        if (!file.existsSync()) {
+          problems.add('$entry: there is no convex/${parts[0]}.ts');
+          continue;
+        }
+        final ts = file.readAsStringSync();
+        final declaration = RegExp('export const ${RegExp.escape(parts[1])}\\s*=\\s*\\w+\\(').firstMatch(ts);
+        if (declaration == null) {
+          problems.add('$entry: not exported by the server');
+          continue;
+        }
+        final stops = [ts.indexOf('handler:', declaration.end), ts.indexOf('export const', declaration.end)].where((i) => i != -1);
+        final end = stops.isEmpty ? ts.length : stops.reduce(math.min);
+        if (!ts.substring(declaration.end, end).contains('sessionToken')) problems.add('$entry: does not declare sessionToken');
+      }
+      expect(problems, isEmpty);
     });
   });
 }

@@ -18,6 +18,7 @@ import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
 import '../../../listings/presentation/views/vehicle_detail_screen.dart';
+import '../../../saved/presentation/saved_hearts.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
 
 class ExploreScreen extends StatefulWidget {
@@ -71,8 +72,8 @@ class _ExploreScreenState extends State<ExploreScreen> {
 
   // Followed agents set for optimistic UI updates
   final Set<String> _followingUserIds = {};
-  // Favorited listings set
-  final Set<String> _favoritedListingIds = {};
+  // The hearts: saved on the server against the signed-in account (not local state)
+  late final SavedHearts _hearts = SavedHearts.of(context);
 
   // 5 standard Category Shortcuts matching visual reference
   static const List<_ExploreCategoryItem> _categoryItems = [
@@ -107,12 +108,20 @@ class _ExploreScreenState extends State<ExploreScreen> {
   @override
   void initState() {
     super.initState();
+    _hearts.addListener(_onHeartsChanged);
+    _hearts.load();
     _loadExploreData();
     _fetchUnreadNotifications();
   }
 
+  void _onHeartsChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _hearts.removeListener(_onHeartsChanged);
+    _hearts.dispose();
     _searchController.dispose();
     _scrollController.dispose();
     _searchDebounce?.cancel();
@@ -324,14 +333,11 @@ class _ExploreScreenState extends State<ExploreScreen> {
   }
 
   // ── Toggle Favorite Listing ─────────────────────────────────────────
-  void _toggleFavorite(String listingId) {
-    setState(() {
-      if (_favoritedListingIds.contains(listingId)) {
-        _favoritedListingIds.remove(listingId);
-      } else {
-        _favoritedListingIds.add(listingId);
-      }
-    });
+  Future<void> _toggleFavorite(String listingId, String listingType) async {
+    final error = await _hearts.toggle(listingId, type: listingType);
+    if (error != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), behavior: SnackBarBehavior.floating));
+    }
   }
 
   // ── Navigation Helpers ──────────────────────────────────────────────
@@ -1201,6 +1207,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
     return _buildListingCard(
       width: width,
       id: id,
+      listingType: 'property',
       imageUrl: item['imageUrl'] as String?,
       fallbackIcon: Icons.home_work_outlined,
       isVerified: item['isVerified'] == true,
@@ -1235,6 +1242,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
     return _buildListingCard(
       width: width,
       id: id,
+      listingType: 'vehicle',
       imageUrl: item['imageUrl'] as String?,
       fallbackIcon: Icons.directions_car_outlined,
       isVerified: item['isVerified'] == true,
@@ -1253,6 +1261,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
   Widget _buildListingCard({
     required double width,
     required String id,
+    required String listingType,
     required String? imageUrl,
     required IconData fallbackIcon,
     required bool isVerified,
@@ -1264,7 +1273,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
     required List<_CardSpec> specs,
     required VoidCallback onTap,
   }) {
-    final isFavorited = _favoritedListingIds.contains(id);
+    final isFavorited = _hearts.isSaved(id);
     const radius = 16.0;
 
     Widget pill(String text, Color color, {IconData? icon, double radiusPx = 6}) => Container(
@@ -1311,7 +1320,8 @@ class _ExploreScreenState extends State<ExploreScreen> {
                     top: 8,
                     right: 8,
                     child: GestureDetector(
-                      onTap: () => _toggleFavorite(id),
+                      key: Key('heart-$id'),
+                      onTap: () => _toggleFavorite(id, listingType),
                       behavior: HitTestBehavior.opaque,
                       child: Container(
                         width: 26,

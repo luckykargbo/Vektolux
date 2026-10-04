@@ -10,6 +10,9 @@ import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { universalBookingType, paymentMethod } from "./schema";
 import { requireAdminSession, requireSelf } from "./lib/auth";
+import { isListingPublic, toPublicProperty } from "./lib/publicListing";
+import { activeListingAgent } from "./listingAgents";
+import { bumpListingCounter } from "./listingStats";
 import { FeeSnapshot, priceOrder } from "./lib/fees";
 import {
   BOOKING_RELEASE_DELAY_MS,
@@ -20,6 +23,41 @@ import {
   releaseBookingEscrow,
   settlementOf,
 } from "./lib/bookingEscrow";
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "10 Oct 2026, 14:30" — Sierra Leone time is GMT, so UTC is local time. */
+function formatWhen(ms: number): string {
+  const d = new Date(ms);
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${hh}:${mm}`;
+}
+
+async function notify(ctx: { db: any }, userId: string, title: string, body: string, screen: string, id: string) {
+  await ctx.db.insert("user_notifications", {
+    userId,
+    targetType: "single_user",
+    title,
+    body,
+    deepLinkScreen: screen,
+    deepLinkId: id,
+    read: false,
+    createdAt: Date.now(),
+  });
+}
+
+function publicLocationOf(listing: Doc<"realEstateListings">): string {
+  return String(toPublicProperty(listing).publicLocation ?? "Sierra Leone");
+}
+
+/** Owner of the listing, or its active owner-authorised agent: the people who manage site visits. */
+async function siteVisitManager(ctx: { db: any }, booking: Doc<"bookings">, callerId: Id<"users">, now = Date.now()) {
+  const isOwner = booking.vendorId === (callerId as string);
+  const agent = booking.listingType === "property" ? await activeListingAgent(ctx, "property", booking.listingId, now) : null;
+  const isAgent = !!agent && agent.agentId === callerId;
+  return { isOwner, isAgent, agentId: agent?.agentId ?? null };
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 //                        CREATE BOOKING
@@ -56,23 +94,30 @@ export const createBooking = mutation({
   }),
   handler: async (ctx, args) => {
     // Identity, vendor and price are all decided by the SERVER, never by the client.
-    const { userId: buyerUserId } = await requireSelf(ctx, args.sessionToken, args.buyerId);
+    const { userId: buyerUserId, user: buyer } = await requireSelf(ctx, args.sessionToken, args.buyerId);
     if (!(args.endTime > args.startTime)) throw new Error("End time must be after start time.");
 
     let vendorUserId: string;
     let serverRate: number | undefined;
+    let listingTitle: string;
     if (args.listingType === "property") {
       const propId = ctx.db.normalizeId("realEstateListings", args.listingId);
       const prop = propId ? await ctx.db.get(propId) : null;
-      if (!prop) throw new Error("Listing not found.");
+      // Only public listings can be booked (not drafts, listings under review, rejected or removed).
+      if (!prop || !isListingPublic(prop)) throw new Error("Listing not found.");
       vendorUserId = prop.ownerId as string;
       serverRate = prop.hourlyRate;
+      listingTitle = prop.title;
     } else {
       const vehId = ctx.db.normalizeId("vehicleListings", args.listingId);
       const veh = vehId ? await ctx.db.get(vehId) : null;
-      if (!veh) throw new Error("Listing not found.");
+      if (!veh || veh.isDeleted === true) throw new Error("Listing not found.");
       vendorUserId = veh.ownerId as string;
       serverRate = veh.pricePerDay;
+      listingTitle = veh.title;
+    }
+    if (args.bookingType === "property_inspection" && args.listingType !== "property") {
+      throw new Error("A property site visit needs a property listing.");
     }
     if (vendorUserId === (buyerUserId as string)) throw new Error("You cannot book your own listing.");
 
@@ -83,6 +128,7 @@ export const createBooking = mutation({
       .filter((q) =>
         q.and(
           q.neq(q.field("status"), "cancelled"),
+          q.neq(q.field("status"), "declined"),
           q.lt(q.field("startTime"), args.endTime),
           q.gt(q.field("endTime"), args.startTime)
         )
@@ -102,7 +148,7 @@ export const createBooking = mutation({
     let serviceFee = 0;
     let fees: FeeSnapshot | undefined;
     let totalAmount = 0;
-    let status: "pending_payment" | "confirmed" = "pending_payment";
+    let status: "requested" | "pending_payment" | "confirmed" = "pending_payment";
     let paymentStatus: "pending" | "completed" = "pending";
 
     // 2. Financial calculation per booking type
@@ -110,11 +156,12 @@ export const createBooking = mutation({
       args.bookingType === "property_inspection" ||
       args.bookingType === "vehicle_inspection"
     ) {
-      // Free complimentary inspection
+      // Free complimentary inspection. A property site visit is a REQUEST: the owner or the
+      // listing's authorised agent accepts or declines it (respondToViewingRequest).
       subtotal = 0;
       serviceFee = 0;
       totalAmount = 0;
-      status = "confirmed";
+      status = args.bookingType === "property_inspection" ? "requested" : "confirmed";
       paymentStatus = "completed";
     } else if (args.bookingType === "hourly_guesthouse") {
       const hours =
@@ -153,10 +200,11 @@ export const createBooking = mutation({
     const bookingId = await ctx.db.insert("bookings", {
       listingId: args.listingId,
       listingType: args.listingType,
-      listingTitle: args.listingTitle,
+      // Server values only: the listing's own title and the buyer's own account details.
+      listingTitle,
       buyerId: buyerUserId as string,
-      buyerName: args.buyerName,
-      buyerPhone: args.buyerPhone,
+      buyerName: buyer.name,
+      buyerPhone: buyer.phone && buyer.phone.trim() !== "+232" ? buyer.phone : undefined,
       vendorId: vendorUserId,
       bookingType: args.bookingType,
       status,
@@ -171,10 +219,21 @@ export const createBooking = mutation({
       paymentStatus,
       paymentMethod: args.paymentMethod,
       txRef,
-      notes: args.notes,
+      notes: args.notes?.trim().slice(0, 500) || undefined,
       ...(fees ? { feeSnapshot: fees } : {}),
       updatedAt: now,
     });
+
+    if (args.bookingType === "property_inspection") {
+      await bumpListingCounter(ctx, args.listingId, "viewingRequestCount");
+      const when = formatWhen(args.startTime);
+      await notify(ctx, buyerUserId as string, "Viewing request sent", `"${listingTitle}" on ${when}. Waiting for the agent to confirm.`, "bookings", bookingId as string);
+      const agent = await activeListingAgent(ctx, "property", args.listingId, now);
+      const managers = new Set<string>([vendorUserId, ...(agent ? [agent.agentId as string] : [])]);
+      for (const m of managers) {
+        await notify(ctx, m, "New viewing request", `${buyer.name} wants to view "${listingTitle}" on ${when}.`, "viewings", bookingId as string);
+      }
+    }
 
     // (Bookings are paid through payments.createEscrowPayment — wallet escrow, split from the
     // booking's fee snapshot — or Monime. No payment-intent record is created any more.)
@@ -207,7 +266,8 @@ export const getUserBookings = query({
     const list = await ctx.db
       .query("bookings")
       .withIndex("by_buyer", (q) => q.eq("buyerId", args.buyerId))
-      .collect();
+      .order("desc")
+      .take(300);
 
     // Order descending by start time
     return list.sort((a, b) => b.startTime - a.startTime);
@@ -229,7 +289,8 @@ export const getVendorBookings = query({
     const list = await ctx.db
       .query("bookings")
       .withIndex("by_vendor", (q) => q.eq("vendorId", args.vendorId))
-      .collect();
+      .order("desc")
+      .take(300);
 
     return list.sort((a, b) => b.startTime - a.startTime);
   },
@@ -277,10 +338,18 @@ export const cancelBooking = mutation({
     if (!booking) throw new Error("Booking not found");
     const caller = userId as string;
     const isBuyer = booking.buyerId === caller;
-    const isVendor = booking.vendorId === caller;
+    const isSiteVisit = booking.bookingType === "property_inspection" && booking.listingType === "property";
+    const manager = isSiteVisit ? await siteVisitManager(ctx, booking, userId) : null;
+    // The listing's authorised agent may cancel a (free) site visit like the owner.
+    const isVendor = booking.vendorId === caller || (manager?.isAgent ?? false);
     if (!isBuyer && !isVendor) throw new Error("You are not authorized to cancel this booking");
     if (booking.status === "completed") throw new Error("Cannot cancel an already completed booking");
     if (booking.status === "cancelled") throw new Error("This booking is already cancelled");
+    if (booking.status === "declined") throw new Error("This viewing request was declined.");
+    if (booking.status === "requested" && !isBuyer) {
+      // A request is answered, not cancelled: accept or decline it (with a reason).
+      throw new Error("Accept or decline this viewing request instead.");
+    }
 
     const state = settlementOf(booking);
     const reason = (args.reason ?? "").trim() || (isBuyer ? "Cancelled by the buyer" : "Cancelled by the vendor");
@@ -298,8 +367,161 @@ export const cancelBooking = mutation({
 
     // Not paid: nothing to refund.
     const now = Date.now();
-    await ctx.db.patch(id, { status: "cancelled", cancelledAt: now, cancelReason: reason.slice(0, 500), updatedAt: now });
+    const cancelReason = booking.status === "requested" && isBuyer ? "Request withdrawn by the client" : reason;
+    await ctx.db.patch(id, { status: "cancelled", cancelledAt: now, cancelReason: cancelReason.slice(0, 500), updatedAt: now });
+    if (isSiteVisit) {
+      // The other side of a site visit is told (the client, or the owner and the authorised agent).
+      const when = formatWhen(booking.startTime);
+      if (isBuyer) {
+        const others = new Set<string>([booking.vendorId, ...(manager?.agentId ? [manager.agentId as string] : [])]);
+        for (const o of others) {
+          await notify(ctx, o, "Viewing cancelled", `The client cancelled the visit to "${booking.listingTitle}" on ${when}.`, "viewings", booking._id as string);
+        }
+      } else {
+        await notify(
+          ctx,
+          booking.buyerId,
+          "Viewing cancelled",
+          `Your visit to "${booking.listingTitle}" on ${when} was cancelled: ${cancelReason.slice(0, 200)}`,
+          "bookings",
+          booking._id as string
+        );
+      }
+    }
     return { success: true, refunded: 0 };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//            SITE-VISIT REQUESTS (owner / authorised agent decides)
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Accept or decline a free property site-visit request. Only the listing's owner or its active
+ * owner-authorised agent may answer, only while it is still "requested" (a transaction: a second
+ * answer, or a race between two, is refused). Declining needs a reason. The client is notified.
+ */
+export const respondToViewingRequest = mutation({
+  args: {
+    sessionToken: v.optional(v.string()),
+    bookingId: v.string(),
+    decision: v.union(v.literal("accept"), v.literal("decline")),
+    reason: v.optional(v.string()),
+  },
+  returns: v.object({ status: v.string() }),
+  handler: async (ctx, args) => {
+    const { userId } = await requireSelf(ctx, args.sessionToken);
+    const booking = await loadBooking(ctx, args.bookingId);
+    if (booking.bookingType !== "property_inspection" || booking.listingType !== "property") {
+      throw new Error("Only property site-visit requests can be accepted or declined.");
+    }
+    const now = Date.now();
+    const { isOwner, isAgent } = await siteVisitManager(ctx, booking, userId, now);
+    if (!isOwner && !isAgent) throw new Error("You can only answer viewing requests for listings you manage.");
+    if (booking.buyerId === (userId as string)) throw new Error("You cannot answer your own viewing request.");
+    if (booking.status !== "requested") {
+      throw new Error(
+        booking.status === "confirmed"
+          ? "This request was already accepted."
+          : booking.status === "declined"
+            ? "This request was already declined."
+            : "This request can no longer be answered."
+      );
+    }
+    const when = formatWhen(booking.startTime);
+    if (args.decision === "accept") {
+      if (booking.endTime <= now) throw new Error("The requested time has already passed. Decline the request instead.");
+      await ctx.db.patch(booking._id, { status: "confirmed", acceptedAt: now, acceptedBy: userId, updatedAt: now });
+      await notify(ctx, booking.buyerId, "Your viewing request has been accepted.", `"${booking.listingTitle}" on ${when}.`, "bookings", booking._id as string);
+      return { status: "confirmed" };
+    }
+    const reason = (args.reason ?? "").trim();
+    if (reason.length < 3) throw new Error("Please give a reason for declining.");
+    await ctx.db.patch(booking._id, {
+      status: "declined",
+      declinedAt: now,
+      declinedBy: userId,
+      declineReason: reason.slice(0, 500),
+      updatedAt: now,
+    });
+    await notify(
+      ctx,
+      booking.buyerId,
+      "Your viewing request was declined.",
+      `"${booking.listingTitle}" on ${when}: ${reason.slice(0, 200)}`,
+      "bookings",
+      booking._id as string
+    );
+    return { status: "declined" };
+  },
+});
+
+/**
+ * Site-visit requests on the listings the caller manages: their own listings and the listings an
+ * owner currently authorises them to represent. The client's phone is shared only once a visit
+ * is accepted.
+ */
+export const getMyViewingRequests = query({
+  args: { sessionToken: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const { userId } = await requireSelf(ctx, args.sessionToken);
+    const me = userId as string;
+    const rows = new Map<string, { b: Doc<"bookings">; representing: boolean }>();
+    const own = await ctx.db
+      .query("bookings")
+      .withIndex("by_vendor", (q) => q.eq("vendorId", me))
+      .order("desc")
+      .take(300);
+    for (const b of own) rows.set(b._id as string, { b, representing: false });
+
+    const auths = await ctx.db
+      .query("listing_agent_authorizations")
+      .withIndex("by_agent", (q) => q.eq("agentId", userId))
+      .take(100);
+    for (const a of auths) {
+      if (a.listingType !== "property" || a.status !== "active") continue;
+      const link = await activeListingAgent(ctx, "property", a.listingId);
+      if (!link || link.agentId !== userId) continue;
+      const list = await ctx.db
+        .query("bookings")
+        .withIndex("by_listing", (q) => q.eq("listingId", a.listingId))
+        .order("desc")
+        .take(100);
+      for (const b of list) if (!rows.has(b._id as string)) rows.set(b._id as string, { b, representing: true });
+    }
+
+    const out = [];
+    for (const { b, representing } of rows.values()) {
+      if (b.bookingType !== "property_inspection" || b.listingType !== "property") continue;
+      const propId = ctx.db.normalizeId("realEstateListings", b.listingId);
+      const listing = propId ? await ctx.db.get(propId) : null;
+      const clientId = ctx.db.normalizeId("users", b.buyerId);
+      const client = clientId ? await ctx.db.get(clientId) : null;
+      const cover = (listing?.imageUrls ?? []).find((u) => typeof u === "string" && u.startsWith("http")) ?? null;
+      out.push({
+        id: b._id as string,
+        listingId: b.listingId,
+        listingTitle: listing?.title ?? b.listingTitle,
+        listingImage: cover,
+        publicLocation: listing ? publicLocationOf(listing) : null,
+        representing,
+        clientName: client?.name ?? b.buyerName ?? "Client",
+        clientAvatarUrl: client?.avatarUrl ?? null,
+        clientPhone: b.status === "confirmed" ? (b.buyerPhone ?? null) : null,
+        status: b.status,
+        startTime: b.startTime,
+        endTime: b.endTime,
+        notes: b.notes ?? null,
+        declineReason: b.declineReason ?? null,
+        cancelReason: b.cancelReason ?? null,
+        acceptedAt: b.acceptedAt ?? null,
+        declinedAt: b.declinedAt ?? null,
+        cancelledAt: b.cancelledAt ?? null,
+        requestedAt: b._creationTime,
+      });
+    }
+    out.sort((x, y) => x.startTime - y.startTime);
+    return out;
   },
 });
 

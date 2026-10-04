@@ -10,9 +10,9 @@ import { issueSession } from "./lib/session";
 import { v } from "convex/values";
 import { userRole } from "./schema";
 import { verifyPassword } from "./auth";
-import { isRoleApproved, roleForApplication } from "./lib/permissions";
+import { hasCarDealerCapability, isRoleApproved, professionalBadge, professionalTitle, roleForApplication } from "./lib/permissions";
 import { requireAuthenticatedUser, requireAdmin, requireSelf, resolveOptionalUser } from "./lib/auth";
-import { toPublicProperty, toPublicVehicle } from "./lib/publicListing";
+import { isListingPublic, toPublicProperty, toPublicVehicle } from "./lib/publicListing";
 
 // ═══════════════════════════════════════════════════════════════════════
 //                        GET USER BY ID
@@ -494,6 +494,10 @@ export const applyRoleUpgrade = mutation({
     if (roleForApplication(targetRole) === user.role && isRoleApproved(user)) {
       return { success: false, errorCode: "ALREADY_GRANTED", message: "Your account already has this role." };
     }
+    // Car Dealer held as an add-on to the Real Estate Agent role counts as granted too.
+    if (targetRole === "dealer" && hasCarDealerCapability(user)) {
+      return { success: false, errorCode: "ALREADY_GRANTED", message: "Your account is already an approved Car Dealer." };
+    }
     const now = Date.now();
     const appId = await ctx.db.insert("role_applications", {
       userId,
@@ -529,10 +533,14 @@ export const getUserProfile = query({
     if (!user) return null;
 
     const isVerifiedSeller = isUserVerifiedSeller(user);
+    const badge = await professionalBadge(ctx, user);
 
     return {
       _id: user._id,
       name: user.name,
+      // Server-derived professional identity, e.g. "Real Estate Agent & Car Dealer".
+      professionalTitle: professionalTitle(user),
+      verifiedAgent: badge.verifiedAgent,
       email: isSelf ? user.email : undefined,
       phone: isSelf ? user.phone : undefined,
       avatarUrl: user.avatarUrl,
@@ -566,8 +574,11 @@ export const getUserPosts = query({
 
     const combined = [
       // Public profile view: never private phone / street address / coordinates.
-      ...realEstate.filter((r) => r.isDeleted !== true).map((r) => ({ ...toPublicProperty(r), type: "property" })),
-      ...vehicles.filter((v) => v.isDeleted !== true).map((v) => ({ ...toPublicVehicle(v), type: "vehicle" })),
+      // Public listings only: no drafts, listings under review, rejected, archived or removed ones.
+      ...realEstate.filter((r) => isListingPublic(r)).map((r) => ({ ...toPublicProperty(r), type: "property" })),
+      ...vehicles
+        .filter((v) => v.isDeleted !== true && v.isPublished !== false && v.status !== "TAKEN_DOWN")
+        .map((v) => ({ ...toPublicVehicle(v), type: "vehicle" })),
     ];
 
     combined.sort((a: any, b: any) => b._creationTime - a._creationTime);

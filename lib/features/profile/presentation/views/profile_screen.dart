@@ -25,8 +25,12 @@ import '../../../admin/presentation/views/admin_dashboard_screen.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/my_listings_screen.dart';
+import '../../../agent/presentation/views/viewing_requests_entry.dart';
+import '../../../bookings/presentation/views/my_bookings_screen.dart';
 import '../../../messaging/data/messaging_api.dart';
 import '../../../messaging/presentation/buyer_messaging.dart';
+import '../../../saved/data/saved_listings_api.dart';
+import '../../../saved/presentation/saved_properties_screen.dart';
 import '../../../auth/presentation/views/pending_verification_screen.dart';
 import '../../../verification/presentation/views/agent_verification_screen.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
@@ -115,7 +119,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final data = profileRes.value as Map;
         final propRes = await client.query(
           'realEstate:getMyPropertyListings',
-          args: {'userId': userId},
+          args: {'ownerId': userId},
         );
         if (!mounted) return;
         setState(() {
@@ -141,7 +145,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
       final propRes = await client.query(
         'realEstate:getMyPropertyListings',
-        args: {'userId': userId},
+        args: {'ownerId': userId},
       );
       if (!mounted) return;
       setState(() {
@@ -1661,30 +1665,67 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: 18),
                 ],
 
-                // ── 1B2. Messages (conversations about listings, both directions) ──
+                // ── 1B2. My activity: conversations, saved properties, viewing requests ──
                 if (user != null) ...[
-                  _buildSectionHeader('MESSAGES'),
+                  _buildSectionHeader('MY ACTIVITY'),
                   Container(
                     decoration: BoxDecoration(
                       color: AppColors.white,
                       borderRadius: BorderRadius.circular(18),
                       border: Border.all(color: AppColors.border),
                     ),
-                    child: _buildSettingsTile(
-                      key: const Key('profile-messages'),
-                      icon: Icons.chat_bubble_outline_rounded,
-                      title: 'Messages',
-                      subtitle: 'Your conversations about properties',
-                      onTap: () {
-                        final client = context.read<ConvexClientWrapper>();
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => MessagesInboxScreen(
-                              api: MessagingApi(client: client, userId: user.id, sessionToken: user.sessionToken),
-                            ),
-                          ),
-                        );
-                      },
+                    child: Column(
+                      children: [
+                        _buildSettingsTile(
+                          key: const Key('profile-messages'),
+                          icon: Icons.chat_bubble_outline_rounded,
+                          title: 'Messages',
+                          subtitle: 'Your conversations about properties',
+                          onTap: () {
+                            final client = context.read<ConvexClientWrapper>();
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => MessagesInboxScreen(
+                                  api: MessagingApi(client: client, userId: user.id, sessionToken: user.sessionToken),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                        const Divider(height: 1, indent: 56),
+                        _buildSettingsTile(
+                          key: const Key('profile-saved'),
+                          icon: Icons.favorite_border_rounded,
+                          title: 'Saved Properties',
+                          subtitle: 'Properties you saved with the heart',
+                          onTap: () {
+                            final client = context.read<ConvexClientWrapper>();
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => SavedPropertiesScreen(
+                                  api: SavedListingsApi(client: client, sessionToken: user.sessionToken),
+                                  client: client,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                        const Divider(height: 1, indent: 56),
+                        _buildSettingsTile(
+                          key: const Key('profile-viewings'),
+                          icon: Icons.event_available_outlined,
+                          title: 'My Viewings',
+                          subtitle: 'Your viewing requests and their answers',
+                          onTap: () {
+                            final client = context.read<ConvexClientWrapper>();
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => MyBookingsScreen(convexClient: client, currentUser: user, viewingsOnly: true),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 18),
@@ -1721,6 +1762,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   ),
                                 ),
                               );
+                            }
+                          },
+                        ),
+                        const Divider(height: 1, indent: 56),
+                        _buildSettingsTile(
+                          key: const Key('profile-viewing-requests'),
+                          icon: Icons.event_available_outlined,
+                          title: 'Viewing Requests',
+                          subtitle: 'Accept or decline visits to your properties',
+                          onTap: () {
+                            if (user != null) {
+                              openViewingRequests(context, client: context.read<ConvexClientWrapper>(), user: user);
                             }
                           },
                         ),
@@ -2179,35 +2232,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 18),
                 ],
-
-                // ── 3. Saved Addresses / Places ─────────────────────
-                _buildSectionHeader('SAVED ADDRESSES'),
-                Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.white,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: Column(
-                    children: [
-                      _buildSettingsTile(
-                        icon: Icons.home_outlined,
-                        title: 'Home',
-                        subtitle: 'Freetown, Sierra Leone (Default)',
-                        onTap: () {},
-                      ),
-                      const Divider(height: 1, indent: 56),
-                      _buildSettingsTile(
-                        icon: Icons.work_outline,
-                        title: 'Work / Office',
-                        subtitle: 'Central Business District, Freetown',
-                        onTap: () {},
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 18),
 
                 // ── 4. Escrow Wallet Hero Card ───────────────────────
                 _buildSectionHeader('PAYMENTS'),

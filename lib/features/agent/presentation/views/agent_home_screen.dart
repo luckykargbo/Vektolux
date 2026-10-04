@@ -13,6 +13,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/verified_badge.dart';
 import '../../../../core/widgets/vektolux_avatar.dart';
+import '../../../messaging/presentation/conversation_tile.dart';
 import '../../domain/agent_models.dart';
 import '../bloc/agent_workspace_cubit.dart';
 import '../widgets/agent_ui.dart';
@@ -49,6 +50,8 @@ class AgentHomeScreen extends StatelessWidget {
                   const SizedBox(height: 16),
                   _PerformanceCards(state: s),
                   const SizedBox(height: AgentTokens.gap),
+                  _ViewingRequestsCard(state: s),
+                  const SizedBox(height: AgentTokens.gap),
                   _KpiStrip(state: s),
                   const SizedBox(height: AgentTokens.gap),
                   _EarningsCard(state: s),
@@ -61,10 +64,17 @@ class AgentHomeScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   _RecentListings(state: s),
+                  ..._recentInquiries(context, s),
                   const SizedBox(height: AgentTokens.sectionGap),
                   const AgentSectionHeader(title: 'Quick Actions'),
                   const SizedBox(height: 10),
                   _QuickActions(state: s),
+                  if (s.status.showAutoTools) ...[
+                    const SizedBox(height: AgentTokens.sectionGap),
+                    const AgentSectionHeader(title: 'Auto'),
+                    const SizedBox(height: 10),
+                    const _AutoTools(),
+                  ],
                 ],
               ),
             ),
@@ -90,11 +100,35 @@ class AgentHomeScreen extends StatelessWidget {
         ),
       ];
 
+  /// The latest conversations with clients (real threads, newest activity first).
+  List<Widget> _recentInquiries(BuildContext context, AgentWorkspaceState s) {
+    final list = s.conversations.data;
+    if (list == null || list.isEmpty) return const [];
+    return [
+      const SizedBox(height: AgentTokens.sectionGap),
+      AgentSectionHeader(
+        title: 'Recent Inquiries',
+        actionLabel: 'See All',
+        onAction: () => AgentShellScope.of(context).openTab(AgentTab.messages),
+      ),
+      const SizedBox(height: 6),
+      AgentCard(
+        key: const Key('agent-recent-inquiries'),
+        padding: EdgeInsets.zero,
+        child: Column(
+          children: [
+            for (final c in list.take(3)) ConversationTile(conversation: c, onTap: () => openConversation(context, c.id)),
+          ],
+        ),
+      ),
+    ];
+  }
+
   List<Widget> _nextViewing(BuildContext context, AgentWorkspaceState s) {
     final now = DateTime.now();
-    final upcoming = (s.viewings.data ?? const <ViewingRequest>[]).where((v) => v.tabAt(now) == ViewingTab.upcoming).toList();
-    if (upcoming.isEmpty) return const [];
-    final next = upcoming.first;
+    final next = s.nextViewing(now);
+    if (next == null) return const [];
+    final more = (s.viewings.data ?? const <ViewingRequest>[]).where((v) => v.isConfirmed && !v.isExpired(now)).length - 1;
     return [
       const SizedBox(height: AgentTokens.gap),
       AgentCard(
@@ -119,7 +153,7 @@ class AgentHomeScreen extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: AppColors.obsidian)),
                   Text(
-                    '${next.typeLabel} · ${DateFormat('EEE d MMM, h:mm a').format(DateTime.fromMillisecondsSinceEpoch(next.startTime))}',
+                    '${next.clientName} · ${DateFormat('EEE d MMM, h:mm a').format(DateTime.fromMillisecondsSinceEpoch(next.startTime))}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 12, color: AppColors.gray500),
@@ -127,9 +161,9 @@ class AgentHomeScreen extends StatelessWidget {
                 ],
               ),
             ),
-            if (upcoming.length > 1) ...[
+            if (more > 0) ...[
               const SizedBox(width: 8),
-              AgentPill(label: '+${upcoming.length - 1}', background: AppColors.infoLight, foreground: AgentTokens.rentBlue),
+              AgentPill(label: '+$more', background: AppColors.infoLight, foreground: AgentTokens.rentBlue),
             ],
             const Icon(Icons.chevron_right_rounded, color: AppColors.gray400),
           ],
@@ -182,7 +216,13 @@ class AgentProfileHeader extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 2),
-              const Text('Real Estate Agent', style: TextStyle(fontSize: 12.5, color: AppColors.gray500, fontWeight: FontWeight.w500)),
+              Text(
+                state.status.professionalTitle,
+                key: const Key('agent-header-title'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12.5, color: AppColors.gray500, fontWeight: FontWeight.w500),
+              ),
               if (label != null) ...[
                 const SizedBox(height: 6),
                 AgentPill(
@@ -391,16 +431,16 @@ class _KpiStrip extends StatelessWidget {
         const Key('agent-kpi-active'),
         Icons.check_circle_outline_rounded,
         AppColors.emeraldDark,
-        listings?.where((l) => l.liveStatus == ListingLiveStatus.live).length,
+        listings?.where((l) => l.status == ListingStatus.active).length,
         'Active',
         () => scope.openTab(AgentTab.listings),
       ),
       (
-        const Key('agent-kpi-unpublished'),
-        Icons.visibility_off_outlined,
+        const Key('agent-kpi-review'),
+        Icons.hourglass_top_rounded,
         AppColors.amberDark,
-        listings?.where((l) => !l.isPublished).length,
-        'Unpublished',
+        listings?.where((l) => l.status == ListingStatus.pendingReview).length,
+        'In review',
         () => scope.openTab(AgentTab.listings),
       ),
       (
@@ -608,8 +648,8 @@ class AgentListingTile extends StatelessWidget {
             runSpacing: 4,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              AgentStatusPill(status: listing.liveStatus),
-              if (inquiries > 0) AgentInquiryChip(count: inquiries),
+              AgentStatusPill(status: listing.status),
+              if ((listing.inquiryCount ?? inquiries) > 0) AgentInquiryChip(count: listing.inquiryCount ?? inquiries),
             ],
           ),
         ],
@@ -629,7 +669,7 @@ class _QuickActions extends StatelessWidget {
       (Icons.add_home_outlined, 'Add Property', () => openAddListing(context), 0),
       (Icons.home_work_outlined, 'My Listings', () => scope.openTab(AgentTab.listings), 0),
       (Icons.chat_bubble_outline_rounded, 'Messages', () => scope.openTab(AgentTab.messages), state.unreadMessages),
-      (Icons.event_available_outlined, 'Viewings', () => openViewings(context), state.upcomingViewingsAt(DateTime.now())),
+      (Icons.event_available_outlined, 'Viewings', () => openViewings(context), state.pendingViewings),
       (Icons.notifications_none_rounded, 'Notifications', () => scope.openTab(AgentTab.notifications), state.unreadCount),
     ];
     // Five actions: all built (a plain scrolling row), so every one is reachable at any width.
@@ -679,6 +719,85 @@ class _QuickActions extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// "Viewing Requests · N Pending" — the real count of site-visit requests waiting for an answer.
+class _ViewingRequestsCard extends StatelessWidget {
+  final AgentWorkspaceState state;
+  const _ViewingRequestsCard({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final cubit = context.read<AgentWorkspaceCubit>();
+    final loaded = state.viewings.data != null;
+    final failed = !loaded && state.viewings.error != null;
+    final pending = state.pendingViewings;
+    return AgentCard(
+      key: const Key('agent-viewing-requests'),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      onTap: () => failed ? cubit.loadViewings() : openViewings(context),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(color: AppColors.infoLight, borderRadius: BorderRadius.circular(12)),
+            child: const Icon(Icons.event_available_outlined, color: AgentTokens.rentBlue, size: 23),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text('Viewing Requests',
+                maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: AppColors.obsidian)),
+          ),
+          const SizedBox(width: 8),
+          if (loaded)
+            AgentPill(
+              key: const Key('agent-viewing-pending'),
+              label: '$pending Pending',
+              background: pending > 0 ? AppColors.amberSurface : AppColors.gray100,
+              foreground: pending > 0 ? AppColors.amberDark : AppColors.gray600,
+            )
+          else if (failed)
+            const Icon(Icons.refresh_rounded, color: AppColors.gray400)
+          else
+            const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.emerald)),
+          const Icon(Icons.chevron_right_rounded, color: AppColors.gray400),
+        ],
+      ),
+    );
+  }
+}
+
+/// Add / manage vehicles — shown only to an account the server approved as a Car Dealer.
+class _AutoTools extends StatelessWidget {
+  const _AutoTools();
+
+  @override
+  Widget build(BuildContext context) {
+    Widget tile(Key key, IconData icon, String label, VoidCallback onTap) => Expanded(
+          child: AgentCard(
+            key: key,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+            onTap: onTap,
+            child: Row(
+              children: [
+                Icon(icon, color: AppColors.emeraldDark, size: 22),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: AppColors.obsidian)),
+                ),
+              ],
+            ),
+          ),
+        );
+    return Row(
+      children: [
+        tile(const Key('agent-auto-add'), Icons.add_circle_outline_rounded, 'Add Vehicle', () => openAddVehicle(context)),
+        const SizedBox(width: AgentTokens.gap),
+        tile(const Key('agent-auto-list'), Icons.directions_car_outlined, 'My Vehicles', () => openMyVehicles(context)),
+      ],
     );
   }
 }

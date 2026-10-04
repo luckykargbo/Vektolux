@@ -12,6 +12,8 @@ import { requireSelf } from "./lib/auth";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { isListingPublic } from "./lib/publicListing";
+import { bumpListingCounter } from "./listingStats";
 
 // ═══════════════════════════════════════════════════════════════════════
 //                       SHARED ADMIN VALIDATION
@@ -1537,7 +1539,8 @@ export const submitContactRequest = mutation({
       const propId = ctx.db.normalizeId("realEstateListings", args.listingId);
       if (!propId) throw new Error("Property listing not found.");
       const listing = await ctx.db.get(propId);
-      if (!listing || listing.isDeleted === true) throw new Error("Property listing not found.");
+      // Only public listings take inquiries (not drafts, listings under review, rejected or removed).
+      if (!listing || !isListingPublic(listing)) throw new Error("Property listing not found.");
       sellerId = listing.ownerId;
       listingTitle = listing.title;
     } else {
@@ -1585,6 +1588,7 @@ export const submitContactRequest = mutation({
       buyerUnread: 0,
       sellerUnread: 1,
     });
+    if (args.listingType === "property") await bumpListingCounter(ctx, args.listingId, "inquiryCount");
     await ctx.db.insert("user_notifications", {
       userId: sellerId as string,
       targetType: "single_user",

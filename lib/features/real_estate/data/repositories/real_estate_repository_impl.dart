@@ -114,7 +114,7 @@ class RealEstateRepositoryImpl implements RealEstateRepository {
     );
     final value = result.value;
     if (!result.success || value is! Map || value['bookingId'] == null) {
-      throw Exception(result.errorMessage ?? 'The visit could not be booked.');
+      throw Exception(result.errorMessage ?? 'The viewing request could not be sent.');
     }
     _localBookedSlotsMap.putIfAbsent(dateKey, () => {}).add(timeSlotLabel);
     return value['bookingId'].toString();

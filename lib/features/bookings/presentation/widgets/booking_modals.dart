@@ -92,8 +92,9 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
       );
       final endDateTime = startDateTime.add(const Duration(hours: 1));
 
-      // 1. Convex Mutation
-      await widget.convexClient.mutation(
+      // 1. Convex Mutation. The request counts as sent only when the server accepted it: it can refuse
+      // (the listing is no longer public, that slot is taken, it is the user's own listing …).
+      final res = await widget.convexClient.mutation(
         'bookings:createBooking',
         args: {
           'listingId': widget.property.id,
@@ -111,14 +112,14 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
               : _notesController.text.trim(),
         },
       );
-
+      if (!res.success) throw Exception(res.errorMessage ?? 'Please try again.');
 
       if (mounted) {
         Navigator.of(context).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Site visit booked for ${DateFormat('EEE, MMM d').format(_selectedDate)} at $_selectedTimeSlot!',
+              'Viewing request sent for ${DateFormat('EEE, MMM d').format(_selectedDate)} at $_selectedTimeSlot. Waiting for the agent to confirm.',
             ),
             backgroundColor: AppColors.emerald,
             behavior: SnackBarBehavior.floating,
@@ -129,7 +130,7 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Booking error: ${e.toString().replaceAll("Exception: ", "")}'),
+            content: Text('Request not sent: ${e.toString().replaceAll("Exception: ", "")}'),
             backgroundColor: AppColors.error,
             behavior: SnackBarBehavior.floating,
           ),
@@ -160,7 +161,8 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
         top: 20,
         bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
-      child: Column(
+      child: SingleChildScrollView(
+       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -181,14 +183,19 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Schedule Site Visit',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: primaryTextColor,
+              Expanded(
+                child: Text(
+                  'Request a Viewing',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: primaryTextColor,
+                  ),
                 ),
               ),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
@@ -342,7 +349,7 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
                       ),
                     )
                   : const Text(
-                      'Confirm Free Inspection',
+                      'Send Viewing Request',
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
@@ -351,6 +358,7 @@ class _PropertyInspectionModalState extends State<PropertyInspectionModal> {
             ),
           ),
         ],
+       ),
       ),
     );
   }

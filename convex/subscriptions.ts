@@ -21,6 +21,8 @@ import {
   postingPermission,
   professionalBadge,
   SubscriptionRole,
+  hasCarDealerCapability,
+  professionalTitle,
 } from "./lib/permissions";
 
 const RENEWAL_WINDOW_MS = 72 * 60 * 60 * 1000; // 72 Hours
@@ -432,6 +434,9 @@ export const getMyProfessionalStatus = query({
     return {
       role,
       roleApproved: isRoleApproved(user),
+      // Separately approved capabilities and the resulting professional identity (server-derived).
+      isCarDealer: hasCarDealerCapability(user),
+      professionalTitle: professionalTitle(user),
       ...badge,
       hasActiveSubscription,
       isInGracePeriod,

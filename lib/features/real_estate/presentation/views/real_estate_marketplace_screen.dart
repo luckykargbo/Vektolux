@@ -18,6 +18,7 @@ import '../../../auth/domain/entities/user_entity.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
+import '../../../saved/presentation/saved_hearts.dart';
 import 'my_real_estate_escrows_screen.dart';
 
 class RealEstateMarketplaceScreen extends StatefulWidget {
@@ -57,8 +58,8 @@ class _RealEstateMarketplaceScreenState
   // Search
   String _searchQuery = '';
 
-  // Favorites (optimistic local state)
-  final Set<String> _favoritedIds = {};
+  // The hearts: saved on the server against the signed-in account (not local state)
+  late final SavedHearts _hearts = SavedHearts.of(context);
 
   // Sierra Leone Towns & Districts
   static const List<String> _sierraLeoneTowns = [
@@ -115,6 +116,8 @@ class _RealEstateMarketplaceScreenState
   @override
   void initState() {
     super.initState();
+    _hearts.addListener(_onHeartsChanged);
+    _hearts.load();
     // Use user's region preference as default location
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final user = context.read<AuthBloc>().state.user;
@@ -129,8 +132,14 @@ class _RealEstateMarketplaceScreenState
     });
   }
 
+  void _onHeartsChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _hearts.removeListener(_onHeartsChanged);
+    _hearts.dispose();
     _searchController.dispose();
     _scrollController.dispose();
     _searchDebounce?.cancel();
@@ -306,14 +315,11 @@ class _RealEstateMarketplaceScreenState
     });
   }
 
-  void _toggleFavorite(String id) {
-    setState(() {
-      if (_favoritedIds.contains(id)) {
-        _favoritedIds.remove(id);
-      } else {
-        _favoritedIds.add(id);
-      }
-    });
+  Future<void> _toggleFavorite(String id) async {
+    final error = await _hearts.toggle(id);
+    if (error != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), behavior: SnackBarBehavior.floating));
+    }
   }
 
   // ── Navigation Helpers ──────────────────────────────────────────────
@@ -975,7 +981,7 @@ class _RealEstateMarketplaceScreenState
     final parking = (item['parking'] as num?)?.toInt() ?? 0;
     final category = item['category'] as String? ?? 'long_term_rent';
     final isVerified = item['isVerified'] == true;
-    final isFavorited = _favoritedIds.contains(id);
+    final isFavorited = _hearts.isSaved(id);
 
     // Determine listing type label
     final isGuesthouse =
@@ -1105,6 +1111,7 @@ class _RealEstateMarketplaceScreenState
                   top: 8,
                   right: 8,
                   child: GestureDetector(
+                    key: Key('heart-$id'),
                     onTap: () => _toggleFavorite(id),
                     child: Container(
                       width: 28,
@@ -1194,25 +1201,28 @@ class _RealEstateMarketplaceScreenState
                     ],
                   ),
                   const SizedBox(height: 5),
-                  // Specs Row: Beds, Baths, Parking/Garage
-                  Row(
-                    children: [
-                      if (beds > 0) ...[
-                        _buildSmallSpec(Icons.bed_outlined, '$beds Beds'),
-                        const SizedBox(width: 6),
+                  // Specs Row: Beds, Baths and — only when the listing says so — Parking/Garage.
+                  // It scales down on a narrow card instead of overflowing.
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (beds > 0) ...[
+                          _buildSmallSpec(Icons.bed_outlined, '$beds Beds'),
+                          const SizedBox(width: 6),
+                        ],
+                        if (baths > 0) ...[
+                          _buildSmallSpec(
+                              Icons.bathtub_outlined, '$baths Baths'),
+                          const SizedBox(width: 6),
+                        ],
+                        if (parking > 0)
+                          _buildSmallSpec(Icons.garage_outlined,
+                              '$parking Garage'),
                       ],
-                      if (baths > 0) ...[
-                        _buildSmallSpec(
-                            Icons.bathtub_outlined, '$baths Baths'),
-                        const SizedBox(width: 6),
-                      ],
-                      if (parking > 0)
-                        _buildSmallSpec(Icons.garage_outlined,
-                            '$parking Garage')
-                      else if (!isGuesthouse)
-                        _buildSmallSpec(
-                            Icons.garage_outlined, '1 Garage'),
-                    ],
+                    ),
                   ),
                   const Spacer(),
                   // Price

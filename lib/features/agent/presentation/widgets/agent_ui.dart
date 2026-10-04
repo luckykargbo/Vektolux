@@ -136,20 +136,22 @@ class AgentSegment extends StatelessWidget {
   }
 }
 
-/// Listing status from the server ("Active", "Unpublished", "Booked" …).
+/// Listing state from the server ("Active", "Pending review", "Rejected" …).
 class AgentStatusPill extends StatelessWidget {
-  final ListingLiveStatus status;
+  final ListingStatus status;
   const AgentStatusPill({super.key, required this.status});
 
   @override
   Widget build(BuildContext context) {
-    final (bg, fg) = switch (status) {
-      ListingLiveStatus.live => (AppColors.emeraldSurface, AppColors.emeraldDark),
-      ListingLiveStatus.unpublished => (AppColors.amberSurface, AppColors.amberDark),
-      ListingLiveStatus.booked => (AppColors.infoLight, AgentTokens.rentBlue),
-      ListingLiveStatus.unavailable || ListingLiveStatus.maintenance => (AppColors.gray100, AppColors.gray600),
+    final (bg, fg, icon) = switch (status) {
+      ListingStatus.active => (AppColors.emeraldSurface, AppColors.emeraldDark, Icons.check_circle_outline_rounded),
+      ListingStatus.pendingReview => (AppColors.amberSurface, AppColors.amberDark, Icons.hourglass_top_rounded),
+      ListingStatus.rejected || ListingStatus.removed => (AppColors.errorLight, AppColors.errorDark, Icons.block_rounded),
+      ListingStatus.offMarket => (AppColors.infoLight, AgentTokens.rentBlue, Icons.pause_circle_outline_rounded),
+      ListingStatus.draft || ListingStatus.unpublished => (AppColors.gray100, AppColors.gray600, Icons.visibility_off_outlined),
+      ListingStatus.archived => (AppColors.gray100, AppColors.gray600, Icons.archive_outlined),
     };
-    return AgentPill(label: status.label, background: bg, foreground: fg);
+    return AgentPill(key: Key('agent-status-${status.name}'), label: status.label, background: bg, foreground: fg, icon: icon);
   }
 }
 
@@ -202,6 +204,47 @@ class AgentInquiryChip extends StatelessWidget {
           icon: Icons.chat_bubble_outline_rounded,
         ),
       );
+}
+
+/// Real, server-counted statistics of a listing: views, saves, inquiries and viewing requests.
+/// Only the numbers the server reported are shown.
+class AgentListingStats extends StatelessWidget {
+  final int? views;
+  final int? saves;
+  final int? inquiries;
+  final int? viewings;
+
+  const AgentListingStats({super.key, this.views, this.saves, this.inquiries, this.viewings});
+
+  @override
+  Widget build(BuildContext context) {
+    final items = <(IconData, int, String)>[
+      if (views != null) (Icons.visibility_outlined, views!, 'views'),
+      if (saves != null) (Icons.favorite_border_rounded, saves!, 'saves'),
+      if (inquiries != null) (Icons.chat_bubble_outline_rounded, inquiries!, 'inquiries'),
+      if (viewings != null) (Icons.event_available_outlined, viewings!, 'viewing requests'),
+    ];
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Wrap(
+      spacing: 12,
+      runSpacing: 4,
+      children: [
+        for (final (icon, n, label) in items)
+          Semantics(
+            label: '$n $label',
+            excludeSemantics: true,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 14, color: AppColors.gray500),
+                const SizedBox(width: 3),
+                Text('$n', style: const TextStyle(fontSize: 11.5, color: AppColors.gray600, fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 /// "For Sale" / "For Rent" / "Short Stay" tag drawn over a listing photo.
@@ -680,4 +723,89 @@ void agentSnack(BuildContext context, String message, {bool error = false}) {
       behavior: SnackBarBehavior.floating,
       backgroundColor: error ? AppColors.errorDark : AppColors.emeraldDark,
     ));
+}
+
+/// Bottom sheet asking for a short reason (at least 3 characters). Returns the trimmed text, or
+/// null when dismissed. The text field lives in the sheet's own State, so it is disposed only after
+/// the sheet has fully closed.
+Future<String?> showAgentReasonSheet(
+  BuildContext context, {
+  required String title,
+  String? subtitle,
+  String hint = 'Reason',
+  required String confirmLabel,
+  bool destructive = false,
+}) {
+  return showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.white,
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+    builder: (_) => _ReasonSheet(title: title, subtitle: subtitle, hint: hint, confirmLabel: confirmLabel, destructive: destructive),
+  );
+}
+
+class _ReasonSheet extends StatefulWidget {
+  final String title;
+  final String? subtitle;
+  final String hint;
+  final String confirmLabel;
+  final bool destructive;
+
+  const _ReasonSheet({required this.title, this.subtitle, required this.hint, required this.confirmLabel, required this.destructive});
+
+  @override
+  State<_ReasonSheet> createState() => _ReasonSheetState();
+}
+
+class _ReasonSheetState extends State<_ReasonSheet> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final valid = _controller.text.trim().length >= 3;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(context).viewInsets.bottom + 20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(widget.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.obsidian)),
+          if (widget.subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(widget.subtitle!, style: const TextStyle(fontSize: 13, color: AppColors.gray500)),
+          ],
+          const SizedBox(height: 12),
+          TextField(
+            key: const Key('agent-reason-input'),
+            controller: _controller,
+            autofocus: true,
+            maxLength: 300,
+            minLines: 2,
+            maxLines: 4,
+            textCapitalization: TextCapitalization.sentences,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(hintText: widget.hint),
+          ),
+          const SizedBox(height: 6),
+          ElevatedButton(
+            key: const Key('agent-reason-confirm'),
+            onPressed: valid ? () => Navigator.of(context).pop(_controller.text.trim()) : null,
+            style: agentPrimaryButtonStyle().copyWith(
+              backgroundColor: widget.destructive
+                  ? WidgetStateProperty.resolveWith((states) => states.contains(WidgetState.disabled) ? AppColors.gray200 : AppColors.error)
+                  : null,
+            ),
+            child: Text(widget.confirmLabel),
+          ),
+        ],
+      ),
+    );
+  }
 }

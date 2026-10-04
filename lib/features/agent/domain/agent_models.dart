@@ -85,6 +85,12 @@ class ProfessionalStatus {
   final int? legacyGraceEndedAt;
   final bool canPostProperty;
 
+  /// Car Dealer is a SEPARATE, admin-approved authorisation held next to the agent role. Only the
+  /// server sets these; they decide whether the Auto tools are offered at all.
+  final bool isCarDealer;
+  final bool canPostVehicle;
+  final String? _professionalTitle;
+
   /// Newest first (as returned by the server).
   final List<RoleApplication> applications;
 
@@ -98,8 +104,11 @@ class ProfessionalStatus {
     this.gracePeriodEndsAt,
     this.legacyGraceEndedAt,
     this.canPostProperty = false,
+    this.isCarDealer = false,
+    this.canPostVehicle = false,
+    String? professionalTitle,
     this.applications = const [],
-  });
+  }) : _professionalTitle = professionalTitle;
 
   factory ProfessionalStatus.fromMap(Map<String, dynamic> m) => ProfessionalStatus(
         role: _str(m['role'], 'client'),
@@ -111,10 +120,19 @@ class ProfessionalStatus {
         gracePeriodEndsAt: _optInt(m['gracePeriodEndsAt']),
         legacyGraceEndedAt: _optInt(m['legacyGraceEndedAt']),
         canPostProperty: _bool(m['canPostProperty']),
+        isCarDealer: _bool(m['isCarDealer']),
+        canPostVehicle: _bool(m['canPostVehicle']),
+        professionalTitle: _optStr(m['professionalTitle']),
         applications: mapList(m['applications']).map(RoleApplication.fromMap).toList(),
       );
 
   bool get isRealEstateAgent => role == 'real_estate_agent';
+
+  /// "Real Estate Agent" or "Real Estate Agent & Car Dealer" (the server's wording).
+  String get professionalTitle => _professionalTitle ?? (isCarDealer ? 'Real Estate Agent & Car Dealer' : 'Real Estate Agent');
+
+  /// The Auto tools (add / manage vehicles) are offered only to an approved Car Dealer.
+  bool get showAutoTools => isCarDealer && canPostVehicle;
 
   /// The newest application for the Real Estate Agent role, if any.
   RoleApplication? get latestAgentApplication {
@@ -182,30 +200,54 @@ String? subscriptionLabel(ProfessionalStatus status, SubscriptionInfo? sub, {Dat
 //                               LISTINGS
 // ═══════════════════════════════════════════════════════════════════════
 
-enum ListingLiveStatus { live, unpublished, booked, unavailable, maintenance }
+/// A listing's state as its owner sees it. The SERVER derives it (`lifecycleStatus`); the app never
+/// decides that a listing is approved or live.
+enum ListingStatus { active, offMarket, pendingReview, rejected, removed, draft, unpublished, archived }
 
-extension ListingLiveStatusX on ListingLiveStatus {
+extension ListingStatusX on ListingStatus {
   String get label => switch (this) {
-        ListingLiveStatus.live => 'Active',
-        ListingLiveStatus.unpublished => 'Unpublished',
-        ListingLiveStatus.booked => 'Booked',
-        ListingLiveStatus.unavailable => 'Unavailable',
-        ListingLiveStatus.maintenance => 'Maintenance',
+        ListingStatus.active => 'Active',
+        ListingStatus.offMarket => 'Off-market',
+        ListingStatus.pendingReview => 'Pending review',
+        ListingStatus.rejected => 'Rejected',
+        ListingStatus.removed => 'Removed',
+        ListingStatus.draft => 'Draft',
+        ListingStatus.unpublished => 'Unpublished',
+        ListingStatus.archived => 'Archived',
+      };
+
+  /// Anyone can see it on the marketplace.
+  bool get isPublic => this == ListingStatus.active || this == ListingStatus.offMarket;
+
+  static ListingStatus? fromServer(String? v) => switch (v) {
+        'active' => ListingStatus.active,
+        'off_market' => ListingStatus.offMarket,
+        'pending_review' => ListingStatus.pendingReview,
+        'rejected' => ListingStatus.rejected,
+        'removed' => ListingStatus.removed,
+        'draft' => ListingStatus.draft,
+        'unpublished' => ListingStatus.unpublished,
+        'archived' => ListingStatus.archived,
+        _ => null,
       };
 }
 
-/// Listing filters, all derived from real server fields. (The backend has no review queue or
-/// archive state, so there is no "Pending review" / "Archived" filter to show.)
-enum ListingFilter { all, sale, rent, active, unpublished, offMarket }
+/// Listing filters. Status filters come from the listings' real states; only filters that apply to
+/// the agent's portfolio are shown (see [visibleFilters]).
+enum ListingFilter { all, active, pendingReview, rejected, unpublished, offMarket, archived, removed, sale, rent }
 
 extension ListingFilterX on ListingFilter {
   String get label => switch (this) {
         ListingFilter.all => 'All',
-        ListingFilter.sale => 'For Sale',
-        ListingFilter.rent => 'For Rent',
         ListingFilter.active => 'Active',
+        ListingFilter.pendingReview => 'Pending review',
+        ListingFilter.rejected => 'Rejected',
         ListingFilter.unpublished => 'Unpublished',
         ListingFilter.offMarket => 'Off-market',
+        ListingFilter.archived => 'Archived',
+        ListingFilter.removed => 'Removed',
+        ListingFilter.sale => 'For Sale',
+        ListingFilter.rent => 'For Rent',
       };
 }
 
@@ -242,6 +284,19 @@ class AgentListing {
   final int createdAt;
   final int updatedAt;
 
+  /// The server-derived lifecycle state (active, pending review, rejected, …).
+  final ListingStatus status;
+
+  /// Why an administrator rejected / removed the listing (only the owner receives it).
+  final String? moderationReason;
+
+  /// Real, server-maintained statistics; null when the server did not report them (for example
+  /// for a listing the agent only represents).
+  final int? viewCount;
+  final int? saveCount;
+  final int? inquiryCount;
+  final int? viewingRequestCount;
+
   /// Set when the agent represents this listing for its owner (not the agent's own listing).
   final String? representationId;
 
@@ -267,6 +322,12 @@ class AgentListing {
     this.isPublished = true,
     this.createdAt = 0,
     this.updatedAt = 0,
+    this.status = ListingStatus.active,
+    this.moderationReason,
+    this.viewCount,
+    this.saveCount,
+    this.inquiryCount,
+    this.viewingRequestCount,
     this.representationId,
   });
 
@@ -297,6 +358,12 @@ class AgentListing {
         isPublished: m['isPublished'] != false,
         createdAt: _int(m['_creationTime']),
         updatedAt: _int(m['updatedAt']),
+        status: ListingStatusX.fromServer(_optStr(m['lifecycleStatus'])) ?? _statusFromFields(m),
+        moderationReason: _optStr(m['moderationReason']),
+        viewCount: _optInt(m['viewCount']),
+        saveCount: _optInt(m['saveCount']),
+        inquiryCount: _optInt(m['inquiryCount']),
+        viewingRequestCount: _optInt(m['viewingRequestCount']),
       );
 
   /// From `realEstate:getPropertyById` (the public, privacy-safe view) for a listing the agent
@@ -327,23 +394,28 @@ class AgentListing {
         isPublished: m['isPublished'] != false,
         createdAt: _int(m['_creationTime']),
         updatedAt: _int(m['updatedAt']),
+        status: ListingStatusX.fromServer(_optStr(m['lifecycleStatus'])) ?? _statusFromFields(m),
         representationId: representationId,
       );
+
+  /// Used only when a response carries no `lifecycleStatus`: the state its raw fields imply.
+  static ListingStatus _statusFromFields(Map<String, dynamic> m) {
+    switch (m['moderationStatus']) {
+      case 'pending_review':
+        return ListingStatus.pendingReview;
+      case 'rejected':
+        return ListingStatus.rejected;
+      case 'removed':
+        return ListingStatus.removed;
+    }
+    if (m['isPublished'] == false) return ListingStatus.unpublished;
+    return _str(m['availabilityStatus'], 'available') == 'available' ? ListingStatus.active : ListingStatus.offMarket;
+  }
 
   bool get isRepresented => representationId != null;
   bool get isForSale => category == 'sale';
   bool get isForRent => category == 'long_term_rent' || category == 'hourly_guesthouse';
   String? get coverImage => imageUrls.isEmpty ? null : imageUrls.first;
-
-  ListingLiveStatus get liveStatus {
-    if (!isPublished) return ListingLiveStatus.unpublished;
-    return switch (availabilityStatus) {
-      'booked' => ListingLiveStatus.booked,
-      'maintenance' => ListingLiveStatus.maintenance,
-      'unavailable' => ListingLiveStatus.unavailable,
-      _ => ListingLiveStatus.live,
-    };
-  }
 
   /// "For Sale" / "For Rent" / "Short Stay" — null for an unknown category (no invented tag).
   String? get categoryLabel => switch (category) {
@@ -376,18 +448,42 @@ class AgentListing {
 
   bool matches(ListingFilter filter) => switch (filter) {
         ListingFilter.all => true,
+        ListingFilter.active => status == ListingStatus.active,
+        ListingFilter.pendingReview => status == ListingStatus.pendingReview,
+        ListingFilter.rejected => status == ListingStatus.rejected,
+        ListingFilter.unpublished => status == ListingStatus.draft || status == ListingStatus.unpublished,
+        ListingFilter.offMarket => status == ListingStatus.offMarket,
+        ListingFilter.archived => status == ListingStatus.archived,
+        ListingFilter.removed => status == ListingStatus.removed,
         ListingFilter.sale => isForSale,
         ListingFilter.rent => isForRent,
-        ListingFilter.active => liveStatus == ListingLiveStatus.live,
-        ListingFilter.unpublished => !isPublished,
-        ListingFilter.offMarket => isPublished && liveStatus != ListingLiveStatus.live,
       };
+
+  /// What the owner may do next (the server re-checks every action).
+  bool get canSubmitForReview => !isRepresented && (status == ListingStatus.draft || status == ListingStatus.unpublished);
+  bool get canWithdraw => !isRepresented && status == ListingStatus.pendingReview;
+  bool get canResubmit => !isRepresented && status == ListingStatus.rejected;
+  bool get canUnpublish => !isRepresented && status.isPublic;
+  bool get canArchive =>
+      !isRepresented && status != ListingStatus.archived && status != ListingStatus.removed;
+  bool get canRestore => !isRepresented && status == ListingStatus.archived;
+  bool get canEdit => !isRepresented && status != ListingStatus.removed && status != ListingStatus.archived;
 
   bool get hasVideo => videoUrls.isNotEmpty;
 }
 
 int countMatching(Iterable<AgentListing> listings, ListingFilter filter) =>
     listings.where((l) => l.matches(filter)).length;
+
+/// The filters worth showing for this portfolio: All, plus every status (or sale / rent) that
+/// applies to some — but not all — of the listings. The selected filter always stays visible.
+List<ListingFilter> visibleFilters(List<AgentListing> listings, {ListingFilter selected = ListingFilter.all}) {
+  final total = listings.length;
+  return [
+    for (final f in ListingFilter.values)
+      if (f == ListingFilter.all || f == selected || (countMatching(listings, f) > 0 && countMatching(listings, f) < total)) f,
+  ];
+}
 
 /// Newest first (creation time, then last update).
 List<AgentListing> newestFirst(Iterable<AgentListing> listings) {
@@ -444,104 +540,119 @@ class AgentInvitation {
 //                     VIEWING REQUESTS (site visits & stays)
 // ═══════════════════════════════════════════════════════════════════════
 
-enum ViewingTab { upcoming, past, cancelled }
+enum ViewingTab { pending, confirmed, declined, cancelled }
 
 extension ViewingTabX on ViewingTab {
   String get label => switch (this) {
-        ViewingTab.upcoming => 'Upcoming',
-        ViewingTab.past => 'Past',
+        ViewingTab.pending => 'Pending',
+        ViewingTab.confirmed => 'Confirmed',
+        ViewingTab.declined => 'Declined',
         ViewingTab.cancelled => 'Cancelled',
       };
 }
 
-/// A booking on one of the agent's listings (`bookings:getVendorBookings`): a free site visit
-/// (`property_inspection`, confirmed by the server on request) or a short stay.
+/// A free site-visit request on a listing the caller manages (`bookings:getMyViewingRequests`).
+/// It is a REQUEST: only the server moves it from `requested` to `confirmed` or `declined`.
 class ViewingRequest {
   final String id;
   final String listingId;
   final String listingTitle;
-  final String bookingType;
+  final String? listingImage;
+  final String? publicLocation;
 
-  /// pending_payment | confirmed | in_progress | completed | cancelled | disputed (server states).
+  /// The caller represents the listing for its owner (rather than owning it).
+  final bool representing;
+  final String clientName;
+  final String? clientAvatarUrl;
+
+  /// Shared by the server only once the visit is confirmed.
+  final String? clientPhone;
+
+  /// requested | confirmed | declined | cancelled (and, rarely, in_progress | completed).
   final String status;
-  final String? buyerName;
-  final String? buyerPhone;
   final int startTime;
   final int endTime;
-  final double totalAmount;
-  final String currency;
+  final String? notes;
+  final String? declineReason;
+  final String? cancelReason;
+  final int requestedAt;
 
   const ViewingRequest({
     required this.id,
     required this.listingId,
     required this.listingTitle,
-    required this.bookingType,
+    this.listingImage,
+    this.publicLocation,
+    this.representing = false,
+    this.clientName = 'Client',
+    this.clientAvatarUrl,
+    this.clientPhone,
     required this.status,
-    this.buyerName,
-    this.buyerPhone,
     required this.startTime,
     required this.endTime,
-    this.totalAmount = 0,
-    this.currency = 'SLE',
+    this.notes,
+    this.declineReason,
+    this.cancelReason,
+    this.requestedAt = 0,
   });
 
   factory ViewingRequest.fromMap(Map<String, dynamic> m) => ViewingRequest(
-        id: _str(m['_id']),
+        id: _str(m['id'], _str(m['_id'])),
         listingId: _str(m['listingId']),
         listingTitle: _str(m['listingTitle'], 'Property'),
-        bookingType: _str(m['bookingType']),
+        listingImage: _optStr(m['listingImage']),
+        publicLocation: _optStr(m['publicLocation']),
+        representing: _bool(m['representing']),
+        clientName: _str(m['clientName'], 'Client'),
+        clientAvatarUrl: _optStr(m['clientAvatarUrl']),
+        clientPhone: _optStr(m['clientPhone']),
         status: _str(m['status']),
-        buyerName: _optStr(m['buyerName']),
-        buyerPhone: _optStr(m['buyerPhone']),
         startTime: _int(m['startTime']),
         endTime: _int(m['endTime']),
-        totalAmount: _double(m['totalAmount']),
-        currency: _str(m['currency'], 'SLE'),
+        notes: _optStr(m['notes']),
+        declineReason: _optStr(m['declineReason']),
+        cancelReason: _optStr(m['cancelReason']),
+        requestedAt: _int(m['requestedAt']),
       );
 
-  bool get isSiteVisit => bookingType == 'property_inspection';
-  bool get isCancelled => status == 'cancelled';
-  bool get isOpen => status == 'pending_payment' || status == 'confirmed' || status == 'in_progress';
+  bool get isRequested => status == 'requested';
+  bool get isConfirmed => status == 'confirmed' || status == 'in_progress' || status == 'completed';
 
-  ViewingTab tabAt(DateTime now) {
-    if (isCancelled) return ViewingTab.cancelled;
-    if (isOpen && endTime > now.millisecondsSinceEpoch) return ViewingTab.upcoming;
-    return ViewingTab.past;
-  }
+  /// The requested time is over: the server refuses to accept it, so only Decline is offered.
+  bool isExpired(DateTime now) => endTime <= now.millisecondsSinceEpoch;
+
+  ViewingTab get tab => switch (status) {
+        'requested' => ViewingTab.pending,
+        'declined' => ViewingTab.declined,
+        'cancelled' => ViewingTab.cancelled,
+        _ => ViewingTab.confirmed,
+      };
 
   String get statusLabel => switch (status) {
-        'pending_payment' => 'Awaiting payment',
+        'requested' => 'Pending',
         'confirmed' => 'Confirmed',
         'in_progress' => 'In progress',
         'completed' => 'Completed',
+        'declined' => 'Declined',
         'cancelled' => 'Cancelled',
-        'disputed' => 'In dispute',
         _ => status,
       };
-
-  String get typeLabel => isSiteVisit ? 'Site visit' : 'Short stay';
 }
 
-/// Bookings on the agent's real-estate listings (vehicles are not part of this workspace).
-List<ViewingRequest> parseViewingRequests(dynamic bookings) => mapList(bookings)
-    .where((m) => m['listingType'] == 'property')
-    .map(ViewingRequest.fromMap)
-    .toList();
+/// The server already limits the list to property site visits on the caller's listings.
+List<ViewingRequest> parseViewingRequests(dynamic rows) => mapList(rows).map(ViewingRequest.fromMap).toList();
 
 // ═══════════════════════════════════════════════════════════════════════
 //                             NOTIFICATIONS
 // ═══════════════════════════════════════════════════════════════════════
 
-enum NotificationTab { all, messages, viewings, listings, deals, account, admin }
+enum NotificationTab { all, messages, system, admin }
 
 extension NotificationTabX on NotificationTab {
   String get label => switch (this) {
         NotificationTab.all => 'All',
         NotificationTab.messages => 'Messages',
-        NotificationTab.viewings => 'Viewings',
-        NotificationTab.listings => 'Listings',
-        NotificationTab.deals => 'Deals',
-        NotificationTab.account => 'Account',
+        NotificationTab.system => 'System',
         NotificationTab.admin => 'Admin',
       };
 }
@@ -597,7 +708,7 @@ class AgentNotification {
 }
 
 /// Where a notification leads, from the server's deep link or clearly named event. Unknown → none.
-enum NotificationDestination { none, conversation, viewings, listings, deals, earnings, subscription, followers }
+enum NotificationDestination { none, conversation, viewings, bookings, listings, deals, earnings, subscription, followers }
 
 NotificationDestination destinationFor(AgentNotification n) {
   switch (n.deepLinkScreen) {
@@ -605,6 +716,12 @@ NotificationDestination destinationFor(AgentNotification n) {
       return NotificationDestination.conversation;
     case 'followers':
       return NotificationDestination.followers;
+    case 'viewings':
+      return NotificationDestination.viewings;
+    case 'bookings':
+      return NotificationDestination.bookings;
+    case 'listings':
+      return NotificationDestination.listings;
   }
   final t = '${n.title} ${n.body}'.toLowerCase();
   if (t.contains('listing agent') || t.contains('agent accepted') || t.contains('agent declined') || t.contains('represent')) {
@@ -624,13 +741,7 @@ NotificationDestination destinationFor(AgentNotification n) {
 
 NotificationTab categoryOf(AgentNotification n) {
   if (n.isAdminAnnouncement) return NotificationTab.admin;
-  return switch (destinationFor(n)) {
-    NotificationDestination.conversation => NotificationTab.messages,
-    NotificationDestination.viewings => NotificationTab.viewings,
-    NotificationDestination.listings => NotificationTab.listings,
-    NotificationDestination.deals || NotificationDestination.earnings => NotificationTab.deals,
-    _ => NotificationTab.account,
-  };
+  return destinationFor(n) == NotificationDestination.conversation ? NotificationTab.messages : NotificationTab.system;
 }
 
 /// Server notifications for a tab, newest first.

@@ -2,9 +2,10 @@
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Real Estate Agent notifications (Notifications tab).
 // Only real server events (notifications:getUserNotifications): new inquiries and messages,
-// viewings, listing-agent invitations, escrow and payout updates, subscription and account
-// decisions, new followers, and administrator announcements (broadcasts, which only an admin can
-// create). Read state, time and the unread count are the server's; nothing is generated here.
+// viewing requests and their answers, listing decisions (approved, rejected, removed),
+// listing-agent invitations, escrow and payout updates, subscription and account decisions, new
+// followers, and administrator announcements (broadcasts, which only an admin can create). Tabs:
+// All · Messages · System · Admin. Read state, time and the unread count are the server's.
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
@@ -82,6 +83,8 @@ class _AgentNotificationsScreenState extends State<AgentNotificationsScreen> {
         id == null ? scope.openTab(AgentTab.messages) : openConversation(context, id);
       case NotificationDestination.viewings:
         openViewings(context);
+      case NotificationDestination.bookings:
+        openBookings(context);
       case NotificationDestination.listings:
         scope.openTab(AgentTab.listings);
       case NotificationDestination.deals:
@@ -194,6 +197,7 @@ class _NotificationTile extends StatelessWidget {
     return switch (destinationFor(item)) {
       NotificationDestination.conversation => (Icons.chat_bubble_outline_rounded, AppColors.emeraldDark),
       NotificationDestination.viewings => (Icons.event_available_outlined, AgentTokens.rentBlue),
+      NotificationDestination.bookings => (Icons.event_note_outlined, AgentTokens.rentBlue),
       NotificationDestination.listings => (Icons.home_work_outlined, AgentTokens.rentBlue),
       NotificationDestination.deals => (Icons.account_balance_outlined, AgentTokens.deepGreen),
       NotificationDestination.earnings => (Icons.payments_outlined, AppColors.emeraldDark),
