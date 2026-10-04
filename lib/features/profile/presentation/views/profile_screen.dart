@@ -25,6 +25,8 @@ import '../../../admin/presentation/views/admin_dashboard_screen.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/my_listings_screen.dart';
+import '../../../messaging/data/messaging_api.dart';
+import '../../../messaging/presentation/buyer_messaging.dart';
 import '../../../auth/presentation/views/pending_verification_screen.dart';
 import '../../../verification/presentation/views/agent_verification_screen.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
@@ -1659,6 +1661,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: 18),
                 ],
 
+                // ── 1B2. Messages (conversations about listings, both directions) ──
+                if (user != null) ...[
+                  _buildSectionHeader('MESSAGES'),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: _buildSettingsTile(
+                      key: const Key('profile-messages'),
+                      icon: Icons.chat_bubble_outline_rounded,
+                      title: 'Messages',
+                      subtitle: 'Your conversations about properties',
+                      onTap: () {
+                        final client = context.read<ConvexClientWrapper>();
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => MessagesInboxScreen(
+                              api: MessagingApi(client: client, userId: user.id, sessionToken: user.sessionToken),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                ],
+
                 // ── 1C. My Posts & Marketplace Listings (Verified Sellers Only) ──
                 if (hasSellerStorefront) ...[
                   _buildSectionHeader('MY POSTS & MARKETPLACE LISTINGS'),
@@ -2728,6 +2759,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildSettingsTile({
+    Key? key,
     required IconData icon,
     required String title,
     required String subtitle,
@@ -2736,6 +2768,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }) {
     // Own (transparent) Material: the rows sit on white cards, which would hide the ink.
     return Material(
+      key: key,
       type: MaterialType.transparency,
       child: ListTile(
       leading: Container(

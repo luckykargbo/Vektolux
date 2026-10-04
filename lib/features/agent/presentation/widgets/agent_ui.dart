@@ -104,6 +104,38 @@ class AgentSectionHeader extends StatelessWidget {
   }
 }
 
+/// Pill-shaped tab / filter chip (selected = Vektolux green). The label shrinks to fit.
+class AgentSegment extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const AgentSegment({super.key, required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? AppColors.emeraldDark : Colors.white,
+      shape: StadiumBorder(side: BorderSide(color: selected ? AppColors.emeraldDark : AppColors.border)),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label,
+              maxLines: 1,
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: selected ? Colors.white : AppColors.gray600),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Listing status from the server ("Active", "Unpublished", "Booked" …).
 class AgentStatusPill extends StatelessWidget {
   final ListingLiveStatus status;
@@ -153,6 +185,23 @@ class AgentPill extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Number of client conversations about a listing (real inquiries).
+class AgentInquiryChip extends StatelessWidget {
+  final int count;
+  const AgentInquiryChip({super.key, required this.count});
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+        label: '$count ${count == 1 ? 'inquiry' : 'inquiries'}',
+        child: AgentPill(
+          label: '$count',
+          background: AppColors.infoLight,
+          foreground: AgentTokens.rentBlue,
+          icon: Icons.chat_bubble_outline_rounded,
+        ),
+      );
 }
 
 /// "For Sale" / "For Rent" / "Short Stay" tag drawn over a listing photo.
@@ -205,6 +254,16 @@ class AgentListingImage extends StatelessWidget {
             fallbackLabel: listing.coverImage == null ? 'NO PHOTO YET' : 'PHOTO UNAVAILABLE',
           ),
           Positioned(left: 8, top: 8, child: AgentCategoryTag(listing: listing)),
+          if (listing.hasVideo)
+            Positioned(
+              right: 8,
+              bottom: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(8)),
+                child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 16, semanticLabel: 'Has video'),
+              ),
+            ),
         ],
       ),
     );

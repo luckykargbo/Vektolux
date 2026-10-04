@@ -14,6 +14,52 @@ import { requireOwnedDoc, requireSelf } from "./lib/auth";
 import { postingPermission } from "./lib/permissions";
 import { toPublicProperty } from "./lib/publicListing";
 import { findDistrict, findTown } from "./lib/slLocations";
+import { isAcceptableContentType, isListingVideoContentType } from "./lib/uploads";
+
+export const MAX_LISTING_VIDEOS = 3;
+export const MAX_LISTING_VIDEO_BYTES = 150 * 1024 * 1024;
+
+async function storageUrl(ctx: { storage: any }, id: string): Promise<string | null> {
+  try {
+    return await ctx.storage.getUrl(id as Id<"_storage">);
+  } catch {
+    return null;
+  }
+}
+
+async function storageMeta(ctx: { db: any }, id: string): Promise<{ contentType?: string; size?: number } | null> {
+  try {
+    return await ctx.db.system.get("_storage", id as Id<"_storage">);
+  } catch {
+    return null;
+  }
+}
+
+/** A real uploaded photo (an image type when storage metadata has one) → its URL. */
+async function listingImageUrl(ctx: { db: any; storage: any }, id: string): Promise<string> {
+  const meta = await storageMeta(ctx, id);
+  const type = meta?.contentType?.toLowerCase();
+  if (type && !(type.startsWith("image/") && isAcceptableContentType(type))) {
+    throw new Error("Only photos (JPEG, PNG, WebP or HEIC) can be added as listing photos.");
+  }
+  const url = await storageUrl(ctx, id);
+  if (!url) throw new Error("A photo did not finish uploading. Remove it or upload it again.");
+  return url;
+}
+
+/** A real uploaded video (type/size checked when storage metadata is available) → its URL. */
+async function listingVideoUrl(ctx: { db: any; storage: any }, id: string): Promise<string> {
+  const meta = await storageMeta(ctx, id);
+  if (meta?.contentType && !isListingVideoContentType(meta.contentType)) {
+    throw new Error("Only MP4, MOV, WebM or 3GP videos can be added as property videos.");
+  }
+  if (typeof meta?.size === "number" && meta.size > MAX_LISTING_VIDEO_BYTES) {
+    throw new Error("Each property video can be at most 150 MB.");
+  }
+  const url = await storageUrl(ctx, id);
+  if (!url) throw new Error("A video did not finish uploading. Remove it or upload it again.");
+  return url;
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 //                     CREATE PROPERTY LISTING
@@ -37,6 +83,8 @@ export const createPropertyListing = mutation({
     latitude: v.optional(v.number()),
     longitude: v.optional(v.number()),
     imageStorageIds: v.array(v.string()),
+    // Uploaded property videos (storage ids only; public media like the photos).
+    videoStorageIds: v.optional(v.array(v.string())),
     bedrooms: v.optional(v.number()),
     bathrooms: v.optional(v.number()),
     areaSqM: v.optional(v.number()),
@@ -64,24 +112,22 @@ export const createPropertyListing = mutation({
       throw new Error("Invalid or expired session. Please log in again.");
     }
 
-    // 3. Resolve image storage IDs to public URLs
+    // 3. Resolve media to public URLs. Only real uploads are stored: a photo or video that never
+    //    reached storage (e.g. a failed upload) is refused, never saved as a fake local path.
     const resolvedImageUrls: string[] = [];
     for (const item of args.imageStorageIds) {
       if (item.startsWith("http://") || item.startsWith("https://")) {
         resolvedImageUrls.push(item);
-      } else {
-        try {
-          const url = await ctx.storage.getUrl(item as Id<"_storage">);
-          if (url) {
-            resolvedImageUrls.push(url);
-          } else {
-            resolvedImageUrls.push(item);
-          }
-        } catch {
-          resolvedImageUrls.push(item);
-        }
+        continue;
       }
+      resolvedImageUrls.push(await listingImageUrl(ctx, item));
     }
+    const videoIds = args.videoStorageIds ?? [];
+    if (videoIds.length > MAX_LISTING_VIDEOS) {
+      throw new Error(`A listing can have at most ${MAX_LISTING_VIDEOS} videos.`);
+    }
+    const videoUrls: string[] = [];
+    for (const item of videoIds) videoUrls.push(await listingVideoUrl(ctx, item));
 
     // 4. Calculate geohash for spatial indexing
     const hasCoords = args.latitude !== undefined && args.longitude !== undefined;
@@ -110,6 +156,7 @@ export const createPropertyListing = mutation({
       areaSqM: args.areaSqM,
       amenities: args.amenities ?? [],
       imageUrls: resolvedImageUrls,
+      ...(videoUrls.length > 0 ? { videoUrls } : {}),
       privateContactPhone: args.privateContactPhone,
       isDeleted: false,
       availabilityStatus: "available",

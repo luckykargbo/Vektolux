@@ -37,6 +37,27 @@ export function isAcceptableContentType(contentType: string | undefined | null):
   return ALLOWED_TYPES.has(contentType.toLowerCase().split(";")[0].trim());
 }
 
+/** Property video types. Browsers play these as media; none of them can render as a page. */
+const LISTING_VIDEO_TYPES = new Set([
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+  "video/3gpp",
+  "video/3gpp2",
+  "video/x-m4v",
+  "video/mpeg",
+]);
+
+export function isListingVideoContentType(contentType: string | undefined | null): boolean {
+  if (!contentType) return false;
+  return LISTING_VIDEO_TYPES.has(contentType.toLowerCase().split(";")[0].trim());
+}
+
+/** What the public `files:getFileUrl` may serve: images, PDFs and property videos. */
+export function isPublicMediaContentType(contentType: string | undefined | null): boolean {
+  return isAcceptableContentType(contentType) || isListingVideoContentType(contentType);
+}
+
 /** Validates a stored file's type and size; deletes it if it is not acceptable. */
 export async function validateUpload(
   ctx: { db: any; storage: any },

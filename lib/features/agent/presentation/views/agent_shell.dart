@@ -145,7 +145,7 @@ class _AgentShellState extends State<AgentShell> {
     if (now.difference(_lastBadgeRefresh) > const Duration(seconds: 20)) {
       _lastBadgeRefresh = now;
       _cubit.loadUnreadCount();
-      _cubit.loadInquiries();
+      _cubit.loadConversations();
     }
   }
 
@@ -179,11 +179,11 @@ class _AgentShellState extends State<AgentShell> {
               ],
             ),
             bottomNavigationBar: BlocBuilder<AgentWorkspaceCubit, AgentWorkspaceState>(
-              buildWhen: (a, b) => a.pendingInquiries != b.pendingInquiries || a.unreadCount != b.unreadCount,
+              buildWhen: (a, b) => a.unreadMessages != b.unreadMessages || a.unreadCount != b.unreadCount,
               builder: (context, s) => _AgentNavBar(
                 index: _index,
                 onTap: _openTab,
-                messagesDot: s.pendingInquiries > 0,
+                messagesDot: s.unreadMessages > 0,
                 notificationsDot: s.unreadCount > 0,
               ),
             ),

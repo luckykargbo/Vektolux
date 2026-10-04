@@ -194,14 +194,18 @@ extension ListingLiveStatusX on ListingLiveStatus {
       };
 }
 
-enum ListingFilter { all, sale, rent, unpublished }
+/// Listing filters, all derived from real server fields. (The backend has no review queue or
+/// archive state, so there is no "Pending review" / "Archived" filter to show.)
+enum ListingFilter { all, sale, rent, active, unpublished, offMarket }
 
 extension ListingFilterX on ListingFilter {
   String get label => switch (this) {
         ListingFilter.all => 'All',
         ListingFilter.sale => 'For Sale',
         ListingFilter.rent => 'For Rent',
+        ListingFilter.active => 'Active',
         ListingFilter.unpublished => 'Unpublished',
+        ListingFilter.offMarket => 'Off-market',
       };
 }
 
@@ -230,6 +234,9 @@ class AgentListing {
   final double? areaSqM;
   final List<String> amenities;
   final List<String> imageUrls;
+
+  /// Public property videos (real uploaded files).
+  final List<String> videoUrls;
   final String availabilityStatus;
   final bool isPublished;
   final int createdAt;
@@ -255,6 +262,7 @@ class AgentListing {
     this.areaSqM,
     this.amenities = const [],
     this.imageUrls = const [],
+    this.videoUrls = const [],
     this.availabilityStatus = 'available',
     this.isPublished = true,
     this.createdAt = 0,
@@ -282,6 +290,9 @@ class AgentListing {
         imageUrls: (m['imageUrls'] is List)
             ? (m['imageUrls'] as List).map((e) => e.toString()).where((u) => u.startsWith('http')).toList()
             : const [],
+        videoUrls: (m['videoUrls'] is List)
+            ? (m['videoUrls'] as List).map((e) => e.toString()).where((u) => u.startsWith('http')).toList()
+            : const [],
         availabilityStatus: _str(m['availabilityStatus'], 'available'),
         isPublished: m['isPublished'] != false,
         createdAt: _int(m['_creationTime']),
@@ -308,6 +319,9 @@ class AgentListing {
         amenities: (m['amenities'] is List) ? (m['amenities'] as List).map((e) => e.toString()).toList() : const [],
         imageUrls: (m['imageUrls'] is List)
             ? (m['imageUrls'] as List).map((e) => e.toString()).where((u) => u.startsWith('http')).toList()
+            : const [],
+        videoUrls: (m['videoUrls'] is List)
+            ? (m['videoUrls'] as List).map((e) => e.toString()).where((u) => u.startsWith('http')).toList()
             : const [],
         availabilityStatus: _str(m['availabilityStatus'], 'available'),
         isPublished: m['isPublished'] != false,
@@ -364,8 +378,12 @@ class AgentListing {
         ListingFilter.all => true,
         ListingFilter.sale => isForSale,
         ListingFilter.rent => isForRent,
+        ListingFilter.active => liveStatus == ListingLiveStatus.live,
         ListingFilter.unpublished => !isPublished,
+        ListingFilter.offMarket => isPublished && liveStatus != ListingLiveStatus.live,
       };
+
+  bool get hasVideo => videoUrls.isNotEmpty;
 }
 
 int countMatching(Iterable<AgentListing> listings, ListingFilter filter) =>
@@ -423,80 +441,107 @@ class AgentInvitation {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//                        MESSAGES (BUYER INQUIRIES)
+//                     VIEWING REQUESTS (site visits & stays)
 // ═══════════════════════════════════════════════════════════════════════
 
-/// `adminPortal:getSellerContactRequests` — a buyer's in-app inquiry about one of the agent's
-/// listings. The buyer's phone number is never returned by the server.
-class Inquiry {
+enum ViewingTab { upcoming, past, cancelled }
+
+extension ViewingTabX on ViewingTab {
+  String get label => switch (this) {
+        ViewingTab.upcoming => 'Upcoming',
+        ViewingTab.past => 'Past',
+        ViewingTab.cancelled => 'Cancelled',
+      };
+}
+
+/// A booking on one of the agent's listings (`bookings:getVendorBookings`): a free site visit
+/// (`property_inspection`, confirmed by the server on request) or a short stay.
+class ViewingRequest {
   final String id;
-  final String buyerName;
-  final String? buyerAvatarUrl;
-  final bool buyerIsVerified;
   final String listingId;
-  final String listingType;
-  final String message;
+  final String listingTitle;
+  final String bookingType;
 
-  /// pending | accepted | declined
+  /// pending_payment | confirmed | in_progress | completed | cancelled | disputed (server states).
   final String status;
-  final int createdAt;
-  final int? respondedAt;
+  final String? buyerName;
+  final String? buyerPhone;
+  final int startTime;
+  final int endTime;
+  final double totalAmount;
+  final String currency;
 
-  const Inquiry({
+  const ViewingRequest({
     required this.id,
-    required this.buyerName,
-    this.buyerAvatarUrl,
-    this.buyerIsVerified = false,
     required this.listingId,
-    required this.listingType,
-    required this.message,
+    required this.listingTitle,
+    required this.bookingType,
     required this.status,
-    required this.createdAt,
-    this.respondedAt,
+    this.buyerName,
+    this.buyerPhone,
+    required this.startTime,
+    required this.endTime,
+    this.totalAmount = 0,
+    this.currency = 'SLE',
   });
 
-  factory Inquiry.fromMap(Map<String, dynamic> m) => Inquiry(
-        id: _str(m['id']),
-        buyerName: _str(m['buyerName'], 'Client'),
-        buyerAvatarUrl: _optStr(m['buyerAvatarUrl']),
-        buyerIsVerified: _bool(m['buyerIsVerified']),
+  factory ViewingRequest.fromMap(Map<String, dynamic> m) => ViewingRequest(
+        id: _str(m['_id']),
         listingId: _str(m['listingId']),
-        listingType: _str(m['listingType'], 'property'),
-        message: _str(m['message']),
-        status: _str(m['status'], 'pending'),
-        createdAt: _int(m['createdAt']),
-        respondedAt: _optInt(m['respondedAt']),
+        listingTitle: _str(m['listingTitle'], 'Property'),
+        bookingType: _str(m['bookingType']),
+        status: _str(m['status']),
+        buyerName: _optStr(m['buyerName']),
+        buyerPhone: _optStr(m['buyerPhone']),
+        startTime: _int(m['startTime']),
+        endTime: _int(m['endTime']),
+        totalAmount: _double(m['totalAmount']),
+        currency: _str(m['currency'], 'SLE'),
       );
 
-  bool get isPending => status == 'pending';
+  bool get isSiteVisit => bookingType == 'property_inspection';
+  bool get isCancelled => status == 'cancelled';
+  bool get isOpen => status == 'pending_payment' || status == 'confirmed' || status == 'in_progress';
+
+  ViewingTab tabAt(DateTime now) {
+    if (isCancelled) return ViewingTab.cancelled;
+    if (isOpen && endTime > now.millisecondsSinceEpoch) return ViewingTab.upcoming;
+    return ViewingTab.past;
+  }
 
   String get statusLabel => switch (status) {
-        'pending' => 'Awaiting your reply',
-        'accepted' => 'Accepted',
-        'declined' => 'Declined',
+        'pending_payment' => 'Awaiting payment',
+        'confirmed' => 'Confirmed',
+        'in_progress' => 'In progress',
+        'completed' => 'Completed',
+        'cancelled' => 'Cancelled',
+        'disputed' => 'In dispute',
         _ => status,
       };
 
-  bool matchesSearch(String query, {String? listingTitle}) {
-    final q = query.trim().toLowerCase();
-    if (q.isEmpty) return true;
-    return buyerName.toLowerCase().contains(q) ||
-        message.toLowerCase().contains(q) ||
-        (listingTitle?.toLowerCase().contains(q) ?? false);
-  }
+  String get typeLabel => isSiteVisit ? 'Site visit' : 'Short stay';
 }
+
+/// Bookings on the agent's real-estate listings (vehicles are not part of this workspace).
+List<ViewingRequest> parseViewingRequests(dynamic bookings) => mapList(bookings)
+    .where((m) => m['listingType'] == 'property')
+    .map(ViewingRequest.fromMap)
+    .toList();
 
 // ═══════════════════════════════════════════════════════════════════════
 //                             NOTIFICATIONS
 // ═══════════════════════════════════════════════════════════════════════
 
-enum NotificationTab { all, messages, system, admin }
+enum NotificationTab { all, messages, viewings, listings, deals, account, admin }
 
 extension NotificationTabX on NotificationTab {
   String get label => switch (this) {
         NotificationTab.all => 'All',
         NotificationTab.messages => 'Messages',
-        NotificationTab.system => 'System',
+        NotificationTab.viewings => 'Viewings',
+        NotificationTab.listings => 'Listings',
+        NotificationTab.deals => 'Deals',
+        NotificationTab.account => 'Account',
         NotificationTab.admin => 'Admin',
       };
 }
@@ -512,6 +557,7 @@ class AgentNotification {
   final bool read;
   final int createdAt;
   final String? deepLinkScreen;
+  final String? deepLinkId;
 
   const AgentNotification({
     required this.id,
@@ -521,6 +567,7 @@ class AgentNotification {
     required this.read,
     required this.createdAt,
     this.deepLinkScreen,
+    this.deepLinkId,
   });
 
   factory AgentNotification.fromMap(Map<String, dynamic> m) => AgentNotification(
@@ -531,6 +578,7 @@ class AgentNotification {
         read: _bool(m['read']),
         createdAt: _int(m['createdAt']),
         deepLinkScreen: _optStr(m['deepLinkScreen']),
+        deepLinkId: _optStr(m['deepLinkId']),
       );
 
   /// Broadcasts can only be created by an administrator (notifications:createNotificationRecord).
@@ -544,75 +592,52 @@ class AgentNotification {
         read: read ?? this.read,
         createdAt: createdAt,
         deepLinkScreen: deepLinkScreen,
+        deepLinkId: deepLinkId,
       );
 }
 
-/// Where a notification leads, judged from what the server wrote. Unknown → none (no guessing).
-enum NotificationDestination { none, listings, deals, earnings, subscription, bookings }
+/// Where a notification leads, from the server's deep link or clearly named event. Unknown → none.
+enum NotificationDestination { none, conversation, viewings, listings, deals, earnings, subscription, followers }
 
 NotificationDestination destinationFor(AgentNotification n) {
+  switch (n.deepLinkScreen) {
+    case 'messages':
+      return NotificationDestination.conversation;
+    case 'followers':
+      return NotificationDestination.followers;
+  }
   final t = '${n.title} ${n.body}'.toLowerCase();
   if (t.contains('listing agent') || t.contains('agent accepted') || t.contains('agent declined') || t.contains('represent')) {
     return NotificationDestination.listings;
   }
   if (t.contains('subscription')) return NotificationDestination.subscription;
-  if (t.contains('booking')) return NotificationDestination.bookings;
+  if (t.contains('booking') || t.contains('viewing') || t.contains('site visit')) return NotificationDestination.viewings;
   if (t.contains('escrow') || t.contains('contract') || t.contains('dispute') || t.contains('deposit claim') || t.contains('damage claim')) {
     return NotificationDestination.deals;
   }
   if (t.contains('payout') || t.contains('wallet') || t.contains('withdraw') || t.contains('funds received') || t.contains('payment received')) {
     return NotificationDestination.earnings;
   }
+  if (t.contains('follower')) return NotificationDestination.followers;
   return NotificationDestination.none;
 }
 
-/// One row of the notifications screen: a server notification, or a buyer inquiry (a message).
-class FeedItem {
-  final NotificationTab category;
-  final String title;
-  final String body;
-  final int time;
-  final bool unread;
-  final AgentNotification? notification;
-  final Inquiry? inquiry;
-
-  const FeedItem._({
-    required this.category,
-    required this.title,
-    required this.body,
-    required this.time,
-    required this.unread,
-    this.notification,
-    this.inquiry,
-  });
-
-  factory FeedItem.fromNotification(AgentNotification n) => FeedItem._(
-        category: n.isAdminAnnouncement ? NotificationTab.admin : NotificationTab.system,
-        title: n.title,
-        body: n.body,
-        time: n.createdAt,
-        unread: !n.read,
-        notification: n,
-      );
-
-  factory FeedItem.fromInquiry(Inquiry i) => FeedItem._(
-        category: NotificationTab.messages,
-        title: i.isPending ? 'New message from ${i.buyerName}' : 'Message from ${i.buyerName}',
-        body: i.message,
-        time: i.createdAt,
-        unread: i.isPending,
-        inquiry: i,
-      );
+NotificationTab categoryOf(AgentNotification n) {
+  if (n.isAdminAnnouncement) return NotificationTab.admin;
+  return switch (destinationFor(n)) {
+    NotificationDestination.conversation => NotificationTab.messages,
+    NotificationDestination.viewings => NotificationTab.viewings,
+    NotificationDestination.listings => NotificationTab.listings,
+    NotificationDestination.deals || NotificationDestination.earnings => NotificationTab.deals,
+    _ => NotificationTab.account,
+  };
 }
 
-/// Notifications + inquiries, newest first, filtered by tab.
-List<FeedItem> buildFeed(List<AgentNotification> notifications, List<Inquiry> inquiries, NotificationTab tab) {
-  final items = <FeedItem>[
-    ...notifications.map(FeedItem.fromNotification),
-    ...inquiries.map(FeedItem.fromInquiry),
-  ].where((i) => tab == NotificationTab.all || i.category == tab).toList();
-  items.sort((a, b) => b.time.compareTo(a.time));
-  return items;
+/// Server notifications for a tab, newest first.
+List<AgentNotification> notificationsFor(List<AgentNotification> all, NotificationTab tab) {
+  final list = all.where((n) => tab == NotificationTab.all || categoryOf(n) == tab).toList();
+  list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  return list;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -806,12 +831,14 @@ class ProfileCounts {
   final int followers;
   final int following;
   final String? avatarUrl;
-  const ProfileCounts({required this.followers, required this.following, this.avatarUrl});
+  final String? bio;
+  const ProfileCounts({required this.followers, required this.following, this.avatarUrl, this.bio});
 
   factory ProfileCounts.fromMap(Map<String, dynamic> m) => ProfileCounts(
         followers: _int(m['followersCount']),
         following: _int(m['followingCount']),
         avatarUrl: _optStr(m['avatarUrl']),
+        bio: _optStr(m['bio']),
       );
 }
 

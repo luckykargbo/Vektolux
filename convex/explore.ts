@@ -47,6 +47,7 @@ export const getExploreFeed = query({
       price: number;
       currency: string;
       imageUrl?: string;
+      videoUrls?: string[];
       city: string;
       bedrooms?: number;
       bathrooms?: number;
@@ -72,7 +73,8 @@ export const getExploreFeed = query({
       );
 
       for (const p of publishedRe.slice(0, limit)) {
-        let ownerName = "Verified Agent";
+        // No account behind the listing: say so (it is not a "verified agent").
+        let ownerName = "Property owner";
         let ownerAvatar: string | undefined;
         let isVerified = false;
 
@@ -93,6 +95,7 @@ export const getExploreFeed = query({
           price: p.price,
           currency: p.currency ?? "SLE",
           imageUrl: firstImage,
+          videoUrls: p.videoUrls,
           city: p.city ?? "Sierra Leone",
           bedrooms: p.bedrooms,
           bathrooms: p.bathrooms,

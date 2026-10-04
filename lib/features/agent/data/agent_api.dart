@@ -10,6 +10,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import '../../../core/network/convex_client_wrapper.dart';
+import '../../messaging/data/messaging_api.dart';
 import '../domain/agent_models.dart';
 
 class AgentApiException implements Exception {
@@ -20,13 +21,6 @@ class AgentApiException implements Exception {
   String toString() => message;
 }
 
-/// Outcome of accepting / declining a buyer inquiry, as reported by the server.
-class InquiryResponseResult {
-  final String status;
-  final String message;
-  const InquiryResponseResult({required this.status, required this.message});
-}
-
 /// Fields the agent enters in the Add Listing flow (validated again by the server).
 class NewPropertyListing {
   final String title;
@@ -34,7 +28,11 @@ class NewPropertyListing {
   final String category;
   final double price;
   final double? hourlyRate;
+  /// PRIVATE verification address (owner/admin only; never the public location).
   final String privateAddress;
+
+  /// PRIVATE contact phone (owner/admin only; never shown publicly).
+  final String? privateContactPhone;
   final String? town;
   final String? district;
   final int? bedrooms;
@@ -42,6 +40,7 @@ class NewPropertyListing {
   final double? areaSqM;
   final List<String> amenities;
   final List<String> imageStorageIds;
+  final List<String> videoStorageIds;
   final bool publish;
 
   const NewPropertyListing({
@@ -51,6 +50,7 @@ class NewPropertyListing {
     required this.price,
     this.hourlyRate,
     required this.privateAddress,
+    this.privateContactPhone,
     this.town,
     this.district,
     this.bedrooms,
@@ -58,6 +58,7 @@ class NewPropertyListing {
     this.areaSqM,
     this.amenities = const [],
     this.imageStorageIds = const [],
+    this.videoStorageIds = const [],
     this.publish = true,
   });
 }
@@ -69,6 +70,9 @@ class AgentApi {
 
   const AgentApi({required this.client, required this.userId, this.sessionToken});
 
+  /// Conversations with clients (the shared messaging module).
+  MessagingApi get messaging => MessagingApi(client: client, userId: userId, sessionToken: sessionToken);
+
   Map<String, dynamic> _session([Map<String, dynamic> args = const {}]) => {
         ...args,
         if (sessionToken != null && sessionToken!.isNotEmpty) 'sessionToken': sessionToken,
@@ -76,13 +80,17 @@ class AgentApi {
 
   Future<dynamic> _query(String path, Map<String, dynamic> args) async {
     final res = await client.query(path, args: args);
-    if (!res.success) throw AgentApiException(res.errorMessage ?? 'The server could not load this information.');
+    if (!res.success) {
+      throw AgentApiException(friendlyServerMessage(res.errorMessage, fallback: 'The server could not load this information.'));
+    }
     return res.value;
   }
 
   Future<dynamic> _mutation(String path, Map<String, dynamic> args) async {
     final res = await client.mutation(path, args: args);
-    if (!res.success) throw AgentApiException(res.errorMessage ?? 'The server could not complete this action.');
+    if (!res.success) {
+      throw AgentApiException(friendlyServerMessage(res.errorMessage, fallback: 'The server could not complete this action.'));
+    }
     return res.value;
   }
 
@@ -172,6 +180,8 @@ class AgentApi {
       if (l.district != null) 'district': l.district,
       'country': 'Sierra Leone',
       'imageStorageIds': l.imageStorageIds,
+      if (l.videoStorageIds.isNotEmpty) 'videoStorageIds': l.videoStorageIds,
+      if (l.privateContactPhone != null && l.privateContactPhone!.isNotEmpty) 'privateContactPhone': l.privateContactPhone,
       if (l.bedrooms != null) 'bedrooms': l.bedrooms,
       if (l.bathrooms != null) 'bathrooms': l.bathrooms,
       if (l.areaSqM != null) 'areaSqM': l.areaSqM,
@@ -181,22 +191,14 @@ class AgentApi {
     return v?.toString() ?? '';
   }
 
-  // ─── Messages (buyer inquiries) ──────────────────────────────────────
+  // ─── Viewing requests (bookings on the agent's listings) ─────────────
 
-  Future<List<Inquiry>> inquiries() async {
-    final v = await _query('adminPortal:getSellerContactRequests', _session({'sellerId': userId}));
-    return mapList(v).map(Inquiry.fromMap).toList();
-  }
+  Future<List<ViewingRequest>> viewingRequests() async =>
+      parseViewingRequests(await _query('bookings:getVendorBookings', _session({'vendorId': userId})));
 
-  /// Accepting shares the agent's OWN phone number with that buyer (server behaviour).
-  Future<InquiryResponseResult> respondToInquiry(String requestId, {required bool accept}) async {
-    final v = await _mutation('adminPortal:respondToContactRequest',
-        _session({'sellerId': userId, 'requestId': requestId, 'action': accept ? 'accepted' : 'declined'}));
-    final m = v is Map ? v : const {};
-    return InquiryResponseResult(
-      status: m['status']?.toString() ?? (accept ? 'ACCEPTED' : 'DECLINED'),
-      message: m['message']?.toString() ?? '',
-    );
+  /// The listing side cancels a booking (the server applies the existing refund rules).
+  Future<void> cancelViewing(String bookingId, String reason) async {
+    await _mutation('bookings:cancelBooking', _session({'bookingId': bookingId, 'userId': userId, 'reason': reason}));
   }
 
   // ─── Notifications ───────────────────────────────────────────────────
@@ -224,6 +226,10 @@ class AgentApi {
   Future<ProfileCounts?> profileCounts() async {
     final v = await _query('users:getUserProfile', _session({'userId': userId}));
     return v is Map ? ProfileCounts.fromMap(Map<String, dynamic>.from(v)) : null;
+  }
+
+  Future<void> updateBio(String bio) async {
+    await _mutation('users:updateBio', _session({'userId': userId, 'bio': bio}));
   }
 
   Future<List<PersonSummary>> followers() async =>

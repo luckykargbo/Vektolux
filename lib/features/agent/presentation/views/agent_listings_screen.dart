@@ -138,7 +138,7 @@ class _AgentListingsScreenState extends State<AgentListingsScreen> {
         AgentEmptyState(
           icon: Icons.home_work_outlined,
           title: 'No listings yet',
-          message: reason ?? 'Add a property to publish it on the Vektolux marketplace.',
+          message: reason == null ? 'Create your first property listing.' : 'Posting opens with an active subscription.',
           actionLabel: canPost ? 'Add Listing' : null,
           onAction: canPost ? () => openAddListing(context) : null,
         ),
@@ -154,9 +154,13 @@ class _AgentListingsScreenState extends State<AgentListingsScreen> {
         ),
       ];
     }
+    final inquiries = s.inquiriesByListing;
     return [
       for (final l in visible)
-        Padding(padding: const EdgeInsets.only(bottom: AgentTokens.gap), child: AgentListingRow(listing: l)),
+        Padding(
+          padding: const EdgeInsets.only(bottom: AgentTokens.gap),
+          child: AgentListingRow(listing: l, inquiries: inquiries[l.id] ?? 0),
+        ),
     ];
   }
 }
@@ -215,7 +219,8 @@ enum _ListingAction { view, edit, publish, unpublish, delete, stopRepresenting }
 /// Horizontal listing card (Listings tab) with the actions menu.
 class AgentListingRow extends StatelessWidget {
   final AgentListing listing;
-  const AgentListingRow({super.key, required this.listing});
+  final int inquiries;
+  const AgentListingRow({super.key, required this.listing, this.inquiries = 0});
 
   @override
   Widget build(BuildContext context) {
@@ -279,6 +284,7 @@ class AgentListingRow extends StatelessWidget {
                   children: [
                     if (AgentListingSpecs.hasAny(listing)) AgentListingSpecs(listing: listing),
                     AgentStatusPill(status: listing.liveStatus),
+                    if (inquiries > 0) AgentInquiryChip(count: inquiries),
                   ],
                 ),
                 if (listing.isRepresented) ...[
@@ -460,8 +466,8 @@ class _InvitationCardState extends State<_InvitationCard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('An owner invited you to represent',
-                        style: TextStyle(fontSize: 11.5, color: AppColors.gray500, fontWeight: FontWeight.w600)),
+                    const Text('Owner invitation',
+                        style: TextStyle(fontSize: 11.5, color: AgentTokens.rentBlue, fontWeight: FontWeight.w700)),
                     const SizedBox(height: 2),
                     Text(
                       l?.title ?? 'A property listing',
@@ -480,10 +486,6 @@ class _InvitationCardState extends State<_InvitationCard> {
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 10),
-          const AgentInfoNote(
-            text: 'Accepting lets you represent this listing for its owner. The owner keeps ownership and can end it at any time.',
           ),
           const SizedBox(height: 10),
           Row(

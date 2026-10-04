@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| App version | 1.0.28 |
-| Build number | 29 |
+| App version | 1.0.29 |
+| Build number | 30 |
 | Bundle ID | `com.vektolux.app` |
 | Build type | Release, **unsigned** (built by GitHub Actions on macOS with `flutter build ios --release --no-codesign`) |
 | Status | **Test build** for installation on a physical iPhone. Not an App Store / TestFlight build. |
@@ -31,9 +31,13 @@ With a free Apple ID the app stops opening after 7 days; reinstall it the same w
 - **Orange Money stays disabled** until Orange provides its webhook documentation.
 - Moneroo has been removed from Vektolux.
 - This build talks to the live Convex backend (`ideal-poodle-813`). The newest server changes have **not been deployed yet**, so some new actions (for example booking *Confirm completed* / *Report a problem*) can show an error until the backend is deployed. Login, browsing, listings and navigation can be tested normally.
-- **New in this build: every screen fits every phone.** All app screens were checked at small Android (320/360pt), iPhone SE, iPhone 15, Pixel and Pro Max sizes with normal and large text, and every layout overflow was fixed. Very large phone font settings are capped at 115% so screens keep their layout. Screens no longer show invented details (for example "Verified Auto Dealer", "Inspected", or made-up mileage and colour on vehicles).
-- Also included from the previous build: **the Real Estate Agent workspace** (Home, Listings, Messages, Notifications and Profile tabs; add and manage listings, buyer inquiries, earnings & payouts, followers). It opens only for accounts the server reports as approved Real Estate Agents, and it needs the newest server changes, which are not deployed yet. Until then every account sees the normal app, exactly as before.
-- Still included from the previous build: the Home and Explore layout fixes and light mode, so text is readable when the phone is in Dark Mode.
+- **New in this build: the complete Real Estate Agent workspace.**
+  - **Dashboard:** real counts (total, active and unpublished listings, unread client messages, followers, active deals, earnings) and the next viewing. Quick actions: Add Property, My Listings, Messages, Viewings, Notifications. No car posting in the agent workspace.
+  - **Add Property with photos AND video:** add several photos (first one is the cover; hold and drag to reorder) and up to 3 short videos (60 s / 50 MB each). Every file uploads to Vektolux storage with a real progress bar; a failed upload shows **Retry** and is never attached. The public location (town/district) and the private verification address + contact phone are separate fields; the private ones are never published.
+  - **Messages:** real conversations with clients (each one shows the property: "Interested in: …"), with reply, read status and closing a conversation. Clients can now message a seller from any property page, and find their conversations under *Account → Messages*.
+  - **Viewing requests**, **notifications** in tabs (Messages, Viewings, Listings, Deals, Account, Admin), **profile** with bio, followers/following, public profile, earnings & payouts, support and settings.
+  - The workspace opens only for accounts the server reports as approved Real Estate Agents. **It needs the newest server changes, which are not deployed yet** (agent status, messaging, property videos). Until the backend is deployed every account sees the normal app, and messaging shows "available after the next Vektolux server update".
+- Still included: every screen fits small and large phones (text capped at 115%), the Home and Explore fixes and light mode.
 - Sign in with Apple may not work on a free-Apple-ID install: that capability needs a paid Apple Developer account.
 
 Installation through Sideloadly has not been tested by the build pipeline; please report what you see.

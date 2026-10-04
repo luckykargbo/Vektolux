@@ -2352,8 +2352,9 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     final price = (prop['price'] as num?)?.toDouble() ?? 0.0;
     final currency = prop['currency'] as String? ?? 'SLE';
     final address = prop['address'] as String? ?? 'Freetown, Sierra Leone';
-    final bedrooms = prop['bedrooms'] as int? ?? 3;
-    final bathrooms = prop['bathrooms'] as int? ?? 2;
+    // Only the listing's real details (no assumed bedroom / bathroom counts).
+    final bedrooms = (prop['bedrooms'] as num?)?.toInt();
+    final bathrooms = (prop['bathrooms'] as num?)?.toInt();
     final images = prop['images'] as List? ?? [];
     final firstImage = images.isNotEmpty ? images.first as String : '';
 
@@ -2372,6 +2373,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               longitude: (prop['longitude'] as num?)?.toDouble() ?? -13.234,
               ownerId: prop['ownerId'] as String? ?? '',
               imageUrls: images.map((e) => e.toString()).toList(),
+              videoUrls: ((prop['videoUrls'] as List?) ?? const []).map((e) => e.toString()).toList(),
               bedrooms: bedrooms,
               bathrooms: bathrooms,
               isVerified: prop['isVerified'] == true,
@@ -2649,6 +2651,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       longitude: (p['longitude'] as num?)?.toDouble() ?? -13.234,
                       ownerId: p['ownerId'] as String? ?? '',
                       imageUrls: (p['images'] as List?)?.map((e) => e.toString()).toList() ?? [],
+                      videoUrls: ((p['videoUrls'] as List?) ?? const []).map((e) => e.toString()).toList(),
                       bedrooms: p['bedrooms'] as int?,
                       bathrooms: p['bathrooms'] as int?,
                       isVerified: p['isVerified'] == true,

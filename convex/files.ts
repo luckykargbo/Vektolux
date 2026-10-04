@@ -14,7 +14,7 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { resolveOptionalUser } from "./lib/auth";
 import { consume } from "./lib/rateLimit";
-import { isAcceptableContentType, isPrivateFile } from "./lib/uploads";
+import { isPrivateFile, isPublicMediaContentType } from "./lib/uploads";
 
 const HOUR = 60 * 60 * 1000;
 const USER_UPLOADS_PER_HOUR = 60;
@@ -36,7 +36,7 @@ export const generateUploadUrl = mutation({
   },
 });
 
-/** The URL of a PUBLIC media file (listing photo, avatar). Private/identity files and non-media return null. */
+/** The URL of a PUBLIC media file (listing photo or video, avatar). Private/identity files and non-media return null. */
 export const getFileUrl = query({
   args: {
     storageId: v.string(),
@@ -46,7 +46,7 @@ export const getFileUrl = query({
     const id = ctx.db.system.normalizeId("_storage", args.storageId);
     if (!id) return null;
     const meta = await ctx.db.system.get(id);
-    if (!meta || !isAcceptableContentType(meta.contentType)) return null; // public media only
+    if (!meta || !isPublicMediaContentType(meta.contentType)) return null; // public media only
     if (await isPrivateFile(ctx, args.storageId)) return null;
     return await ctx.storage.getUrl(id);
   },

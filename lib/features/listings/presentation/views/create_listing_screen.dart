@@ -73,14 +73,12 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   // ── Uploaded Images ───────────────────────────────────────────────
   final List<StagedMediaItem> _stagedImages = [];
 
-  List<String> get _imageUrls => _stagedImages
-      .map((i) => i.remoteUrl ?? i.localPath ?? '')
-      .where((url) => url.isNotEmpty)
-      .toList();
+  /// Photos Convex confirmed (a storage id came back). Failed or still-uploading photos are
+  /// never sent: the server refuses media that did not reach storage.
+  List<StagedMediaItem> get _uploadedImages =>
+      _stagedImages.where((i) => !i.isUploading && i.error == null && i.storageId != null).toList();
 
-  List<String> get _imageStorageIds => _stagedImages
-      .map((i) => i.storageId ?? 'local_media_${i.id}')
-      .toList();
+  List<String> get _imageStorageIds => _uploadedImages.map((i) => i.storageId!).toList();
 
   // ── Verification Gate State ───────────────────────────────────────
   late bool _isUserVerified;
@@ -292,12 +290,12 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
         setState(() {
           item.isUploading = false;
           item.error = e.toString();
-          item.storageId = 'local_${DateTime.now().millisecondsSinceEpoch}';
+          item.storageId = null;
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Upload failed for "$slotLabel": $e (Staged locally)'),
+            content: Text('Upload failed for "$slotLabel". Tap Retry on the photo.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -345,6 +343,17 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   Future<void> _submitListing() async {
     if (!_canPublish) {
       _openVerificationWizard();
+      return;
+    }
+    final mediaProblem = _stagedImages.any((i) => i.isUploading)
+        ? 'Wait for the photos to finish uploading.'
+        : _stagedImages.any((i) => i.error != null)
+            ? 'Retry or remove the photos that failed to upload.'
+            : null;
+    if (mediaProblem != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(mediaProblem), behavior: SnackBarBehavior.floating),
+      );
       return;
     }
 
@@ -1589,7 +1598,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                 const Divider(),
                 _ReviewRow(
                   label: 'Photos',
-                  value: '${_imageUrls.length} photo(s) staged',
+                  value: '${_uploadedImages.length} photo(s) uploaded',
                 ),
               ],
             ),

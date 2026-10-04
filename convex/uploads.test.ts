@@ -4,7 +4,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
-import { isAcceptableContentType, MAX_UPLOAD_BYTES } from "./lib/uploads";
+import { isAcceptableContentType, isListingVideoContentType, isPublicMediaContentType, MAX_UPLOAD_BYTES } from "./lib/uploads";
 import schema from "./schema";
 import type { Id } from "./_generated/dataModel";
 
@@ -53,6 +53,21 @@ describe("content types", () => {
       expect(isAcceptableContentType(bad)).toBe(false);
     }
   });
+
+  test("property videos: phone formats are public media; pages, scripts and unknown types are not", () => {
+    for (const ok of ["video/mp4", "VIDEO/MP4", "video/quicktime", "video/webm", "video/3gpp", "video/mp4; codecs=avc1"]) {
+      expect(isListingVideoContentType(ok)).toBe(true);
+      expect(isPublicMediaContentType(ok)).toBe(true);
+    }
+    for (const bad of ["text/html", "video/html", "image/svg+xml", "application/octet-stream", "image/jpeg", undefined, ""]) {
+      expect(isListingVideoContentType(bad as any)).toBe(false);
+    }
+    expect(isPublicMediaContentType("text/html")).toBe(false);
+    expect(isPublicMediaContentType("image/svg+xml")).toBe(false);
+    expect(isPublicMediaContentType("image/png")).toBe(true);
+    // Videos are NOT accepted where only images/PDF may be attached (identity documents, avatars).
+    expect(isAcceptableContentType("video/mp4")).toBe(false);
+  });
 });
 
 describe("getFileUrl", () => {
@@ -63,6 +78,12 @@ describe("getFileUrl", () => {
     expect(await t.query(api.files.getFileUrl, { storageId: "not-a-real-id" })).toBeNull();
     await t.run(async (ctx) => ctx.db.insert("private_files", { storageId: img as string, kind: "identity_document", createdAt: Date.now() }));
     expect(await t.query(api.files.getFileUrl, { storageId: img as string })).toBeNull();
+  });
+
+  test("serves an uploaded property video (the agent's preview plays the stored file)", async () => {
+    const t = convexTest(schema, modules);
+    const vid = await store(t, "vid", "video/mp4");
+    expect(await t.query(api.files.getFileUrl, { storageId: vid as string })).toBeTypeOf("string");
   });
 });
 

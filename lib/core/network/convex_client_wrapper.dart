@@ -465,6 +465,13 @@ class ConvexClientWrapper {
     'listingAgents:getMyAgentAuthorizations',
     'listingAgents:respondToListingAgentInvitation',
     'listingAgents:revokeListingAgent',
+    // buyer ↔ seller conversations and the listing side's viewing requests
+    'adminPortal:submitContactRequest',
+    'messaging:getMyConversations',
+    'messaging:getThread',
+    'messaging:sendMessage',
+    'messaging:markThreadRead',
+    'bookings:getVendorBookings',
   };
 
   static bool _acceptsSessionToken(String functionPath) =>

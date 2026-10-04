@@ -507,6 +507,8 @@ export default defineSchema({
     areaSqM: v.optional(v.number()),
     amenities: v.optional(v.array(v.string())),
     imageUrls: v.array(v.string()),
+    // Public property videos (resolved storage URLs; at most a few short clips).
+    videoUrls: v.optional(v.array(v.string())),
 
     // Privacy & Moderation
     privateContactPhone: v.optional(v.string()),
@@ -1631,10 +1633,28 @@ export default defineSchema({
     status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("declined")),
     createdAt: v.number(),
     respondedAt: v.optional(v.number()),
+    // Conversation summary (maintained by messaging.ts; absent on requests from before messaging).
+    lastMessageAt: v.optional(v.number()),
+    lastMessagePreview: v.optional(v.string()),
+    lastSenderId: v.optional(v.id("users")),
+    buyerUnread: v.optional(v.number()),
+    sellerUnread: v.optional(v.number()),
   })
     .index("by_sellerId", ["sellerId"])
     .index("by_buyerId", ["buyerId"])
     .index("by_sellerId_status", ["sellerId", "status"]),
+
+  // ─── CONTACT MESSAGES (two-way thread on a contact request) ───────
+  // The first message of a thread is contact_requests.message; replies live here.
+  contact_messages: defineTable({
+    requestId: v.id("contact_requests"),
+    senderId: v.id("users"),
+    body: v.string(),
+    createdAt: v.number(),
+    readAt: v.optional(v.number()), // when the other participant read it
+  })
+    .index("by_requestId_and_createdAt", ["requestId", "createdAt"])
+    .index("by_senderId_and_createdAt", ["senderId", "createdAt"]),
 
   // ─── USSD OTP SESSIONS (Authentication & Escrow Payouts) ─────────
   ussd_otps: defineTable({

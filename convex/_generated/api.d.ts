@@ -46,6 +46,7 @@ import type * as realEstateEscrow from "../realEstateEscrow.js";
 import type * as roles from "../roles.js";
 import type * as feeRules from "../feeRules.js";
 import type * as listingAgents from "../listingAgents.js";
+import type * as messaging from "../messaging.js";
 import type * as reversals from "../reversals.js";
 import type * as monimeWebhooks from "../monimeWebhooks.js";
 import type * as seedData from "../seedData.js";
@@ -103,6 +104,7 @@ declare const fullApi: ApiFromModules<{
   roles: typeof roles;
   feeRules: typeof feeRules;
   listingAgents: typeof listingAgents;
+  messaging: typeof messaging;
   reversals: typeof reversals;
   monimeWebhooks: typeof monimeWebhooks;
   seedData: typeof seedData;

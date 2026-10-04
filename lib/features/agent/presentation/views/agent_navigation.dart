@@ -15,14 +15,66 @@ import '../../../auth/presentation/bloc/auth_event.dart';
 import '../../../auth/presentation/views/login_screen.dart';
 import '../../../bookings/presentation/views/my_bookings_screen.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
+import '../../../messaging/domain/messaging_models.dart';
+import '../../../messaging/presentation/conversation_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
 import '../../../real_estate/presentation/views/my_real_estate_escrows_screen.dart';
+import '../../../social/presentation/views/public_profile_screen.dart';
 import '../../../subscriptions/presentation/views/professional_subscription_screen.dart';
 import '../../domain/agent_models.dart';
 import '../bloc/agent_workspace_cubit.dart';
 import '../widgets/agent_ui.dart';
 import 'agent_add_listing_screen.dart';
 import 'agent_shell.dart';
+import 'agent_viewings_screen.dart';
+
+/// A client conversation (real thread, real composer); the inbox is re-read afterwards.
+Future<void> openConversation(BuildContext context, String conversationId) async {
+  final cubit = context.read<AgentWorkspaceCubit>();
+  await pushAgentPage(
+    context,
+    ConversationScreen(
+      api: cubit.messaging,
+      conversationId: conversationId,
+      onOpenListing: (ctx, listing) => openChatListing(ctx, listing),
+    ),
+  );
+  cubit.loadConversations();
+}
+
+/// Opens the property a conversation is about (the agent's own copy when it is in the portfolio).
+void openChatListing(BuildContext context, ChatListing listing) {
+  if (listing.type != 'property') return;
+  final portfolio = context.read<AgentWorkspaceCubit>().state.portfolio ?? const <AgentListing>[];
+  AgentListing? own;
+  for (final l in portfolio) {
+    if (l.id == listing.id) own = l;
+  }
+  openListingDetail(
+    context,
+    own ??
+        AgentListing(
+          id: listing.id,
+          title: listing.title,
+          category: listing.category,
+          price: listing.price.toDouble(),
+          hourlyRate: listing.hourlyRate?.toDouble(),
+          currency: listing.currency,
+          publicLocationText: listing.location,
+          imageUrls: [if (listing.imageUrl != null) listing.imageUrl!],
+        ),
+  );
+}
+
+void openViewings(BuildContext context) => pushAgentPage(context, const AgentViewingsScreen());
+
+/// The agent's public profile exactly as clients see it.
+void openPublicProfile(BuildContext context) {
+  final scope = AgentShellScope.of(context);
+  Navigator.of(context).push(MaterialPageRoute(
+    builder: (_) => PublicProfileScreen(userId: scope.user.id, convexClient: scope.convexClient),
+  ));
+}
 
 /// Add Listing — only offered when the server says the agent may post right now. The server
 /// checks again on submission (role approval + active subscription).
@@ -107,7 +159,8 @@ void openListingDetail(BuildContext context, AgentListing listing) {
       squareMeters: listing.areaSqM,
       // Only what the listing really has (the screen's defaults would invent amenities).
       amenities: listing.amenities,
-      isFurnished: listing.amenities.contains('Furnished'),
+      isFurnished: listing.amenities.contains('Furnished') ? true : null,
+      videoUrls: listing.videoUrls,
     ),
   ));
 }

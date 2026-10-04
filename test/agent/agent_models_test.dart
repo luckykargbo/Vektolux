@@ -209,38 +209,76 @@ void main() {
     });
   });
 
-  group('notifications feed', () {
-    final notifications = [
-      AgentNotification.fromMap(const {
-        'id': 'n1', 'targetType': 'single_user', 'title': 'Subscription active', 'body': 'Your plan is active.', 'read': false, 'createdAt': 3000,
-      }),
-      AgentNotification.fromMap(const {
-        'id': 'n2', 'targetType': 'all_users', 'title': 'Planned maintenance', 'body': 'Saturday night.', 'read': true, 'createdAt': 1000,
-      }),
-    ];
-    final inquiries = [
-      Inquiry.fromMap(const {
-        'id': 'q1', 'buyerName': 'Aminata Kamara', 'listingId': 'l1', 'listingType': 'property',
-        'message': 'Is this still available?', 'status': 'pending', 'createdAt': 2000,
-      }),
-    ];
+  group('notifications (real server rows only)', () {
+    AgentNotification n(String id, String title,
+            {String target = 'single_user', String? screen, String? linkId, bool read = false, int at = 0}) =>
+        AgentNotification(
+            id: id, targetType: target, title: title, body: '', read: read, createdAt: at, deepLinkScreen: screen, deepLinkId: linkId);
 
-    test('categories: inquiries are messages, broadcasts are admin, the rest is system', () {
-      expect(buildFeed(notifications, inquiries, NotificationTab.all).map((i) => i.title).toList(),
-          ['Subscription active', 'New message from Aminata Kamara', 'Planned maintenance']);
-      expect(buildFeed(notifications, inquiries, NotificationTab.admin).single.title, 'Planned maintenance');
-      expect(buildFeed(notifications, inquiries, NotificationTab.system).single.title, 'Subscription active');
-      expect(buildFeed(notifications, inquiries, NotificationTab.messages).single.unread, isTrue);
+    test('the server deep link decides first', () {
+      expect(destinationFor(n('a', 'New inquiry from Aminata', screen: 'messages', linkId: 'req1')), NotificationDestination.conversation);
+      expect(destinationFor(n('b', 'New follower', screen: 'followers')), NotificationDestination.followers);
     });
 
-    test('destinations are only set when the server text clearly names them', () {
-      AgentNotification n(String title) =>
-          AgentNotification(id: 'x', targetType: 'single_user', title: title, body: '', read: false, createdAt: 0);
-      expect(destinationFor(n('Listing agent invitation')), NotificationDestination.listings);
-      expect(destinationFor(n('Subscription expiring soon')), NotificationDestination.subscription);
-      expect(destinationFor(n('Booking paid')), NotificationDestination.bookings);
-      expect(destinationFor(n('Escrow funded')), NotificationDestination.deals);
-      expect(destinationFor(n('Application approved')), NotificationDestination.none);
+    test('otherwise only clearly named events get a destination', () {
+      expect(destinationFor(n('x', 'Listing agent invitation')), NotificationDestination.listings);
+      expect(destinationFor(n('x', 'Subscription expiring soon')), NotificationDestination.subscription);
+      expect(destinationFor(n('x', 'Booking paid')), NotificationDestination.viewings);
+      expect(destinationFor(n('x', 'Escrow funded')), NotificationDestination.deals);
+      expect(destinationFor(n('x', 'Payout completed to your wallet')), NotificationDestination.earnings);
+      expect(destinationFor(n('x', 'Application approved')), NotificationDestination.none);
+    });
+
+    test('tabs: broadcasts are Admin; the rest by destination; anything else is Account; newest first', () {
+      final all = [
+        n('1', 'New inquiry from Aminata', screen: 'messages', at: 5),
+        n('2', 'Planned maintenance', target: 'all_users', read: true, at: 1),
+        n('3', 'Booking confirmed', at: 4),
+        n('4', 'Escrow funded', at: 3),
+        n('5', 'Application approved', at: 2),
+        n('6', 'Listing agent invitation', at: 6),
+      ];
+      expect(notificationsFor(all, NotificationTab.all).map((x) => x.id), ['6', '1', '3', '4', '5', '2']);
+      expect(notificationsFor(all, NotificationTab.messages).single.id, '1');
+      expect(notificationsFor(all, NotificationTab.admin).single.id, '2');
+      expect(notificationsFor(all, NotificationTab.viewings).single.id, '3');
+      expect(notificationsFor(all, NotificationTab.deals).single.id, '4');
+      expect(notificationsFor(all, NotificationTab.account).single.id, '5');
+      expect(notificationsFor(all, NotificationTab.listings).single.id, '6');
+    });
+
+    test('a server row keeps its deep link; marking read changes nothing else', () {
+      final row = AgentNotification.fromMap(const {
+        'id': 'n1', 'targetType': 'single_user', 'title': 'New inquiry from Aminata', 'body': 'About "Villa": hi',
+        'read': false, 'createdAt': 3000, 'deepLinkScreen': 'messages', 'deepLinkId': 'req_9',
+      });
+      final read = row.copyWith(read: true);
+      expect([read.read, read.deepLinkScreen, read.deepLinkId, read.title], [true, 'messages', 'req_9', 'New inquiry from Aminata']);
+    });
+  });
+
+  group('viewing requests (existing booking states)', () {
+    int ms(DateTime d) => d.millisecondsSinceEpoch;
+    final now = DateTime(2026, 10, 3, 12);
+    Map<String, dynamic> booking(String id, String status, DateTime start,
+            {String listingType = 'property', String type = 'property_inspection'}) =>
+        {
+          '_id': id, 'listingType': listingType, 'listingId': 'l1', 'listingTitle': 'Villa', 'bookingType': type,
+          'status': status, 'startTime': ms(start), 'endTime': ms(start.add(const Duration(hours: 1))), 'buyerName': 'Aminata',
+        };
+
+    test('only property bookings, tabbed by the server status and the time', () {
+      final list = parseViewingRequests([
+        booking('b1', 'confirmed', DateTime(2026, 10, 4, 10)),
+        booking('b2', 'completed', DateTime(2026, 9, 30, 10)),
+        booking('b3', 'cancelled', DateTime(2026, 10, 5, 10)),
+        booking('b4', 'confirmed', DateTime(2026, 10, 4, 10), listingType: 'vehicle'),
+        booking('b5', 'confirmed', DateTime(2026, 9, 1, 10), type: 'short_stay'),
+      ]);
+      expect(list.map((v) => v.id), ['b1', 'b2', 'b3', 'b5']);
+      expect(list.map((v) => v.tabAt(now)), [ViewingTab.upcoming, ViewingTab.past, ViewingTab.cancelled, ViewingTab.past]);
+      expect([list[0].typeLabel, list[0].statusLabel], ['Site visit', 'Confirmed']);
+      expect([list[3].typeLabel, list[1].statusLabel], ['Short stay', 'Completed']);
     });
   });
 

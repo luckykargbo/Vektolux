@@ -13,7 +13,11 @@ import 'package:intl/intl.dart';
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
+import '../../../../core/widgets/vx_video_player.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
+import '../../../messaging/data/messaging_api.dart';
+import '../../../messaging/presentation/buyer_messaging.dart';
+import '../../../social/presentation/views/public_profile_screen.dart';
 import '../../../bookings/presentation/widgets/booking_modals.dart';
 import '../../../real_estate/domain/entities/property_listing_entity.dart';
 
@@ -28,13 +32,17 @@ class PropertyDetailScreen extends StatefulWidget {
   final double latitude;
   final double longitude;
   final List<String> imageUrls;
+
+  /// Public property videos (real uploaded files).
+  final List<String> videoUrls;
   final String ownerId;
   final String? ownerName;
   final String? ownerPhone;
   final int? bedrooms;
   final int? bathrooms;
   final double? squareMeters;
-  final bool isFurnished;
+  /// Null when the listing does not say (nothing is assumed).
+  final bool? isFurnished;
   final bool isVerified;
   final List<String> amenities;
 
@@ -50,22 +58,16 @@ class PropertyDetailScreen extends StatefulWidget {
     required this.latitude,
     required this.longitude,
     this.imageUrls = const [],
+    this.videoUrls = const [],
     required this.ownerId,
     this.ownerName,
     this.ownerPhone,
     this.bedrooms,
     this.bathrooms,
     this.squareMeters,
-    this.isFurnished = true,
+    this.isFurnished,
     this.isVerified = false,
-    this.amenities = const [
-      'EDSA Grid + Standby Generator',
-      '24/7 Guma Valley Water + Borehole',
-      'Air Conditioning',
-      'High-Speed Starlink WiFi',
-      'Dedicated Security Guard',
-      'Gated Compound Parking',
-    ],
+    this.amenities = const [],
   });
 
   /// Factory from PropertyListingEntity
@@ -87,18 +89,8 @@ class PropertyDetailScreen extends StatefulWidget {
       bedrooms: entity.bedrooms,
       bathrooms: entity.bathrooms,
       squareMeters: entity.areaSqM,
-      isFurnished: true,
       isVerified: entity.isVerified,
-      amenities: entity.amenities.isNotEmpty
-          ? entity.amenities
-          : const [
-              'EDSA Grid + Standby Generator',
-              '24/7 Guma Valley Water + Borehole',
-              'Air Conditioning',
-              'High-Speed Starlink WiFi',
-              'Dedicated Security Guard',
-              'Gated Compound Parking',
-            ],
+      amenities: entity.amenities,
     );
   }
 
@@ -161,6 +153,42 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
       return '${parts.last.trim()}, Sierra Leone';
     }
     return raw.endsWith('Sierra Leone') ? raw : '$raw, Sierra Leone';
+  }
+
+  List<Widget> get _specItems => [
+        if ((widget.bedrooms ?? 0) > 0) _buildSpecIcon(Icons.bed_rounded, '${widget.bedrooms} Bedrooms'),
+        if ((widget.bathrooms ?? 0) > 0) _buildSpecIcon(Icons.bathtub_outlined, '${widget.bathrooms} Bathrooms'),
+        if (widget.isFurnished != null) _buildSpecIcon(Icons.chair_outlined, widget.isFurnished! ? 'Furnished' : 'Unfurnished'),
+        if ((widget.squareMeters ?? 0) > 0) _buildSpecIcon(Icons.square_foot_rounded, '${widget.squareMeters!.toStringAsFixed(0)} m²'),
+      ];
+
+  /// Real in-app messaging with whoever listed the property (no phone numbers are shown).
+  /// The owner looking at their own listing gets no "Message" button (the server refuses
+  /// self-inquiries anyway).
+  bool get _isOwnListing {
+    try {
+      final me = context.read<AuthBloc>().state.user?.id;
+      return me != null && me.isNotEmpty && me == widget.ownerId;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _messageSeller() async {
+    final user = context.read<AuthBloc>().state.user;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to message the seller.'), behavior: SnackBarBehavior.floating),
+      );
+      return;
+    }
+    await openListingConversation(
+      context,
+      api: MessagingApi(client: context.read<ConvexClientWrapper>(), userId: user.id, sessionToken: user.sessionToken),
+      listingId: widget.id,
+      listingType: 'property',
+      listingTitle: widget.title,
+    );
   }
 
   void _handlePrimaryAction() {
@@ -416,26 +444,18 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
                   const Divider(height: 1),
                   const SizedBox(height: 16),
 
-                  // ── 3. Specs Summary Bar ──────────────────────────
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _buildSpecIcon(Icons.bed_rounded, '${widget.bedrooms ?? 3} Bedrooms'),
-                      _buildSpecIcon(Icons.bathtub_outlined, '${widget.bathrooms ?? 2} Bathrooms'),
-                      _buildSpecIcon(
-                        Icons.chair_outlined,
-                        widget.isFurnished ? 'Furnished' : 'Unfurnished',
-                      ),
-                      _buildSpecIcon(
-                        Icons.square_foot_rounded,
-                        '${widget.squareMeters?.toStringAsFixed(0) ?? 240} m²',
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 18),
-                  const Divider(height: 1),
-                  const SizedBox(height: 16),
+                  // ── 3. Specs Summary Bar (only the details the listing really has) ──
+                  if (_specItems.isNotEmpty) ...[
+                    Wrap(
+                      alignment: WrapAlignment.spaceAround,
+                      spacing: 12,
+                      runSpacing: 10,
+                      children: _specItems,
+                    ),
+                    const SizedBox(height: 18),
+                    const Divider(height: 1),
+                    const SizedBox(height: 16),
+                  ],
 
                   // ── 4. Property Description ───────────────────────
                   const Text(
@@ -460,7 +480,8 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
 
                   const SizedBox(height: 22),
 
-                  // ── 5. Amenities & Infrastructure ─────────────────
+                  // ── 5. Amenities (only what the listing lists) ─────
+                  if (widget.amenities.isNotEmpty) ...[
                   const Text(
                     'Amenities & Sierra Leone Utilities',
                     style: TextStyle(
@@ -504,9 +525,49 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
                   const Divider(height: 1),
                   const SizedBox(height: 18),
 
-                  // ── 6. Agent / Host Information ───────────────────
+                  ],
+
+                  if (widget.videoUrls.isNotEmpty) ...[
+                    // ── Video tour (real uploaded videos) ──────────────
+                    const Text(
+                      'Video Tour',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.obsidian),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        for (var i = 0; i < widget.videoUrls.length; i++)
+                          Material(
+                            color: AppColors.obsidian,
+                            borderRadius: BorderRadius.circular(14),
+                            child: InkWell(
+                              key: Key('property-video-$i'),
+                              borderRadius: BorderRadius.circular(14),
+                              onTap: () => VxVideoPlayerScreen.open(context, widget.videoUrls[i], title: widget.title),
+                              child: SizedBox(
+                                width: 132,
+                                height: 84,
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(Icons.play_circle_fill_rounded, color: AppColors.emerald, size: 34),
+                                    const SizedBox(height: 4),
+                                    Text('Video ${i + 1}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+
+                  // ── 6. Who listed it (no invented names, credentials or phone numbers) ──
                   const Text(
-                    'Listing Agent & Verification',
+                    'Listed By',
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
@@ -538,7 +599,9 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                widget.ownerName ?? 'Freetown Realty Partners',
+                                widget.ownerName ?? 'Property owner',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w700,
@@ -546,25 +609,37 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
                                 ),
                               ),
                               const SizedBox(height: 2),
-                              const Text(
-                                'Certified Real Estate Broker • Western Area Urban',
-                                style: TextStyle(fontSize: 11, color: AppColors.gray500),
-                              ),
+                              if (widget.ownerId.isNotEmpty)
+                                GestureDetector(
+                                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                                    builder: (_) => PublicProfileScreen(
+                                      userId: widget.ownerId,
+                                      convexClient: context.read<ConvexClientWrapper>(),
+                                    ),
+                                  )),
+                                  child: const Text(
+                                    'View profile',
+                                    style: TextStyle(fontSize: 12, color: AppColors.emeraldDark, fontWeight: FontWeight.w700),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.phone_outlined, color: AppColors.emeraldDark),
-                          tooltip: 'Call Broker',
-                          onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Broker phone: ${widget.ownerPhone ?? "+232 76 543 210"}'),
-                                behavior: SnackBarBehavior.floating,
-                              ),
-                            );
-                          },
-                        ),
+                        if (!_isOwnListing) ...[
+                          const SizedBox(width: 8),
+                          TextButton.icon(
+                            key: const Key('property-message-seller'),
+                            onPressed: _messageSeller,
+                            icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
+                            label: const Text('Message'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              backgroundColor: AppColors.emeraldDark,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),

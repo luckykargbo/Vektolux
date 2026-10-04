@@ -1525,24 +1525,32 @@ export const submitContactRequest = mutation({
     const buyer = await ctx.db.get(buyerDocId);
     if (!buyer) throw new Error("Buyer account not found.");
 
+    const message = args.message.trim();
+    if (!message) throw new Error("Write a message first.");
+    if (message.length > 2000) throw new Error("Messages can be at most 2000 characters.");
+
     // Resolve the listing and its owner
     let sellerId: Id<"users"> | null = null;
+    let listingTitle = "your listing";
 
     if (args.listingType === "property") {
       const propId = ctx.db.normalizeId("realEstateListings", args.listingId);
       if (!propId) throw new Error("Property listing not found.");
       const listing = await ctx.db.get(propId);
-      if (!listing) throw new Error("Property listing not found.");
+      if (!listing || listing.isDeleted === true) throw new Error("Property listing not found.");
       sellerId = listing.ownerId;
+      listingTitle = listing.title;
     } else {
       const vehId = ctx.db.normalizeId("vehicleListings", args.listingId);
       if (!vehId) throw new Error("Vehicle listing not found.");
       const listing = await ctx.db.get(vehId);
-      if (!listing) throw new Error("Vehicle listing not found.");
+      if (!listing || listing.isDeleted === true) throw new Error("Vehicle listing not found.");
       sellerId = listing.ownerId;
+      listingTitle = listing.title;
     }
 
     if (!sellerId) throw new Error("Seller not found for this listing.");
+    if (sellerId === buyerDocId) throw new Error("You cannot send an inquiry about your own listing.");
 
     // Prevent duplicate pending requests from same buyer on same listing
     const existingPending = await ctx.db
@@ -1561,14 +1569,31 @@ export const submitContactRequest = mutation({
       );
     }
 
+    const now = Date.now();
     const requestId = await ctx.db.insert("contact_requests", {
       buyerId: buyerDocId,
       sellerId,
       listingId: args.listingId,
       listingType: args.listingType,
-      message: args.message,
+      message,
       status: "pending",
-      createdAt: Date.now(),
+      createdAt: now,
+      // The inquiry opens a conversation (messaging.ts) and is unread for the seller.
+      lastMessageAt: now,
+      lastMessagePreview: message.slice(0, 140),
+      lastSenderId: buyerDocId,
+      buyerUnread: 0,
+      sellerUnread: 1,
+    });
+    await ctx.db.insert("user_notifications", {
+      userId: sellerId as string,
+      targetType: "single_user",
+      title: `New inquiry from ${buyer.name}`,
+      body: `About "${listingTitle}": ${message.slice(0, 140)}`,
+      deepLinkScreen: "messages",
+      deepLinkId: requestId as string,
+      read: false,
+      createdAt: now,
     });
 
     return {
@@ -1678,6 +1703,17 @@ export const respondToContactRequest = mutation({
     await ctx.db.patch(reqDocId, {
       status: args.action,
       respondedAt: Date.now(),
+    });
+    const responder = await ctx.db.get(sellerDocId);
+    await ctx.db.insert("user_notifications", {
+      userId: request.buyerId as string,
+      targetType: "single_user",
+      title: args.action === "accepted" ? `${responder?.name ?? "The seller"} accepted your inquiry` : "Your inquiry was declined",
+      body: args.action === "accepted" ? "You can continue the conversation in Messages." : "This conversation is now closed.",
+      deepLinkScreen: "messages",
+      deepLinkId: request._id as string,
+      read: false,
+      createdAt: Date.now(),
     });
 
     // If accepted, return the seller's phone to be shown to the buyer

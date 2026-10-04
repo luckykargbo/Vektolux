@@ -10,7 +10,11 @@ import 'package:intl/intl.dart';
 
 import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../messaging/data/messaging_api.dart';
+import '../../../messaging/presentation/buyer_messaging.dart';
+import '../../../messaging/presentation/conversation_screen.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
+import '../../../social/presentation/views/public_profile_screen.dart';
 
 class NotificationsScreen extends StatefulWidget {
   final ConvexClientWrapper convexClient;
@@ -140,6 +144,24 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       case 'profile':
         Navigator.pop(context);
         MainNavigationShell.switchToTab(context, 4);
+        break;
+      case 'messages':
+        final userId = widget.currentUserId;
+        if (userId == null) break;
+        final api = MessagingApi(client: widget.convexClient, userId: userId);
+        final conversationId = notif['deepLinkId'] as String?;
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => conversationId != null && conversationId.isNotEmpty
+              ? ConversationScreen(api: api, conversationId: conversationId)
+              : MessagesInboxScreen(api: api),
+        ));
+        break;
+      case 'followers':
+        final userId = widget.currentUserId;
+        if (userId == null) break;
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => PublicProfileScreen(userId: userId, convexClient: widget.convexClient),
+        ));
         break;
       default:
         // Already on Notifications screen

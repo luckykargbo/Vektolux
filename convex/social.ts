@@ -43,6 +43,17 @@ export const toggleFollow = mutation({
         followingId: args.targetUserId,
         createdAt: Date.now(),
       });
+      // A real event for the person being followed (unfollowing sends nothing).
+      await ctx.db.insert("user_notifications", {
+        userId: args.targetUserId as string,
+        targetType: "single_user",
+        title: "New follower",
+        body: `${user.name} started following you.`,
+        deepLinkScreen: "followers",
+        deepLinkId: args.currentUserId as string,
+        read: false,
+        createdAt: Date.now(),
+      });
       
       const newFollowingCount = (user.followingCount || 0) + 1;
       const newFollowersCount = (targetUser.followersCount || 0) + 1;

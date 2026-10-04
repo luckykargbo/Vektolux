@@ -1,14 +1,14 @@
 // lib/features/agent/presentation/views/agent_home_screen.dart
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Real Estate Agent dashboard (Home tab).
-// Header (photo, real name, verified badge only when the server computes it, role,
-// subscription label only when active, real unread count), performance cards, earnings,
-// recent listings and quick actions. Every number is a server value; while one is loading or
+// Visual and compact: header, performance cards, live counts, earnings, next viewing, recent
+// listings and quick actions. Every number is a server value; while one is loading or
 // unavailable the card says so instead of showing a made-up figure.
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:intl/intl.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/verified_badge.dart';
@@ -16,9 +16,9 @@ import '../../../../core/widgets/vektolux_avatar.dart';
 import '../../domain/agent_models.dart';
 import '../bloc/agent_workspace_cubit.dart';
 import '../widgets/agent_ui.dart';
-import 'agent_analytics_screen.dart';
 import 'agent_earnings_screen.dart';
 import 'agent_navigation.dart';
+import 'agent_people_screen.dart';
 import 'agent_settings_screen.dart';
 import 'agent_shell.dart';
 
@@ -43,13 +43,16 @@ class AgentHomeScreen extends StatelessWidget {
                 children: [
                   AgentProfileHeader(state: s, trailing: _headerButtons(context, s)),
                   if (s.status.postingBlockedReason != null) ...[
-                    const SizedBox(height: 14),
-                    _PostingBlockedBanner(reason: s.status.postingBlockedReason!),
+                    const SizedBox(height: 12),
+                    _PostingBlockedStrip(reason: s.status.postingBlockedReason!),
                   ],
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 16),
                   _PerformanceCards(state: s),
                   const SizedBox(height: AgentTokens.gap),
+                  _KpiStrip(state: s),
+                  const SizedBox(height: AgentTokens.gap),
                   _EarningsCard(state: s),
+                  ..._nextViewing(context, s),
                   const SizedBox(height: AgentTokens.sectionGap),
                   AgentSectionHeader(
                     title: 'Recent Listings',
@@ -61,7 +64,7 @@ class AgentHomeScreen extends StatelessWidget {
                   const SizedBox(height: AgentTokens.sectionGap),
                   const AgentSectionHeader(title: 'Quick Actions'),
                   const SizedBox(height: 10),
-                  const _QuickActions(),
+                  _QuickActions(state: s),
                 ],
               ),
             ),
@@ -86,6 +89,54 @@ class AgentHomeScreen extends StatelessWidget {
           onTap: () => pushAgentPage(context, const AgentSettingsScreen()),
         ),
       ];
+
+  List<Widget> _nextViewing(BuildContext context, AgentWorkspaceState s) {
+    final now = DateTime.now();
+    final upcoming = (s.viewings.data ?? const <ViewingRequest>[]).where((v) => v.tabAt(now) == ViewingTab.upcoming).toList();
+    if (upcoming.isEmpty) return const [];
+    final next = upcoming.first;
+    return [
+      const SizedBox(height: AgentTokens.gap),
+      AgentCard(
+        key: const Key('agent-next-viewing'),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        onTap: () => openViewings(context),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(color: AppColors.infoLight, borderRadius: BorderRadius.circular(12)),
+              child: const Icon(Icons.event_available_rounded, color: AgentTokens.rentBlue, size: 22),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(next.listingTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: AppColors.obsidian)),
+                  Text(
+                    '${next.typeLabel} · ${DateFormat('EEE d MMM, h:mm a').format(DateTime.fromMillisecondsSinceEpoch(next.startTime))}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: AppColors.gray500),
+                  ),
+                ],
+              ),
+            ),
+            if (upcoming.length > 1) ...[
+              const SizedBox(width: 8),
+              AgentPill(label: '+${upcoming.length - 1}', background: AppColors.infoLight, foreground: AgentTokens.rentBlue),
+            ],
+            const Icon(Icons.chevron_right_rounded, color: AppColors.gray400),
+          ],
+        ),
+      ),
+    ];
+  }
 }
 
 /// Photo, name, verified badge (server-computed), role and subscription label.
@@ -102,7 +153,6 @@ class AgentProfileHeader extends StatelessWidget {
     final label = subscriptionLabel(state.status, state.subscription);
     final avatar = state.profile.data?.avatarUrl ?? user.avatarUrl;
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         VektoluxAvatar(avatarUrl: avatar, name: user.name, radius: avatarRadius, borderWidth: 0),
         const SizedBox(width: 12),
@@ -126,7 +176,7 @@ class AgentProfileHeader extends StatelessWidget {
                     const SizedBox(width: 5),
                     const VerifiedBadge(
                       key: Key('agent-verified-badge'),
-                      customTooltip: 'Verified Real Estate Agent: approved by Vektolux with an active subscription',
+                      customTooltip: 'Verified Real Estate Agent',
                     ),
                   ],
                 ],
@@ -152,34 +202,42 @@ class AgentProfileHeader extends StatelessWidget {
   }
 }
 
-class _PostingBlockedBanner extends StatelessWidget {
+class _PostingBlockedStrip extends StatelessWidget {
   final String reason;
-  const _PostingBlockedBanner({required this.reason});
+  const _PostingBlockedStrip({required this.reason});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return Material(
       key: const Key('agent-posting-blocked'),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.amberSurface,
+      color: AppColors.amberSurface,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.amber.withValues(alpha: 0.35)),
+        side: BorderSide(color: AppColors.amber.withValues(alpha: 0.35)),
       ),
-      child: Row(
-        children: [
-          const Icon(Icons.lock_clock_outlined, color: AppColors.amberDark, size: 22),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(reason, style: const TextStyle(fontSize: 12.5, color: AppColors.obsidian, height: 1.35)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => showPostingBlockedSheet(context, reason),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+          child: Row(
+            children: [
+              const Icon(Icons.lock_clock_outlined, color: AppColors.amberDark, size: 20),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text('Posting paused · subscription needed',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.obsidian)),
+              ),
+              TextButton(
+                onPressed: () => openSubscription(context),
+                style: TextButton.styleFrom(foregroundColor: AppColors.amberDark, minimumSize: const Size(44, 32)),
+                child: const Text('Plans', style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ],
           ),
-          const SizedBox(width: 6),
-          TextButton(
-            onPressed: () => openSubscription(context),
-            style: TextButton.styleFrom(foregroundColor: AppColors.amberDark, minimumSize: const Size(44, 36)),
-            child: const Text('Plans', style: TextStyle(fontWeight: FontWeight.w800)),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -255,10 +313,9 @@ class _GreenStatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const white = Colors.white;
-    Widget valueWidget;
+    final Widget valueWidget;
     if (value != null) {
-      valueWidget = Text(formatCount(value!),
-          style: const TextStyle(color: white, fontSize: 28, fontWeight: FontWeight.w800, height: 1.1));
+      valueWidget = Text(formatCount(value!), style: const TextStyle(color: white, fontSize: 28, fontWeight: FontWeight.w800, height: 1.1));
     } else if (loading) {
       valueWidget = const SizedBox(
         height: 31,
@@ -291,8 +348,7 @@ class _GreenStatCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(label,
-                        maxLines: 2,
-                        style: const TextStyle(color: white, fontSize: 13, fontWeight: FontWeight.w700, height: 1.2)),
+                        maxLines: 2, style: const TextStyle(color: white, fontSize: 13, fontWeight: FontWeight.w700, height: 1.2)),
                   ),
                 ],
               ),
@@ -303,7 +359,7 @@ class _GreenStatCard extends StatelessWidget {
                 children: [
                   Flexible(
                     child: Text(
-                      error != null ? 'Unavailable · Retry' : 'View All',
+                      error != null ? 'Retry' : 'View All',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: white.withValues(alpha: 0.92), fontSize: 11.5, fontWeight: FontWeight.w700),
@@ -321,6 +377,85 @@ class _GreenStatCard extends StatelessWidget {
   }
 }
 
+/// Four live counts: active and unpublished listings, unread client messages, followers.
+class _KpiStrip extends StatelessWidget {
+  final AgentWorkspaceState state;
+  const _KpiStrip({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = AgentShellScope.of(context);
+    final listings = state.portfolio;
+    final items = <(Key, IconData, Color, int?, String, VoidCallback)>[
+      (
+        const Key('agent-kpi-active'),
+        Icons.check_circle_outline_rounded,
+        AppColors.emeraldDark,
+        listings?.where((l) => l.liveStatus == ListingLiveStatus.live).length,
+        'Active',
+        () => scope.openTab(AgentTab.listings),
+      ),
+      (
+        const Key('agent-kpi-unpublished'),
+        Icons.visibility_off_outlined,
+        AppColors.amberDark,
+        listings?.where((l) => !l.isPublished).length,
+        'Unpublished',
+        () => scope.openTab(AgentTab.listings),
+      ),
+      (
+        const Key('agent-kpi-messages'),
+        Icons.mark_chat_unread_outlined,
+        AgentTokens.rentBlue,
+        state.conversations.data == null ? null : state.unreadMessages,
+        'Unread',
+        () => scope.openTab(AgentTab.messages),
+      ),
+      (
+        const Key('agent-kpi-followers'),
+        Icons.people_alt_outlined,
+        AppColors.obsidianSoft,
+        state.profile.data?.followers,
+        'Followers',
+        () => pushAgentPage(context, const AgentPeopleScreen(kind: PeopleKind.followers)),
+      ),
+    ];
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            Expanded(
+              child: AgentCard(
+                key: items[i].$1,
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+                onTap: items[i].$6,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(items[i].$2, color: items[i].$3, size: 20),
+                    const SizedBox(height: 4),
+                    Text(
+                      items[i].$4 == null ? '—' : formatCount(items[i].$4!),
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: AppColors.obsidian),
+                    ),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(items[i].$5,
+                          maxLines: 1, style: const TextStyle(fontSize: 11, color: AppColors.gray500, fontWeight: FontWeight.w600)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// All-time earnings (sum of completed payouts credited to the wallet, from the server).
 /// The backend has no per-month figure, so none is shown or derived.
 class _EarningsCard extends StatelessWidget {
@@ -330,8 +465,8 @@ class _EarningsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final e = state.earnings;
-    Widget value;
-    String subtitle;
+    final Widget value;
+    String? subtitle;
     if (e.data != null) {
       value = Text(
         formatMoney(e.data!.totalEarned, currency: e.data!.currency, forceCents: true),
@@ -341,16 +476,14 @@ class _EarningsCard extends StatelessWidget {
         style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AppColors.obsidian),
       );
       final n = e.data!.count;
-      subtitle = n == 0 ? 'No completed payouts yet' : '$n completed payout${n == 1 ? '' : 's'} to your wallet';
+      subtitle = '$n payout${n == 1 ? '' : 's'}';
     } else if (e.error != null) {
-      value = const Text('Unavailable', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: AppColors.gray500));
-      subtitle = 'Tap to retry';
+      value = const Text('Unavailable · tap to retry', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.gray500));
     } else {
       value = const Padding(
         padding: EdgeInsets.symmetric(vertical: 4),
         child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.2, color: AppColors.emerald)),
       );
-      subtitle = 'Loading…';
     }
     return AgentCard(
       onTap: () => e.error != null && e.data == null
@@ -359,10 +492,10 @@ class _EarningsCard extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 46,
-            height: 46,
+            width: 44,
+            height: 44,
             decoration: const BoxDecoration(color: AppColors.emeraldSurface, shape: BoxShape.circle),
-            child: const Icon(Icons.payments_outlined, color: AppColors.emeraldDark, size: 24),
+            child: const Icon(Icons.payments_outlined, color: AppColors.emeraldDark, size: 23),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -372,11 +505,11 @@ class _EarningsCard extends StatelessWidget {
                 const Text('Total Earnings', style: TextStyle(fontSize: 12.5, color: AppColors.gray500, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 2),
                 value,
-                const SizedBox(height: 2),
-                Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, color: AppColors.gray500)),
               ],
             ),
           ),
+          if (subtitle != null)
+            AgentPill(label: subtitle, background: AppColors.emeraldSurface, foreground: AppColors.emeraldDark),
           const Icon(Icons.chevron_right_rounded, color: AppColors.gray400),
         ],
       ),
@@ -399,18 +532,19 @@ class _RecentListings extends StatelessWidget {
       return const AgentLoading(label: 'Loading your listings…');
     }
     if (listings.isEmpty) {
-      final reason = state.status.postingBlockedReason;
+      final canPost = state.status.postingBlockedReason == null;
       return AgentCard(
         child: AgentEmptyState(
           icon: Icons.home_work_outlined,
           title: 'No listings yet',
-          message: reason ?? 'Add your first property to start receiving buyer inquiries.',
-          actionLabel: reason == null ? 'Add Listing' : null,
-          onAction: reason == null ? () => openAddListing(context) : null,
+          message: canPost ? 'Create your first property listing.' : 'Posting opens with an active subscription.',
+          actionLabel: canPost ? 'Add Listing' : null,
+          onAction: canPost ? () => openAddListing(context) : null,
         ),
       );
     }
     final recent = listings.take(6).toList();
+    final inquiries = state.inquiriesByListing;
     return LayoutBuilder(
       builder: (context, constraints) {
         final cardWidth = (constraints.maxWidth - AgentTokens.gap) / 2;
@@ -423,7 +557,7 @@ class _RecentListings extends StatelessWidget {
               children: [
                 for (var i = 0; i < recent.length; i++) ...[
                   if (i > 0) const SizedBox(width: AgentTokens.gap),
-                  SizedBox(width: cardWidth, child: AgentListingTile(listing: recent[i])),
+                  SizedBox(width: cardWidth, child: AgentListingTile(listing: recent[i], inquiries: inquiries[recent[i].id] ?? 0)),
                 ],
               ],
             ),
@@ -437,7 +571,8 @@ class _RecentListings extends StatelessWidget {
 /// Vertical listing card (dashboard).
 class AgentListingTile extends StatelessWidget {
   final AgentListing listing;
-  const AgentListingTile({super.key, required this.listing});
+  final int inquiries;
+  const AgentListingTile({super.key, required this.listing, this.inquiries = 0});
 
   @override
   Widget build(BuildContext context) {
@@ -468,7 +603,15 @@ class AgentListingTile extends StatelessWidget {
           AgentListingSpecs(listing: listing),
           const Spacer(),
           const SizedBox(height: 6),
-          Align(alignment: Alignment.centerLeft, child: AgentStatusPill(status: listing.liveStatus)),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              AgentStatusPill(status: listing.liveStatus),
+              if (inquiries > 0) AgentInquiryChip(count: inquiries),
+            ],
+          ),
         ],
       ),
     );
@@ -476,36 +619,48 @@ class AgentListingTile extends StatelessWidget {
 }
 
 class _QuickActions extends StatelessWidget {
-  const _QuickActions();
+  final AgentWorkspaceState state;
+  const _QuickActions({required this.state});
 
   @override
   Widget build(BuildContext context) {
     final scope = AgentShellScope.of(context);
-    final actions = <(IconData, String, VoidCallback)>[
-      (Icons.add_home_outlined, 'Add Listing', () => openAddListing(context)),
-      (Icons.chat_bubble_outline_rounded, 'Messages', () => scope.openTab(AgentTab.messages)),
-      (Icons.insights_rounded, 'Analytics', () => pushAgentPage(context, const AgentAnalyticsScreen())),
-      (Icons.support_agent_rounded, 'Support', () => showAgentSupportSheet(context)),
+    final actions = <(IconData, String, VoidCallback, int)>[
+      (Icons.add_home_outlined, 'Add Property', () => openAddListing(context), 0),
+      (Icons.home_work_outlined, 'My Listings', () => scope.openTab(AgentTab.listings), 0),
+      (Icons.chat_bubble_outline_rounded, 'Messages', () => scope.openTab(AgentTab.messages), state.unreadMessages),
+      (Icons.event_available_outlined, 'Viewings', () => openViewings(context), state.upcomingViewingsAt(DateTime.now())),
+      (Icons.notifications_none_rounded, 'Notifications', () => scope.openTab(AgentTab.notifications), state.unreadCount),
     ];
-    return IntrinsicHeight(
+    // Five actions: all built (a plain scrolling row), so every one is reachable at any width.
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      clipBehavior: Clip.none,
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           for (var i = 0; i < actions.length; i++) ...[
             if (i > 0) const SizedBox(width: 10),
-            Expanded(
+            SizedBox(
+              width: 84,
+              height: 92,
               child: AgentCard(
                 key: Key('agent-quick-${actions[i].$2}'),
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
                 onTap: actions[i].$3,
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(color: AppColors.emeraldSurface, borderRadius: BorderRadius.circular(12)),
-                      child: Icon(actions[i].$1, color: AppColors.emeraldDark, size: 22),
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(color: AppColors.emeraldSurface, borderRadius: BorderRadius.circular(12)),
+                          child: Icon(actions[i].$1, color: AppColors.emeraldDark, size: 22),
+                        ),
+                        if (actions[i].$4 > 0) Positioned(right: -6, top: -6, child: AgentCountBadge(count: actions[i].$4)),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     FittedBox(

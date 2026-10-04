@@ -1,28 +1,27 @@
 // lib/features/agent/presentation/views/agent_add_listing_screen.dart
 // ═══════════════════════════════════════════════════════════════════════
-// VEKTOLUX — Real Estate Agent "Add Listing" flow (7 steps).
-//   1 Basic information · 2 Property details · 3 Photos · 4 Price & terms ·
-//   5 Public location · 6 Amenities · 7 Review & submit
+// VEKTOLUX — Real Estate Agent "Add Listing" flow (5 steps).
+//   1 Type & title · 2 Photos & video · 3 Details · 4 Price & location · 5 Review
 //
 // Uses the existing realEstate:createPropertyListing mutation (the server enforces role
-// approval + an active subscription) and the existing photo upload service. After submitting,
-// the listing is re-read from the server and its REAL status is shown — a submission is never
-// presented as "verified" or "approved".
+// approval + an active subscription and refuses media that never reached storage). Photos and
+// videos upload to the existing Convex storage with real progress; only confirmed uploads are
+// attached. The PUBLIC location (town/district) and the PRIVATE verification address + contact
+// phone are separate inputs. After submitting, the listing's REAL status is read back.
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
 
-import '../../../../core/network/convex_client_wrapper.dart';
-import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/sl_location_picker.dart';
 import '../../data/agent_api.dart';
 import '../../domain/agent_models.dart';
 import '../bloc/agent_workspace_cubit.dart';
 import '../widgets/agent_ui.dart';
+import '../widgets/listing_media_editor.dart';
 import 'agent_shell.dart';
 
 /// Amenity names offered to the agent (stored as plain strings on the listing).
@@ -41,32 +40,22 @@ const List<String> kAgentAmenities = [
   'Swimming pool',
 ];
 
-class _Photo {
-  final String id;
-  final Uint8List bytes;
-  String? storageId;
-  bool uploading = true;
-  String? error;
-  _Photo(this.id, this.bytes);
-}
-
 class AgentAddListingScreen extends StatefulWidget {
-  const AgentAddListingScreen({super.key});
+  /// Device picker by default; a fake in tests.
+  final ListingMediaSource mediaSource;
+
+  /// Upload transport (tests); by default each upload uses its own HTTP client.
+  final http.Client? uploadClient;
+
+  const AgentAddListingScreen({super.key, this.mediaSource = const DeviceListingMediaSource(), this.uploadClient});
 
   @override
   State<AgentAddListingScreen> createState() => _AgentAddListingScreenState();
 }
 
 class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
-  static const _steps = [
-    'Basic information',
-    'Property details',
-    'Photos',
-    'Price & terms',
-    'Public location',
-    'Amenities & features',
-    'Review & submit',
-  ];
+  static const _steps = ['Type & title', 'Photos & video', 'Details', 'Price & location', 'Review'];
+  static const _mediaStep = 1;
 
   int _step = 0;
   String? _stepError;
@@ -80,10 +69,11 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
   final _price = TextEditingController();
   final _hourly = TextEditingController();
   final _address = TextEditingController();
+  final _phone = TextEditingController();
   String? _district;
   String? _town;
   final Set<String> _amenities = {};
-  final List<_Photo> _photos = [];
+  ListingMediaController? _media;
   bool _publishNow = true;
 
   bool _submitting = false;
@@ -95,12 +85,25 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
   String? _statusReadError;
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_media == null) {
+      final scope = AgentShellScope.of(context);
+      _media = ListingMediaController(client: scope.convexClient, httpClient: widget.uploadClient);
+      if (scope.user.hasPhone) _phone.text = scope.user.phone.trim();
+    }
+  }
+
+  @override
   void dispose() {
-    for (final c in [_title, _description, _beds, _baths, _area, _price, _hourly, _address]) {
+    for (final c in [_title, _description, _beds, _baths, _area, _price, _hourly, _address, _phone]) {
       c.dispose();
     }
+    _media?.dispose();
     super.dispose();
   }
+
+  ListingMediaController get media => _media!;
 
   // ─── Validation ─────────────────────────────────────────────────────
 
@@ -113,7 +116,13 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
         if (_title.text.trim().length < 5) return 'Enter a title of at least 5 characters.';
         if (_description.text.trim().length < 20) return 'Describe the property in at least 20 characters.';
         return null;
-      case 1:
+      case _mediaStep:
+        if (!media.hasPhoto) return 'Add at least one photo.';
+        if (media.photos.every((p) => p.state == ListingMediaState.failed)) {
+          return 'No photo uploaded yet. Tap a failed photo to retry.';
+        }
+        return null;
+      case 2:
         for (final (c, label) in [(_beds, 'Bedrooms'), (_baths, 'Bathrooms')]) {
           if (c.text.trim().isNotEmpty) {
             final n = int.tryParse(c.text.trim());
@@ -125,9 +134,6 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
           if (a == null || a <= 0) return 'Enter the area in square metres, or leave it empty.';
         }
         return null;
-      case 2:
-        if (_photos.any((p) => p.uploading)) return 'Wait for the photos to finish uploading.';
-        return null;
       case 3:
         final price = double.tryParse(_price.text.trim());
         if (price == null || price <= 0) return 'Enter a valid price.';
@@ -135,14 +141,22 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
           final rate = double.tryParse(_hourly.text.trim());
           if (rate == null || rate <= 0) return 'Enter the hourly rate.';
         }
-        return null;
-      case 4:
-        if (_district == null) return 'Choose the district (shown publicly).';
-        if (_address.text.trim().length < 3) return 'Enter the street address (kept private).';
+        if (_district == null) return 'Choose the public district.';
+        if (_address.text.trim().length < 3) return 'Enter the private verification address.';
+        final phone = _phone.text.replaceAll(RegExp(r'[\s\-()]'), '');
+        if (phone.isNotEmpty && !RegExp(r'^\+?\d{8,15}$').hasMatch(phone)) return 'Enter a valid contact phone number.';
         return null;
       default:
         return null;
     }
+  }
+
+  /// Media must be settled before submitting: nothing still uploading, nothing failed.
+  String? _validateUploads() {
+    if (media.isUploading) return 'Wait for the uploads to finish.';
+    if (media.failedCount > 0) return 'Retry or remove the media that failed to upload.';
+    if (media.uploadedPhotoIds.isEmpty) return 'Add at least one photo.';
+    return null;
   }
 
   void _next() {
@@ -162,47 +176,6 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
     }
   }
 
-  // ─── Photos (existing upload service) ───────────────────────────────
-
-  Future<void> _addPhotos() async {
-    final client = AgentShellScope.of(context).convexClient;
-    final option = await ImageUploadService.showImageSourceDialog(context, allowMulti: true);
-    if (option == null) return;
-    final List<XFile> files;
-    if (option == ImageSourceOption.camera) {
-      final f = await ImageUploadService.pickImageFromCamera();
-      files = f == null ? const [] : [f];
-    } else {
-      files = await ImageUploadService.pickMultipleImages();
-    }
-    for (final file in files) {
-      final bytes = await file.readAsBytes();
-      final photo = _Photo('p${DateTime.now().microsecondsSinceEpoch}', bytes);
-      if (!mounted) return;
-      setState(() => _photos.add(photo));
-      _upload(photo, client, file.mimeType ?? 'image/jpeg');
-    }
-  }
-
-  Future<void> _upload(_Photo photo, ConvexClientWrapper client, String contentType) async {
-    setState(() {
-      photo.uploading = true;
-      photo.error = null;
-    });
-    try {
-      final res = await ImageUploadService.uploadImageBinaryWithStorageId(
-        convexClient: client,
-        imageBytes: photo.bytes,
-        contentType: contentType,
-      );
-      if (mounted) setState(() => photo.storageId = res.storageId);
-    } catch (e) {
-      if (mounted) setState(() => photo.error = 'Upload failed');
-    } finally {
-      if (mounted) setState(() => photo.uploading = false);
-    }
-  }
-
   // ─── Submit ─────────────────────────────────────────────────────────
 
   Future<void> _submit() async {
@@ -216,11 +189,18 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
         return;
       }
     }
+    final uploadErr = _validateUploads();
+    if (uploadErr != null) {
+      setState(() => _stepError = uploadErr);
+      return;
+    }
     final cubit = context.read<AgentWorkspaceCubit>();
     setState(() {
       _submitting = true;
       _submitError = null;
+      _stepError = null;
     });
+    final phone = _phone.text.replaceAll(RegExp(r'[\s\-()]'), '');
     final listing = NewPropertyListing(
       title: _title.text.trim(),
       description: _description.text.trim(),
@@ -228,14 +208,16 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
       price: double.parse(_price.text.trim()),
       hourlyRate: _category == 'hourly_guesthouse' ? double.tryParse(_hourly.text.trim()) : null,
       privateAddress: _address.text.trim(),
+      privateContactPhone: phone.isEmpty ? null : phone,
       town: _town,
       district: _district,
       bedrooms: _optInt(_beds),
       bathrooms: _optInt(_baths),
       areaSqM: _optDouble(_area),
       amenities: _amenities.toList(),
-      // Only photos the server actually stored are attached.
-      imageStorageIds: _photos.where((p) => p.storageId != null).map((p) => p.storageId!).toList(),
+      // Only files Convex confirmed are attached, in the agent's order (first photo = cover).
+      imageStorageIds: media.uploadedPhotoIds,
+      videoStorageIds: media.uploadedVideoIds,
       publish: _publishNow,
     );
     try {
@@ -282,32 +264,45 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
           foregroundColor: AppColors.obsidian,
           elevation: 0,
           scrolledUnderElevation: 0.5,
-          title: const Text('Add Listing', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+          title: const Text('Add Property', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
           leading: IconButton(icon: const Icon(Icons.close_rounded), onPressed: () => Navigator.of(context).maybePop()),
         ),
         body: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(AgentTokens.gutter, 4, AgentTokens.gutter, 10),
+              padding: const EdgeInsets.fromLTRB(AgentTokens.gutter, 2, AgentTokens.gutter, 10),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Step ${_step + 1} of ${_steps.length}',
-                      style: const TextStyle(fontSize: 12, color: AppColors.gray500, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 2),
-                  Text(_steps[_step],
-                      key: const Key('agent-add-step-title'),
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.obsidian)),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(_steps[_step],
+                            key: const Key('agent-add-step-title'),
+                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.obsidian)),
+                      ),
+                      Text('${_step + 1}/${_steps.length}',
+                          style: const TextStyle(fontSize: 12.5, color: AppColors.gray500, fontWeight: FontWeight.w700)),
+                    ],
+                  ),
                   const SizedBox(height: 10),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: (_step + 1) / _steps.length,
-                      minHeight: 5,
-                      color: AppColors.emeraldDark,
-                      backgroundColor: AppColors.gray100,
-                    ),
+                  Row(
+                    children: [
+                      for (var i = 0; i < _steps.length; i++) ...[
+                        if (i > 0) const SizedBox(width: 4),
+                        Expanded(
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: i <= _step ? AppColors.emeraldDark : AppColors.gray100,
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),
@@ -340,9 +335,9 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
                       child: OutlinedButton(
                         onPressed: _submitting ? null : _back,
                         style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 48),
                           foregroundColor: AppColors.gray700,
                           side: const BorderSide(color: AppColors.border),
-                          padding: const EdgeInsets.symmetric(vertical: 13),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                         child: Text(_step == 0 ? 'Cancel' : 'Back'),
@@ -365,7 +360,10 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
                               child: _submitting
                                   ? const SizedBox(
                                       width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                                  : Text(_publishNow ? 'Submit & publish' : 'Save unpublished'),
+                                  : FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Text(_publishNow ? 'Submit & publish' : 'Save unpublished'),
+                                    ),
                             ),
                     ),
                   ],
@@ -380,20 +378,17 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
 
   List<Widget> _stepBody(ProfessionalStatus status) => switch (_step) {
         0 => _basicStep(),
-        1 => _detailsStep(),
-        2 => _photosStep(),
-        3 => _priceStep(),
-        4 => _locationStep(),
-        5 => _amenitiesStep(),
+        _mediaStep => [ListingMediaEditor(controller: media, source: widget.mediaSource)],
+        2 => _detailsStep(),
+        3 => _priceLocationStep(),
         _ => _reviewStep(status),
       };
 
-  InputDecoration _input(String label, {String? hint, String? helper, String? prefix}) => InputDecoration(
+  InputDecoration _input(String label, {String? hint, String? prefix, IconData? icon}) => InputDecoration(
         labelText: label,
         hintText: hint,
-        helperText: helper,
-        helperMaxLines: 2,
         prefixText: prefix,
+        prefixIcon: icon == null ? null : Icon(icon, size: 20, color: AppColors.gray400),
         filled: true,
         fillColor: AppColors.gray50,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.border)),
@@ -404,25 +399,27 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
       );
 
   List<Widget> _basicStep() => [
-        const Text('Listing type', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.obsidian)),
-        const SizedBox(height: 8),
-        for (final (value, label, sub, icon) in [
-          ('sale', 'For Sale', 'Houses, apartments or land sold outright', Icons.sell_outlined),
-          ('long_term_rent', 'For Rent', 'Long-term rental, priced per year', Icons.key_outlined),
-          ('hourly_guesthouse', 'Short Stay', 'Guest house rooms by the hour or night', Icons.hotel_outlined),
-        ])
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: _choiceTile(
-              key: Key('agent-add-category-$value'),
-              selected: _category == value,
-              icon: icon,
-              title: label,
-              subtitle: sub,
-              onTap: () => setState(() => _category = value),
-            ),
-          ),
-        const SizedBox(height: 10),
+        Row(
+          children: [
+            for (final (i, (value, label, icon)) in const [
+              ('sale', 'For Sale', Icons.sell_outlined),
+              ('long_term_rent', 'For Rent', Icons.key_outlined),
+              ('hourly_guesthouse', 'Short Stay', Icons.hotel_outlined),
+            ].indexed) ...[
+              if (i > 0) const SizedBox(width: 8),
+              Expanded(
+                child: _TypeCard(
+                  key: Key('agent-add-category-$value'),
+                  selected: _category == value,
+                  icon: icon,
+                  label: label,
+                  onTap: () => setState(() => _category = value),
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 16),
         TextField(
           key: const Key('agent-add-title'),
           controller: _title,
@@ -441,149 +438,75 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
         ),
       ];
 
-  Widget _choiceTile({
-    Key? key,
-    required bool selected,
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      key: key,
-      color: selected ? AppColors.emeraldSurface : Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: selected ? AppColors.emeraldDark : AppColors.border, width: selected ? 1.5 : 1),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Icon(icon, color: selected ? AppColors.emeraldDark : AppColors.gray500),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.obsidian)),
-                    Text(subtitle, style: const TextStyle(fontSize: 12, color: AppColors.gray500)),
-                  ],
-                ),
-              ),
-              Icon(selected ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
-                  color: selected ? AppColors.emeraldDark : AppColors.gray300),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   List<Widget> _detailsStep() {
     final digits = [FilteringTextInputFormatter.digitsOnly];
     return [
-      const AgentInfoNote(text: 'Leave a field empty if it does not apply (for example, land has no bedrooms).'),
-      const SizedBox(height: 14),
       Row(
         children: [
           Expanded(
             child: TextField(
-                controller: _beds, keyboardType: TextInputType.number, inputFormatters: digits, decoration: _input('Bedrooms')),
+              key: const Key('agent-add-beds'),
+              controller: _beds,
+              keyboardType: TextInputType.number,
+              inputFormatters: digits,
+              decoration: _input('Beds', icon: Icons.bed_outlined),
+            ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 8),
           Expanded(
             child: TextField(
-                controller: _baths, keyboardType: TextInputType.number, inputFormatters: digits, decoration: _input('Bathrooms')),
+              key: const Key('agent-add-baths'),
+              controller: _baths,
+              keyboardType: TextInputType.number,
+              inputFormatters: digits,
+              decoration: _input('Baths', icon: Icons.bathtub_outlined),
+            ),
           ),
         ],
       ),
-      const SizedBox(height: 14),
+      const SizedBox(height: 12),
       TextField(
+        key: const Key('agent-add-area'),
         controller: _area,
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-        decoration: _input('Area (m²)', hint: 'e.g. 180'),
+        decoration: _input('Size (m²)', hint: 'Optional', icon: Icons.square_foot_rounded),
+      ),
+      const SizedBox(height: 18),
+      const Text('Features', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: AppColors.obsidian)),
+      const SizedBox(height: 10),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final a in kAgentAmenities)
+            FilterChip(
+              key: Key('agent-add-amenity-$a'),
+              label: Text(a),
+              selected: _amenities.contains(a),
+              showCheckmark: true,
+              selectedColor: AppColors.emeraldSurface,
+              checkmarkColor: AppColors.emeraldDark,
+              backgroundColor: Colors.white,
+              side: BorderSide(color: _amenities.contains(a) ? AppColors.emeraldDark : AppColors.border),
+              labelStyle: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: _amenities.contains(a) ? AppColors.emeraldDark : AppColors.obsidian,
+              ),
+              onSelected: (on) => setState(() => on ? _amenities.add(a) : _amenities.remove(a)),
+            ),
+        ],
       ),
     ];
   }
 
-  List<Widget> _photosStep() => [
-        const Text('Add clear photos of the property. The first photo is the cover.',
-            style: TextStyle(fontSize: 13, color: AppColors.gray600)),
-        const SizedBox(height: 12),
-        GridView.count(
-          crossAxisCount: 3,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 8,
-          crossAxisSpacing: 8,
-          children: [
-            for (final p in _photos) _photoTile(p),
-            Material(
-              color: AppColors.gray50,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
-              child: InkWell(
-                key: const Key('agent-add-photos'),
-                borderRadius: BorderRadius.circular(12),
-                onTap: _addPhotos,
-                child: const Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.add_a_photo_outlined, color: AppColors.emeraldDark),
-                    SizedBox(height: 4),
-                    Text('Add photos', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.emeraldDark)),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        const AgentInfoNote(
-          icon: Icons.videocam_off_outlined,
-          text: 'Video highlights are not supported by Vektolux listings yet, so only photos can be added.',
-        ),
-      ];
-
-  Widget _photoTile(_Photo p) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.memory(p.bytes, fit: BoxFit.cover)),
-        if (p.uploading || p.error != null)
-          Container(
-            decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.45), borderRadius: BorderRadius.circular(12)),
-            alignment: Alignment.center,
-            child: p.uploading
-                ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : TextButton(
-                    onPressed: () => _upload(p, AgentShellScope.of(context).convexClient, 'image/jpeg'),
-                    child: const Text('Retry', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-                  ),
-          ),
-        Positioned(
-          right: 4,
-          top: 4,
-          child: InkWell(
-            onTap: () => setState(() => _photos.remove(p)),
-            child: const CircleAvatar(radius: 11, backgroundColor: Colors.white, child: Icon(Icons.close_rounded, size: 14)),
-          ),
-        ),
-      ],
-    );
-  }
-
-  List<Widget> _priceStep() {
+  List<Widget> _priceLocationStep() {
     final digits = [FilteringTextInputFormatter.digitsOnly];
-    final (label, helper) = switch (_category) {
-      'long_term_rent' => ('Rent per year (SLE)', 'Long-term rentals are shown with the yearly rent.'),
-      'hourly_guesthouse' => ('Base / overnight price (SLE)', 'Also enter the hourly rate below.'),
-      _ => ('Sale price (SLE)', 'The full asking price.'),
+    final label = switch (_category) {
+      'long_term_rent' => 'Rent per year',
+      'hourly_guesthouse' => 'Overnight price',
+      _ => 'Sale price',
     };
     return [
       TextField(
@@ -591,33 +514,27 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
         controller: _price,
         keyboardType: TextInputType.number,
         inputFormatters: digits,
-        decoration: _input(label, helper: helper, prefix: 'SLE  '),
+        decoration: _input(label, prefix: 'SLE  '),
       ),
       if (_category == 'hourly_guesthouse') ...[
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         TextField(
+          key: const Key('agent-add-hourly'),
           controller: _hourly,
           keyboardType: TextInputType.number,
           inputFormatters: digits,
-          decoration: _input('Hourly rate (SLE / hr)', prefix: 'SLE  '),
+          decoration: _input('Hourly rate', prefix: 'SLE  '),
         ),
       ],
-      const SizedBox(height: 14),
-      const AgentInfoNote(
-        text: 'Platform fees and any agent commission are calculated by Vektolux when a buyer pays, using the current fee rules.',
-      ),
-    ];
-  }
-
-  List<Widget> _locationStep() => [
-        const AgentInfoNote(
-          icon: Icons.shield_outlined,
-          color: AppColors.emeraldDark,
-          background: AppColors.emeraldSurface,
-          text: 'Buyers only see the town and district. The street address stays private (you and Vektolux administrators only).',
-        ),
-        const SizedBox(height: 14),
-        SierraLeoneLocationPicker(
+      const SizedBox(height: 16),
+      _PrivacyCard(
+        key: const Key('agent-add-public-location'),
+        icon: Icons.public_rounded,
+        title: 'Public location',
+        tag: 'Buyers see this',
+        color: AppColors.emeraldDark,
+        background: AppColors.emeraldSurface,
+        child: SierraLeoneLocationPicker(
           requireDistrict: true,
           initialDistrict: _district,
           initialTown: _town,
@@ -626,41 +543,36 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
             _town = town;
           }),
         ),
-        const SizedBox(height: 14),
-        TextField(
-          key: const Key('agent-add-address'),
-          controller: _address,
-          maxLength: 200,
-          decoration: _input('Street address (private)', hint: 'Used to arrange viewings — never published'),
-        ),
-      ];
-
-  List<Widget> _amenitiesStep() => [
-        const Text('Select everything the property offers.', style: TextStyle(fontSize: 13, color: AppColors.gray600)),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
+      ),
+      const SizedBox(height: 12),
+      _PrivacyCard(
+        key: const Key('agent-add-private-details'),
+        icon: Icons.lock_outline_rounded,
+        title: 'Private details',
+        tag: 'Never published',
+        color: AppColors.obsidian,
+        background: AppColors.gray100,
+        child: Column(
           children: [
-            for (final a in kAgentAmenities)
-              FilterChip(
-                label: Text(a),
-                selected: _amenities.contains(a),
-                showCheckmark: true,
-                selectedColor: AppColors.emeraldSurface,
-                checkmarkColor: AppColors.emeraldDark,
-                backgroundColor: Colors.white,
-                side: BorderSide(color: _amenities.contains(a) ? AppColors.emeraldDark : AppColors.border),
-                labelStyle: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  color: _amenities.contains(a) ? AppColors.emeraldDark : AppColors.obsidian,
-                ),
-                onSelected: (on) => setState(() => on ? _amenities.add(a) : _amenities.remove(a)),
-              ),
+            TextField(
+              key: const Key('agent-add-address'),
+              controller: _address,
+              maxLength: 200,
+              decoration: _input('Verification address', hint: 'Street and house number', icon: Icons.home_outlined),
+            ),
+            const SizedBox(height: 4),
+            TextField(
+              key: const Key('agent-add-phone'),
+              controller: _phone,
+              keyboardType: TextInputType.phone,
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9+\s\-()]'))],
+              decoration: _input('Contact phone', hint: 'Optional', icon: Icons.call_outlined),
+            ),
           ],
         ),
-      ];
+      ),
+    ];
+  }
 
   List<Widget> _reviewStep(ProfessionalStatus status) {
     final preview = AgentListing(
@@ -675,42 +587,90 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
       bathrooms: _optInt(_baths),
       areaSqM: _optDouble(_area),
     );
-    final uploaded = _photos.where((p) => p.storageId != null).length;
-    final failed = _photos.where((p) => p.error != null).length;
-    Widget row(String k, String v) => Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    final cover = media.coverThumbnail;
+    return [
+      ListenableBuilder(
+        listenable: media,
+        builder: (context, _) => AgentCard(
+          key: const Key('agent-add-preview'),
+          padding: EdgeInsets.zero,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(width: 110, child: Text(k, style: const TextStyle(fontSize: 12.5, color: AppColors.gray500))),
-              Expanded(
-                child: Text(v, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.obsidian)),
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    cover != null
+                        ? Image.memory(cover, fit: BoxFit.cover, cacheWidth: 900)
+                        : Container(
+                            color: AppColors.gray100,
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.image_outlined, color: AppColors.gray400, size: 36),
+                          ),
+                    Positioned(
+                      left: 10,
+                      bottom: 10,
+                      child: Row(
+                        children: [
+                          _MediaCount(icon: Icons.photo_outlined, count: media.uploadedPhotoIds.length),
+                          if (media.uploadedVideoIds.isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            _MediaCount(icon: Icons.videocam_rounded, count: media.uploadedVideoIds.length),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (preview.categoryLabel != null) AgentCategoryTag(listing: preview),
+                    const SizedBox(height: 6),
+                    Text(preview.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.obsidian)),
+                    const SizedBox(height: 4),
+                    Text(preview.priceLabel,
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.emeraldDark)),
+                    const SizedBox(height: 6),
+                    AgentLocationLine(text: preview.publicLocation),
+                    if (AgentListingSpecs.hasAny(preview)) ...[
+                      const SizedBox(height: 8),
+                      AgentListingSpecs(listing: preview),
+                    ],
+                  ],
+                ),
               ),
             ],
           ),
-        );
-    return [
+        ),
+      ),
+      const SizedBox(height: 10),
       AgentCard(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            row('Type', preview.categoryLabel ?? _category),
-            row('Title', preview.title),
-            row('Price', preview.priceLabel),
-            row('Details', [
-              if (preview.bedrooms != null) '${preview.bedrooms} bed',
-              if (preview.bathrooms != null) '${preview.bathrooms} bath',
-              if (preview.areaSqM != null) '${formatCount(preview.areaSqM!.round())} m²',
-            ].join(' · ').ifEmpty('Not specified')),
-            row('Public location', preview.publicLocation),
-            row('Photos', '$uploaded uploaded${failed > 0 ? ' · $failed failed (not attached)' : ''}'),
-            row('Amenities', _amenities.isEmpty ? 'None selected' : _amenities.join(', ')),
+            _ReviewLine(icon: Icons.lock_outline_rounded, label: 'Private address', value: _address.text.trim()),
+            if (_phone.text.trim().isNotEmpty)
+              _ReviewLine(icon: Icons.call_outlined, label: 'Private phone', value: _phone.text.trim()),
+            _ReviewLine(
+              icon: Icons.checklist_rounded,
+              label: 'Features',
+              value: _amenities.isEmpty ? 'None' : '${_amenities.length} selected',
+            ),
           ],
         ),
       ),
-      const SizedBox(height: 12),
+      const SizedBox(height: 10),
       AgentCard(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
         child: SwitchListTile.adaptive(
           key: const Key('agent-add-publish-toggle'),
           contentPadding: EdgeInsets.zero,
@@ -718,27 +678,22 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
           activeTrackColor: AppColors.emeraldDark,
           onChanged: (v) => setState(() => _publishNow = v),
           title: const Text('Publish now', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.obsidian)),
-          subtitle: Text(
-            _publishNow ? 'Buyers can see it as soon as it is saved.' : 'Saved unpublished — only you can see it until you publish it.',
-            style: const TextStyle(fontSize: 12, color: AppColors.gray500),
-          ),
+          subtitle: Text(_publishNow ? 'Visible to buyers once saved' : 'Only you can see it',
+              style: const TextStyle(fontSize: 12, color: AppColors.gray500)),
         ),
       ),
-      const SizedBox(height: 12),
-      if (!status.canPostProperty)
+      if (!status.canPostProperty) ...[
+        const SizedBox(height: 10),
         AgentInfoNote(
           key: const Key('agent-add-blocked'),
           icon: Icons.lock_clock_outlined,
           color: AppColors.amberDark,
           background: AppColors.amberSurface,
           text: status.postingBlockedReason ?? 'Posting is not available right now.',
-        )
-      else
-        const AgentInfoNote(
-          text: 'Submitting does not mark the listing as verified or approved. Your posting permission is checked by Vektolux when you submit.',
         ),
+      ],
       if (_submitError != null) ...[
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         AgentInfoNote(
           key: const Key('agent-add-submit-error'),
           icon: Icons.error_outline_rounded,
@@ -754,12 +709,9 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
     final created = _created;
     final status = created?.liveStatus;
     final (title, message) = switch (status) {
-      ListingLiveStatus.live => ('Your listing is live', 'It is published on the Vektolux marketplace now.'),
-      ListingLiveStatus.unpublished => (
-          'Saved, not published',
-          'Only you can see it. Publish it from My Listings when you are ready.'
-        ),
-      null => ('Listing submitted', 'Its status could not be loaded right now. Check My Listings. (${_statusReadError ?? ''})'),
+      ListingLiveStatus.live => ('Your listing is live', 'Buyers can find it on Vektolux now.'),
+      ListingLiveStatus.unpublished => ('Saved, not published', 'Publish it from My Listings when ready.'),
+      null => ('Listing submitted', 'Its status could not be loaded. Check My Listings.'),
       _ => ('Listing saved', 'Current status: ${status.label}.'),
     };
     return Scaffold(
@@ -785,13 +737,16 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
                   style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AppColors.obsidian)),
               const SizedBox(height: 8),
               Text(message, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13.5, color: AppColors.gray600, height: 1.4)),
+              if (status == null && _statusReadError != null) ...[
+                const SizedBox(height: 4),
+                Text(_statusReadError!,
+                    textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: AppColors.gray400)),
+              ],
               if (status != null) ...[
                 const SizedBox(height: 14),
                 Center(child: AgentStatusPill(status: status)),
               ],
-              const SizedBox(height: 14),
-              const AgentInfoNote(text: 'A submitted listing is not marked as verified or approved.'),
-              const SizedBox(height: 24),
+              const SizedBox(height: 28),
               ElevatedButton(
                 onPressed: () => Navigator.of(context).pop(true),
                 style: agentPrimaryButtonStyle(),
@@ -805,6 +760,144 @@ class _AgentAddListingScreenState extends State<AgentAddListingScreen> {
   }
 }
 
-extension on String {
-  String ifEmpty(String fallback) => isEmpty ? fallback : this;
+class _TypeCard extends StatelessWidget {
+  final bool selected;
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _TypeCard({super.key, required this.selected, required this.icon, required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? AppColors.emeraldSurface : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: selected ? AppColors.emeraldDark : AppColors.border, width: selected ? 1.5 : 1),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
+          child: Column(
+            children: [
+              Icon(icon, color: selected ? AppColors.emeraldDark : AppColors.gray500, size: 24),
+              const SizedBox(height: 6),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(label,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: selected ? AppColors.emeraldDark : AppColors.obsidian,
+                    )),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PrivacyCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String tag;
+  final Color color;
+  final Color background;
+  final Widget child;
+
+  const _PrivacyCard({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.tag,
+    required this.color,
+    required this.background,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AgentCard(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(title, style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: color)),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(color: background, borderRadius: BorderRadius.circular(20)),
+                child: Text(tag, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _MediaCount extends StatelessWidget {
+  final IconData icon;
+  final int count;
+  const _MediaCount({required this.icon, required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(20)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: Colors.white),
+          const SizedBox(width: 4),
+          Text('$count', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviewLine extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _ReviewLine({required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: AppColors.gray500),
+          const SizedBox(width: 10),
+          Text(label, style: const TextStyle(fontSize: 12.5, color: AppColors.gray500)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.obsidian),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

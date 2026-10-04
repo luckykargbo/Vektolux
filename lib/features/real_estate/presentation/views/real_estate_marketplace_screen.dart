@@ -347,6 +347,7 @@ class _RealEstateMarketplaceScreenState
           latitude: 8.484,
           longitude: -13.234,
           imageUrls: images,
+          videoUrls: ((item['videoUrls'] as List?) ?? const []).map((e) => e.toString()).toList(),
           ownerId: ownerId,
           bedrooms: beds,
           bathrooms: baths,

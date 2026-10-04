@@ -71,9 +71,11 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>Scan Vektolux user QR codes for fast payments, take profile photos, and capture verification documents.</string>
+	<string>Scan Vektolux QR codes for fast payments, take profile and property photos, record property videos, and capture verification documents.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record sound with the property videos you add to your listings.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Vektolux requires photo library access to select profile photos and property listing images.</string>
+	<string>Vektolux uses your photo library to select profile photos and the photos and videos for your property listings.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Vektolux requires permission to save photos to your library.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

@@ -373,6 +373,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
           longitude: -13.2317,
           ownerId: ownerId,
           imageUrls: imageUrls,
+          videoUrls: ((item['videoUrls'] as List?) ?? const []).map((e) => e.toString()).toList(),
           bedrooms: bedrooms,
           bathrooms: bathrooms,
           isVerified: isVerified,

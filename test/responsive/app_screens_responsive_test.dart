@@ -18,6 +18,16 @@ import 'package:http/testing.dart';
 import 'package:vektolux/core/network/convex_client_wrapper.dart';
 import 'package:vektolux/core/theme/app_theme.dart';
 import 'package:vektolux/core/widgets/app_text_scale.dart';
+import 'package:vektolux/features/agent/data/agent_api.dart';
+import 'package:vektolux/features/agent/domain/agent_models.dart';
+import 'package:vektolux/features/agent/presentation/bloc/agent_workspace_cubit.dart';
+import 'package:vektolux/features/agent/presentation/views/agent_add_listing_screen.dart';
+import 'package:vektolux/features/agent/presentation/views/agent_listings_screen.dart';
+import 'package:vektolux/features/agent/presentation/views/agent_messages_screen.dart';
+import 'package:vektolux/features/agent/presentation/views/agent_notifications_screen.dart';
+import 'package:vektolux/features/agent/presentation/views/agent_profile_screen.dart';
+import 'package:vektolux/features/agent/presentation/views/agent_shell.dart';
+import 'package:vektolux/features/agent/presentation/views/agent_viewings_screen.dart';
 import 'package:vektolux/features/auth/data/repositories/auth_repository_impl.dart';
 import 'package:vektolux/features/auth/domain/entities/user_entity.dart';
 import 'package:vektolux/features/auth/domain/repositories/auth_repository.dart';
@@ -38,6 +48,9 @@ import 'package:vektolux/features/listings/presentation/views/create_listing_scr
 import 'package:vektolux/features/listings/presentation/views/my_listings_screen.dart';
 import 'package:vektolux/features/listings/presentation/views/property_detail_screen.dart';
 import 'package:vektolux/features/listings/presentation/views/vehicle_detail_screen.dart';
+import 'package:vektolux/features/messaging/data/messaging_api.dart';
+import 'package:vektolux/features/messaging/presentation/buyer_messaging.dart';
+import 'package:vektolux/features/messaging/presentation/conversation_screen.dart';
 import 'package:vektolux/features/mobility/presentation/views/auto_marketplace_screen.dart';
 import 'package:vektolux/features/mobility/presentation/views/delivery_van_booking_screen.dart';
 import 'package:vektolux/features/mobility/presentation/views/escrow_checkout_screen.dart';
@@ -390,7 +403,72 @@ final Map<String, Object? Function(Map<String, dynamic>)> _routes = {
         {'region': 'Western Area', 'district': 'Western Area Urban', 'towns': ['Freetown', 'Hill Station', 'Aberdeen']},
         {'region': 'Southern Province', 'district': 'Bo', 'towns': ['Bo']},
       ],
+  'messaging:getMyConversations': (_) => [
+        _conversation('req_1', 'seller'),
+        _conversation('req_2', 'buyer', unread: 0),
+        _conversation('req_3', 'seller', status: 'declined', unread: 0),
+      ],
+  'messaging:getThread': (a) => {
+        'conversation': _conversation(a['requestId'] as String? ?? 'req_1', 'seller'),
+        'canSend': true,
+        'truncated': false,
+        'messages': [
+          {'id': 'm1', 'fromMe': false, 'body': _longMessage, 'createdAt': _now - 2 * _day},
+          {'id': 'm2', 'fromMe': true, 'body': 'Yes, it is available. Saturday at ten works — I will meet you at the gate.', 'createdAt': _now - _day, 'readAt': _now - _day},
+          {'id': 'm3', 'fromMe': false, 'body': 'Thank you!', 'createdAt': _now - 60000},
+        ],
+      },
+  'messaging:markThreadRead': (_) => null,
+  'bookings:getVendorBookings': (_) => [
+        {..._booking(4, 'confirmed', 'held'), 'bookingType': 'property_inspection', 'buyerPhone': '+23276123456'},
+        _booking(5, 'pending_payment', 'held'),
+        _booking(6, 'cancelled', 'refunded'),
+        _booking(-3, 'completed', 'released'),
+      ],
 };
+
+const _longMessage =
+    'Good afternoon, is the five bedroom villa still available for viewing this Saturday morning around ten? My family would like to see the garden and the boys quarters.';
+
+Map<String, dynamic> _conversation(String id, String role, {String status = 'pending', int unread = 2}) => {
+      'id': id,
+      'myRole': role,
+      'status': status,
+      'counterpart': {
+        'id': role == 'seller' ? 'user_1' : 'owner_1',
+        'name': role == 'seller' ? _buyer.name : _longName,
+        'avatarUrl': null,
+        'isVerified': true,
+      },
+      'listingId': 'prop_0',
+      'listingType': 'property',
+      'listing': {
+        'id': 'prop_0', 'type': 'property', 'title': '$_longTitle #0', 'category': 'sale', 'price': 1250000000,
+        'currency': 'SLE', 'imageUrl': null, 'location': 'Inside Hill Station, Sierra Leone',
+      },
+      'lastMessage': _longMessage,
+      'lastMessageAt': _now - 3600000,
+      'lastMessageFromMe': role == 'buyer',
+      'unread': unread,
+      'createdAt': _now - _day,
+    };
+
+/// An agent page as the workspace pushes it (scope + workspace data loaded from the fake backend).
+Widget _agentPage(ConvexClientWrapper c, Widget page) => AgentShellScope(
+      user: _seller,
+      convexClient: c,
+      openTab: (_) {},
+      openClientView: () {},
+      child: BlocProvider(
+        create: (_) => AgentWorkspaceCubit(
+          api: AgentApi(client: c, userId: _seller.id, sessionToken: _seller.sessionToken),
+          status: ProfessionalStatus.fromMap(const {'role': 'real_estate_agent', 'roleApproved': true, 'hasActiveSubscription': true, 'canPostProperty': true, 'verifiedAgent': true}),
+        )..loadAll(),
+        child: page,
+      ),
+    );
+
+MessagingApi _messaging(ConvexClientWrapper c) => MessagingApi(client: c, userId: _buyer.id, sessionToken: _buyer.sessionToken);
 
 ConvexClientWrapper _client() => ConvexClientWrapper(
       deploymentUrl: 'https://example.invalid',
@@ -428,6 +506,14 @@ final _screens = <(String, UserEntity, Widget Function(ConvexClientWrapper c))>[
   ('Explore', _buyer, (c) => ExploreScreen(convexClient: c)),
   ('Buyer tab shell', _buyer, (c) => const MainNavigationShell()),
   ('Agent workspace (approved agent)', _seller, (c) => const MainNavigationShell()),
+  ('Agent listings', _seller, (c) => _agentPage(c, const AgentListingsScreen())),
+  ('Agent messages', _seller, (c) => _agentPage(c, const AgentMessagesScreen())),
+  ('Agent notifications', _seller, (c) => _agentPage(c, const AgentNotificationsScreen())),
+  ('Agent profile', _seller, (c) => _agentPage(c, const AgentProfileScreen())),
+  ('Agent viewing requests', _seller, (c) => _agentPage(c, const AgentViewingsScreen())),
+  ('Agent add property', _seller, (c) => _agentPage(c, const AgentAddListingScreen())),
+  ('Messages inbox', _buyer, (c) => MessagesInboxScreen(api: _messaging(c))),
+  ('Conversation', _buyer, (c) => ConversationScreen(api: _messaging(c), conversationId: 'req_1', refreshEvery: Duration.zero)),
   ('Login', _buyer, (c) => const LoginScreen()),
   ('Register', _buyer, (c) => const RegisterScreen()),
   ('Forgot password', _buyer, (c) => const ForgotPasswordScreen()),

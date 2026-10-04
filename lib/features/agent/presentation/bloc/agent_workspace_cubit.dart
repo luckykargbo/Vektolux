@@ -2,14 +2,16 @@
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Real Estate Agent workspace state.
 //
-// Holds the server data shared by the agent tabs (listings, inquiries, unread count, deals,
-// earnings, profile counts) so the dashboard, the tabs and the navigation badges agree.
-// Every value comes from a Convex response; after any action the data is re-read from the
-// server instead of being assumed.
+// Holds the server data shared by the agent tabs (listings, client conversations, viewing
+// requests, unread count, deals, earnings, profile) so the dashboard, the tabs and the
+// navigation badges agree. Every value comes from a Convex response; after any action the data
+// is re-read from the server instead of being assumed.
 // ═══════════════════════════════════════════════════════════════════════
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../messaging/data/messaging_api.dart';
+import '../../../messaging/domain/messaging_models.dart';
 import '../../data/agent_api.dart';
 import '../../domain/agent_models.dart';
 
@@ -42,10 +44,13 @@ class AgentWorkspaceState {
 
   /// Pending owner invitations to represent a listing.
   final Loadable<List<AgentInvitation>> invitations;
-  final Loadable<List<Inquiry>> inquiries;
+
+  /// Conversations with clients about the agent's listings.
+  final Loadable<List<Conversation>> conversations;
+  final Loadable<List<ViewingRequest>> viewings;
   final Loadable<int> unreadNotifications;
   final Loadable<List<DealContract>> deals;
-  final int viewingRequests;
+  final int viewingPasses;
   final Loadable<EarningsSummary> earnings;
   final Loadable<ProfileCounts> profile;
 
@@ -55,10 +60,11 @@ class AgentWorkspaceState {
     this.ownListings = const Loadable(),
     this.representedListings = const Loadable(),
     this.invitations = const Loadable(),
-    this.inquiries = const Loadable(),
+    this.conversations = const Loadable(),
+    this.viewings = const Loadable(),
     this.unreadNotifications = const Loadable(),
     this.deals = const Loadable(),
-    this.viewingRequests = 0,
+    this.viewingPasses = 0,
     this.earnings = const Loadable(),
     this.profile = const Loadable(),
   });
@@ -70,10 +76,11 @@ class AgentWorkspaceState {
     Loadable<List<AgentListing>>? ownListings,
     Loadable<List<AgentListing>>? representedListings,
     Loadable<List<AgentInvitation>>? invitations,
-    Loadable<List<Inquiry>>? inquiries,
+    Loadable<List<Conversation>>? conversations,
+    Loadable<List<ViewingRequest>>? viewings,
     Loadable<int>? unreadNotifications,
     Loadable<List<DealContract>>? deals,
-    int? viewingRequests,
+    int? viewingPasses,
     Loadable<EarningsSummary>? earnings,
     Loadable<ProfileCounts>? profile,
   }) =>
@@ -83,10 +90,11 @@ class AgentWorkspaceState {
         ownListings: ownListings ?? this.ownListings,
         representedListings: representedListings ?? this.representedListings,
         invitations: invitations ?? this.invitations,
-        inquiries: inquiries ?? this.inquiries,
+        conversations: conversations ?? this.conversations,
+        viewings: viewings ?? this.viewings,
         unreadNotifications: unreadNotifications ?? this.unreadNotifications,
         deals: deals ?? this.deals,
-        viewingRequests: viewingRequests ?? this.viewingRequests,
+        viewingPasses: viewingPasses ?? this.viewingPasses,
         earnings: earnings ?? this.earnings,
         profile: profile ?? this.profile,
       );
@@ -100,28 +108,48 @@ class AgentWorkspaceState {
   }
 
   int? get activeDeals => deals.data?.where((d) => d.isActive).length;
-  int get pendingInquiries => inquiries.data?.where((i) => i.isPending).length ?? 0;
+
+  /// Unread client messages (server counters).
+  int get unreadMessages => conversations.data?.fold<int>(0, (sum, c) => sum + c.unread) ?? 0;
   int get unreadCount => unreadNotifications.data ?? 0;
+
+  /// Real inquiries per listing id (conversations opened about it).
+  Map<String, int> get inquiriesByListing {
+    final out = <String, int>{};
+    for (final c in conversations.data ?? const <Conversation>[]) {
+      out[c.listingId] = (out[c.listingId] ?? 0) + 1;
+    }
+    return out;
+  }
+
+  int upcomingViewingsAt(DateTime now) =>
+      viewings.data?.where((v) => v.tabAt(now) == ViewingTab.upcoming).length ?? 0;
 }
 
 class AgentWorkspaceCubit extends Cubit<AgentWorkspaceState> {
   final AgentApi api;
 
-  AgentWorkspaceCubit({required this.api, required ProfessionalStatus status})
-      : super(AgentWorkspaceState(status: status));
+  AgentWorkspaceCubit({required this.api, required ProfessionalStatus status}) : super(AgentWorkspaceState(status: status));
+
+  MessagingApi get messaging => api.messaging;
 
   void _emit(AgentWorkspaceState s) {
     if (!isClosed) emit(s);
   }
 
-  String _message(Object e) => e is AgentApiException ? e.message : 'Something went wrong. Please try again.';
+  String _message(Object e) => e is AgentApiException
+      ? e.message
+      : e is MessagingException
+          ? e.message
+          : 'Something went wrong. Please try again.';
 
   /// Loads everything the tabs show. Each part fails independently.
   Future<void> loadAll() => Future.wait([
         refreshStatus(),
         loadListings(),
         loadRepresentations(),
-        loadInquiries(),
+        loadConversations(),
+        loadViewings(),
         loadUnreadCount(),
         loadDeals(),
         loadEarnings(),
@@ -189,14 +217,24 @@ class AgentWorkspaceCubit extends Cubit<AgentWorkspaceState> {
     }
   }
 
-  Future<void> loadInquiries() async {
-    _emit(state.copyWith(inquiries: state.inquiries.loading()));
+  Future<void> loadConversations() async {
+    _emit(state.copyWith(conversations: state.conversations.loading()));
     try {
-      final list = await api.inquiries();
-      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      _emit(state.copyWith(inquiries: state.inquiries.success(list)));
+      final list = await messaging.conversations(role: 'seller');
+      _emit(state.copyWith(conversations: state.conversations.success(list)));
     } catch (e) {
-      _emit(state.copyWith(inquiries: state.inquiries.failure(_message(e))));
+      _emit(state.copyWith(conversations: state.conversations.failure(_message(e))));
+    }
+  }
+
+  Future<void> loadViewings() async {
+    _emit(state.copyWith(viewings: state.viewings.loading()));
+    try {
+      final list = await api.viewingRequests();
+      list.sort((a, b) => a.startTime.compareTo(b.startTime));
+      _emit(state.copyWith(viewings: state.viewings.success(list)));
+    } catch (e) {
+      _emit(state.copyWith(viewings: state.viewings.failure(_message(e))));
     }
   }
 
@@ -214,10 +252,7 @@ class AgentWorkspaceCubit extends Cubit<AgentWorkspaceState> {
     _emit(state.copyWith(deals: state.deals.loading()));
     try {
       final raw = await api.realEstateEscrows();
-      _emit(state.copyWith(
-        deals: state.deals.success(parseOwnDeals(raw)),
-        viewingRequests: countViewingRequests(raw),
-      ));
+      _emit(state.copyWith(deals: state.deals.success(parseOwnDeals(raw)), viewingPasses: countViewingRequests(raw)));
     } catch (e) {
       _emit(state.copyWith(deals: state.deals.failure(_message(e))));
     }
@@ -237,11 +272,9 @@ class AgentWorkspaceCubit extends Cubit<AgentWorkspaceState> {
     _emit(state.copyWith(profile: state.profile.loading()));
     try {
       final counts = await api.profileCounts();
-      if (counts == null) {
-        _emit(state.copyWith(profile: state.profile.failure('Profile not found.')));
-      } else {
-        _emit(state.copyWith(profile: state.profile.success(counts)));
-      }
+      _emit(counts == null
+          ? state.copyWith(profile: state.profile.failure('Profile not found.'))
+          : state.copyWith(profile: state.profile.success(counts)));
     } catch (e) {
       _emit(state.copyWith(profile: state.profile.failure(_message(e))));
     }
@@ -288,12 +321,10 @@ class AgentWorkspaceCubit extends Cubit<AgentWorkspaceState> {
     return _run(() => api.stopRepresenting(id, reason), [loadRepresentations]);
   }
 
-  /// Returns the server's result, or throws [AgentApiException].
-  Future<InquiryResponseResult> respondToInquiry(Inquiry inquiry, {required bool accept}) async {
-    final result = await api.respondToInquiry(inquiry.id, accept: accept);
-    await loadInquiries();
-    return result;
-  }
+  Future<String?> cancelViewing(ViewingRequest viewing, String reason) =>
+      _run(() => api.cancelViewing(viewing.id, reason), [loadViewings]);
+
+  Future<String?> updateBio(String bio) => _run(() => api.updateBio(bio), [loadProfile]);
 
   /// Called by the notifications screen after it marks items read on the server.
   void setUnreadCount(int count) =>
