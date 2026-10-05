@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "npx convex dev",
-    "deploy": "npx convex deploy",
+    "dev": "node -e \"console.error('Disabled: convex dev deploys to the LIVE backend ideal-poodle-813 on every save. See README section 8.');process.exit(1)\"",
+    "deploy": "node -e \"console.error('Disabled: convex deploy targets the WRONG deployment. Deploying to ideal-poodle-813 needs explicit approval from the owner: see README section 8.');process.exit(1)\"",
     "typecheck": "tsc --noEmit",
     "lint": "eslint convex/",
     "test": "vitest run"

@@ -30,9 +30,9 @@ With a free Apple ID the app stops opening after 7 days; reinstall it the same w
 - **Real-money deposits and withdrawals are NOT enabled.** Do not try to pay with real money.
 - **Orange Money stays disabled** until Orange provides its webhook documentation.
 - Moneroo has been removed from Vektolux.
-- This build talks to the live Convex backend (`ideal-poodle-813`). The newest server changes have **not been deployed yet**, so some new actions (for example booking *Confirm completed* / *Report a problem*) can show an error until the backend is deployed. Login, browsing, listings and navigation can be tested normally.
+- This build talks to the live Convex backend (`ideal-poodle-813`). **The server changes for this build were deployed on 5 October 2026**, so the features below are live. Automatic background jobs (deposit/withdrawal reconciliation, escrow auto-release, subscription expiry) are paused by the owner for now.
 - **New in this build (1.0.31): agents approved by the old admin flow keep their approval.**
-  - The live server is still an OLD version (from before 2 October 2026) that does not have the agent-status check, so **nobody sees the new Agent Workspace until the backend is deployed**. This is the main reason an approved agent still sees the normal app.
+  - Approved agents see the Agent Workspace after logging out and back in. Without an active subscription it shows "Posting paused · subscription needed"; the agent's approval is kept.
   - After the deploy, an agent approved by the old flow (whose account was never switched to the agent role) gets the role back automatically: on the next login, or for everyone at once with the one-off command in the release notes. Nobody needs a new account or a new application. Clients, pending, rejected and suspended applicants get nothing extra.
 - **Also in 1.0.30: listing review, saved properties, viewing requests, Agent & Car Dealer.**
   - **Listings are reviewed before they go live:** an agent's new listing is *Pending review* until a Vektolux administrator approves it. My Listings shows every status (Active, Pending review, Rejected, Removed, Draft, Unpublished, Archived) with the administrator's reason. The admin dashboard has a new *Listing Review* page (photos, video, details; approve / reject / remove / archive with a required reason) and a *Business Roles* page.
@@ -40,13 +40,12 @@ With a free Apple ID the app stops opening after 7 days; reinstall it the same w
   - **A free site visit is a request:** the client sends *Request a Viewing*; the agent (or the owner) **accepts or declines with a reason**; the client sees the answer under *Account → My Viewings*. Property owners get *Account → Viewing Requests*.
   - **Real Estate Agent & Car Dealer:** an agent whose separate Car Dealer application is approved keeps the agent workspace and gets an *Auto* section (Add Vehicle, My Vehicles).
   - The fake "Saved addresses" were removed from Account.
-  - **All of this needs the newest server changes, which are NOT deployed yet.** Until then these new actions show "available after the next Vektolux server update" or an error.
 - Previous build: the complete Real Estate Agent workspace.
   - **Dashboard:** real counts (total, active and unpublished listings, unread client messages, followers, active deals, earnings) and the next viewing. Quick actions: Add Property, My Listings, Messages, Viewings, Notifications. No car posting in the agent workspace.
   - **Add Property with photos AND video:** add several photos (first one is the cover; hold and drag to reorder) and up to 3 short videos (60 s / 50 MB each). Every file uploads to Vektolux storage with a real progress bar; a failed upload shows **Retry** and is never attached. The public location (town/district) and the private verification address + contact phone are separate fields; the private ones are never published.
   - **Messages:** real conversations with clients (each one shows the property: "Interested in: …"), with reply, read status and closing a conversation. Clients can now message a seller from any property page, and find their conversations under *Account → Messages*.
   - **Viewing requests**, **notifications** in tabs (Messages, Viewings, Listings, Deals, Account, Admin), **profile** with bio, followers/following, public profile, earnings & payouts, support and settings.
-  - The workspace opens only for accounts the server reports as approved Real Estate Agents. **It needs the newest server changes, which are not deployed yet** (agent status, messaging, property videos). Until the backend is deployed every account sees the normal app, and messaging shows "available after the next Vektolux server update".
+  - The workspace opens only for accounts the server reports as approved Real Estate Agents.
 - Still included: every screen fits small and large phones (text capped at 115%), the Home and Explore fixes and light mode.
 - Sign in with Apple may not work on a free-Apple-ID install: that capability needs a paid Apple Developer account.
 
