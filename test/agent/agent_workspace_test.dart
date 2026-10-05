@@ -123,6 +123,14 @@ Map<String, dynamic> _status({
       'professionalTitle': carDealer ? 'Real Estate Agent & Car Dealer' : 'Real Estate Agent',
       'canManageHotel': false,
       'applications': applications,
+      'capabilities': {
+        'client': true,
+        'realEstateAgent': approved && role == 'real_estate_agent',
+        'realEstateOwner': approved && role == 'real_estate_owner',
+        'hotelOperator': approved && role == 'hotel_owner',
+        'carDealer': carDealer,
+        'admin': role == 'admin',
+      },
     };
 
 Map<String, dynamic> _listing(
@@ -687,6 +695,37 @@ void main() {
       final backend = _Backend(_agentRoutes());
       await _pump(tester, user: _clientUser, backend: backend);
       expect(_showsAgentNav(), isTrue);
+      await _tearDown(tester);
+    });
+
+    testWidgets('a legacy approved agent (saved session still "client") WITHOUT a subscription still gets the workspace; only posting is blocked', (tester) async {
+      final routes = _agentRoutes(status: _status(subscribed: false));
+      final backend = _Backend(routes);
+      await _pump(tester, user: _clientUser, backend: backend);
+      expect(_showsAgentNav(), isTrue, reason: 'agent identity does not depend on the subscription');
+      expect(_showsBuyerNav(), isFalse);
+      expect(find.byKey(const Key('agent-header-name')), findsOneWidget);
+      // the posting restriction comes from the server (canPostProperty: false), shown in the workspace
+      expect(find.byKey(const Key('agent-posting-blocked')), findsOneWidget);
+      expect(find.text('Posting paused · subscription needed'), findsOneWidget);
+      await _tearDown(tester);
+    });
+
+    testWidgets('the server\'s capabilities win: role "real_estate_agent" without the agent capability opens no workspace', (tester) async {
+      final status = _status()..['capabilities'] = {'client': true, 'realEstateAgent': false, 'carDealer': false};
+      final backend = _Backend({'subscriptions:getMyProfessionalStatus': (_) => status});
+      await _pump(tester, user: _agentUser, backend: backend);
+      expect(_showsAgentNav(), isFalse);
+      expect(backend.called('realEstate:getMyPropertyListings'), isFalse, reason: 'no agent data is loaded');
+      await _tearDown(tester);
+    });
+
+    testWidgets('a client whose status cannot be read keeps the normal app (no error screen, no workspace)', (tester) async {
+      final backend = _Backend({'subscriptions:getMyProfessionalStatus': (_) => const _ServerError('Server Error')});
+      await _pump(tester, user: _clientUser, backend: backend);
+      expect(_showsBuyerNav(), isTrue);
+      expect(_showsAgentNav(), isFalse);
+      expect(find.byKey(const Key('agent-access-error')), findsNothing);
       await _tearDown(tester);
     });
 

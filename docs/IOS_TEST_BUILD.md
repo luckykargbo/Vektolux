@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| App version | 1.0.30 |
-| Build number | 31 |
+| App version | 1.0.31 |
+| Build number | 32 |
 | Bundle ID | `com.vektolux.app` |
 | Build type | Release, **unsigned** (built by GitHub Actions on macOS with `flutter build ios --release --no-codesign`) |
 | Status | **Test build** for installation on a physical iPhone. Not an App Store / TestFlight build. |
@@ -31,7 +31,10 @@ With a free Apple ID the app stops opening after 7 days; reinstall it the same w
 - **Orange Money stays disabled** until Orange provides its webhook documentation.
 - Moneroo has been removed from Vektolux.
 - This build talks to the live Convex backend (`ideal-poodle-813`). The newest server changes have **not been deployed yet**, so some new actions (for example booking *Confirm completed* / *Report a problem*) can show an error until the backend is deployed. Login, browsing, listings and navigation can be tested normally.
-- **New in this build (1.0.30): listing review, saved properties, viewing requests, Agent & Car Dealer.**
+- **New in this build (1.0.31): agents approved by the old admin flow keep their approval.**
+  - The live server is still an OLD version (from before 2 October 2026) that does not have the agent-status check, so **nobody sees the new Agent Workspace until the backend is deployed**. This is the main reason an approved agent still sees the normal app.
+  - After the deploy, an agent approved by the old flow (whose account was never switched to the agent role) gets the role back automatically: on the next login, or for everyone at once with the one-off command in the release notes. Nobody needs a new account or a new application. Clients, pending, rejected and suspended applicants get nothing extra.
+- **Also in 1.0.30: listing review, saved properties, viewing requests, Agent & Car Dealer.**
   - **Listings are reviewed before they go live:** an agent's new listing is *Pending review* until a Vektolux administrator approves it. My Listings shows every status (Active, Pending review, Rejected, Removed, Draft, Unpublished, Archived) with the administrator's reason. The admin dashboard has a new *Listing Review* page (photos, video, details; approve / reject / remove / archive with a required reason) and a *Business Roles* page.
   - **Hearts are saved to your account** (they survive logging out and other phones). *Account → Saved Properties* lists them. Agents see real view, save, inquiry and viewing-request counts.
   - **A free site visit is a request:** the client sends *Request a Viewing*; the agent (or the owner) **accepts or declines with a reason**; the client sees the answer under *Account → My Viewings*. Property owners get *Account → Viewing Requests*.

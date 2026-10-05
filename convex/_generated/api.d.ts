@@ -48,6 +48,7 @@ import type * as feeRules from "../feeRules.js";
 import type * as listingAgents from "../listingAgents.js";
 import type * as listingModeration from "../listingModeration.js";
 import type * as listingStats from "../listingStats.js";
+import type * as legacyRoleMigration from "../legacyRoleMigration.js";
 import type * as messaging from "../messaging.js";
 import type * as reversals from "../reversals.js";
 import type * as monimeWebhooks from "../monimeWebhooks.js";
@@ -109,6 +110,7 @@ declare const fullApi: ApiFromModules<{
   listingAgents: typeof listingAgents;
   listingModeration: typeof listingModeration;
   listingStats: typeof listingStats;
+  legacyRoleMigration: typeof legacyRoleMigration;
   messaging: typeof messaging;
   reversals: typeof reversals;
   monimeWebhooks: typeof monimeWebhooks;

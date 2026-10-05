@@ -11,6 +11,7 @@ import { v } from "convex/values";
 import { userRole } from "./schema";
 import { clearLimit, consume, lockRemainingMs, minutes, recordFailure } from "./lib/rateLimit";
 import { issueSession } from "./lib/session";
+import { restoreLegacyAgentRole } from "./lib/legacyRoles";
 
 const MIN_PASSWORD_LENGTH = 8;
 // Login: 5 wrong attempts within 15 min locks that account/identifier for 15 min.
@@ -475,6 +476,11 @@ export const loginWithPhoneOrEmail = mutation({
       await clearLimit(ctx, idKey);
       await clearLimit(ctx, userKey!);
 
+      // An agent approved by the OLD admin flow (which never changed users.role) gets the role the
+      // admin granted, from the stored approval evidence only (lib/legacyRoles.ts). Idempotent.
+      const legacy = await restoreLegacyAgentRole(ctx, user, { now });
+      const role = legacy.restored ? ("agent" as const) : user.role;
+
       const { sessionToken, sessionExpiresAt } = issueSession(now);
       // Transparently upgrade legacy (SHA-256 / plaintext) password records to salted PBKDF2.
       const upgradedHash = user.passwordHash!.includes(":") ? undefined : await hashPassword(args.password);
@@ -498,7 +504,7 @@ export const loginWithPhoneOrEmail = mutation({
         name: user.name,
         email: user.email,
         phone: user.phone,
-        role: user.role,
+        role,
         address: user.address,
         region: user.region,
         isVerified: user.isVerified,

@@ -431,9 +431,22 @@ export const getMyProfessionalStatus = query({
     const grace = legacyAgentGrace(user, now);
     const isInGracePeriod = !hasActiveSubscription && grace.active;
 
+    const roleApproved = isRoleApproved(user);
+    const approvedAs = (r: typeof role) => role === r && roleApproved && user.isActive !== false;
     return {
       role,
-      roleApproved: isRoleApproved(user),
+      roleApproved,
+      // Every capability the account holds right now, decided from stored admin approvals only.
+      // They are NOT mutually exclusive (e.g. Real Estate Agent + Car Dealer on one account), and a
+      // subscription never changes them: it only gates posting (canPostProperty / canPostVehicle).
+      capabilities: {
+        client: true, // every account can browse, save, message and book
+        realEstateAgent: approvedAs("real_estate_agent"),
+        realEstateOwner: approvedAs("real_estate_owner"),
+        hotelOperator: approvedAs("hotel_owner"),
+        carDealer: hasCarDealerCapability(user),
+        admin: role === "admin",
+      },
       // Separately approved capabilities and the resulting professional identity (server-derived).
       isCarDealer: hasCarDealerCapability(user),
       professionalTitle: professionalTitle(user),

@@ -126,6 +126,35 @@ void main() {
       expect(ProfessionalStatus.fromMap(const {'role': 'real_estate_agent', 'roleApproved': 'yes'}).access,
           AgentAccess.awaitingApproval);
     });
+
+    test('the server\'s capabilities are read as sent — several at once (agent + car dealer)', () {
+      final s = ProfessionalStatus.fromMap({
+        ..._status(carDealer: true),
+        'capabilities': {'client': true, 'realEstateAgent': true, 'realEstateOwner': false, 'hotelOperator': false, 'carDealer': true, 'admin': false},
+      });
+      expect(s.capabilities!.realEstateAgent, isTrue);
+      expect(s.capabilities!.carDealer, isTrue);
+      expect(s.capabilities!.realEstateOwner, isFalse);
+      expect(s.access, AgentAccess.approved);
+      expect(s.showAutoTools, isTrue);
+    });
+
+    test('the agent capability decides when it is sent; an older server without it falls back to role + approval', () {
+      final withdrawn = ProfessionalStatus.fromMap({..._status(), 'capabilities': {'realEstateAgent': false}});
+      expect(withdrawn.access, isNot(AgentAccess.approved));
+      final older = ProfessionalStatus.fromMap(_status());
+      expect(older.capabilities, isNull);
+      expect(older.access, AgentAccess.approved);
+    });
+
+    test('a subscription is not an identity: an approved agent without one still gets the workspace', () {
+      final s = ProfessionalStatus.fromMap({
+        ..._status(subscribed: false, canPost: false, verified: false),
+        'capabilities': {'realEstateAgent': true},
+      });
+      expect(s.access, AgentAccess.approved);
+      expect(s.postingBlockedReason, isNotNull, reason: 'only posting is gated');
+    });
   });
 
   group('professional identity (Real Estate Agent ± Car Dealer)', () {

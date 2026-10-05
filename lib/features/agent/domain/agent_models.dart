@@ -70,6 +70,33 @@ class RoleApplication {
       );
 }
 
+/// What the account is allowed to be RIGHT NOW, as the server decided it from stored admin approvals
+/// (`capabilities` in `subscriptions:getMyProfessionalStatus`). Several can be true at once (e.g.
+/// Real Estate Agent + Car Dealer). A subscription never changes them; it only gates posting.
+class ProfessionalCapabilities {
+  final bool realEstateAgent;
+  final bool realEstateOwner;
+  final bool hotelOperator;
+  final bool carDealer;
+  final bool admin;
+
+  const ProfessionalCapabilities({
+    this.realEstateAgent = false,
+    this.realEstateOwner = false,
+    this.hotelOperator = false,
+    this.carDealer = false,
+    this.admin = false,
+  });
+
+  factory ProfessionalCapabilities.fromMap(Map<String, dynamic> m) => ProfessionalCapabilities(
+        realEstateAgent: _bool(m['realEstateAgent']),
+        realEstateOwner: _bool(m['realEstateOwner']),
+        hotelOperator: _bool(m['hotelOperator']),
+        carDealer: _bool(m['carDealer']),
+        admin: _bool(m['admin']),
+      );
+}
+
 /// `subscriptions:getMyProfessionalStatus` — the server's view of the caller's business role.
 class ProfessionalStatus {
   /// Business role: client | real_estate_agent | real_estate_owner | vehicle_dealer | hotel_owner | admin.
@@ -94,6 +121,9 @@ class ProfessionalStatus {
   /// Newest first (as returned by the server).
   final List<RoleApplication> applications;
 
+  /// Null when the connected server does not send capabilities yet (older backend).
+  final ProfessionalCapabilities? capabilities;
+
   const ProfessionalStatus({
     required this.role,
     required this.roleApproved,
@@ -108,6 +138,7 @@ class ProfessionalStatus {
     this.canPostVehicle = false,
     String? professionalTitle,
     this.applications = const [],
+    this.capabilities,
   }) : _professionalTitle = professionalTitle;
 
   factory ProfessionalStatus.fromMap(Map<String, dynamic> m) => ProfessionalStatus(
@@ -124,6 +155,9 @@ class ProfessionalStatus {
         canPostVehicle: _bool(m['canPostVehicle']),
         professionalTitle: _optStr(m['professionalTitle']),
         applications: mapList(m['applications']).map(RoleApplication.fromMap).toList(),
+        capabilities: m['capabilities'] is Map
+            ? ProfessionalCapabilities.fromMap(Map<String, dynamic>.from(m['capabilities'] as Map))
+            : null,
       );
 
   bool get isRealEstateAgent => role == 'real_estate_agent';
@@ -144,7 +178,9 @@ class ProfessionalStatus {
 
   AgentAccess get access {
     if (isRealEstateAgent) {
-      return roleApproved ? AgentAccess.approved : AgentAccess.awaitingApproval;
+      // The server's capability is authoritative when it is sent (an older server: role + approval).
+      final approved = capabilities?.realEstateAgent ?? roleApproved;
+      return approved ? AgentAccess.approved : AgentAccess.awaitingApproval;
     }
     // A client whose agent application is under review sees its status (a suspended or rejected
     // agent is a client again and keeps the standard app).

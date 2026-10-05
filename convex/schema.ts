@@ -434,6 +434,9 @@ export default defineSchema({
     // application; see roles.ts). Never set for a dealer whose primary role is already "dealer".
     vehicleDealerApprovedAt: v.optional(v.number()),
     vehicleDealerApprovedBy: v.optional(v.id("users")),
+    // When an agent approved by the OLD admin flow (role never changed) got role "agent" restored
+    // (lib/legacyRoles.ts). Audit trail only; it grants nothing by itself.
+    legacyRoleRestoredAt: v.optional(v.number()),
     driverVehicleId: v.optional(v.string()),
 
     // Social & Profile
