@@ -3,7 +3,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import type { Id } from "./_generated/dataModel";
 
@@ -167,5 +167,49 @@ describe("password reset", () => {
     const t = convexTest(schema, modules);
     const r: any = await t.mutation(api.auth.registerUser, { name: "S", email: "short@test.vektolux", phone: "+23276200007", password: "abc12", role: "client" });
     expect(r.success).toBe(false);
+  });
+});
+
+describe("operator recovery of the admin account (CLI only)", () => {
+  const reset = (t: T, email: string, newPassword: string) =>
+    t.mutation(internal.auth.resetAdminCredentials, { email, newPassword }) as Promise<any>;
+
+  async function makeAdmin(t: T) {
+    const r = await register(t, "old-admin@test.vektolux", "+23276100900");
+    await t.run(async (ctx) => ctx.db.patch(r.userId as Id<"users">, { role: "admin", activeRole: "admin" } as any));
+    return r;
+  }
+
+  test("sets the admin email + password, signs the old session out, and nothing else changes", async () => {
+    const t = convexTest(schema, modules);
+    const admin = await makeAdmin(t);
+    const other = await register(t, "client@test.vektolux", "+23276100901");
+    const out = await reset(t, "  New.Admin@Test.Vektolux ", "Temp-Pass-123");
+    expect(out).toMatchObject({ success: true, email: "new.admin@test.vektolux" });
+
+    expect((await login(t, "old-admin@test.vektolux", PASSWORD)).success).toBe(false);
+    const ok = await login(t, "new.admin@test.vektolux", "Temp-Pass-123");
+    expect(ok.success).toBe(true);
+    expect(ok.role).toBe("admin");
+    const u: any = await t.run(async (ctx) => ctx.db.get(admin.userId as Id<"users">));
+    expect(u.sessionToken).not.toBe(admin.sessionToken); // the old session no longer works
+    // another account is untouched
+    expect((await login(t, "client@test.vektolux", PASSWORD)).success).toBe(true);
+    const c: any = await t.run(async (ctx) => ctx.db.get(other.userId as Id<"users">));
+    expect(c.role).toBe("client");
+  });
+
+  test("refuses an email another account uses, a short password, a bad email, or anything but exactly one admin", async () => {
+    const t = convexTest(schema, modules);
+    await expect(reset(t, "a@test.vektolux", "Temp-Pass-123")).rejects.toThrow(/exactly one administrator/);
+    await makeAdmin(t);
+    await register(t, "taken@test.vektolux", "+23276100902");
+    await expect(reset(t, "taken@test.vektolux", "Temp-Pass-123")).rejects.toThrow(/already used/);
+    await expect(reset(t, "fine@test.vektolux", "short")).rejects.toThrow(/at least 8/);
+    await expect(reset(t, "not-an-email", "Temp-Pass-123")).rejects.toThrow(/valid email/);
+    const second = await register(t, "second@test.vektolux", "+23276100903");
+    await t.run(async (ctx) => ctx.db.patch(second.userId as Id<"users">, { role: "admin" } as any));
+    await expect(reset(t, "fine@test.vektolux", "Temp-Pass-123")).rejects.toThrow(/exactly one administrator account, found 2/);
+    expect((await login(t, "old-admin@test.vektolux", PASSWORD)).success).toBe(true); // nothing changed
   });
 });

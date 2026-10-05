@@ -697,6 +697,44 @@ export const seedDemoUsers = internalMutation({
   },
 });
 
+/**
+ * OPERATOR RECOVERY (CLI only — internal, never callable from an app or the dashboard):
+ *   npx convex run auth:resetAdminCredentials "{email: '…', newPassword: '…'}"
+ * Sets the sign-in email and password of THE administrator account when the owner lost access.
+ * Refuses unless there is exactly one admin account, the email is valid and not used by any other
+ * account, and the password meets the normal minimum. Signs the admin out everywhere (old sessions
+ * stop working). Changes nothing else: role, flags, wallets and every other account stay as they are.
+ */
+export const resetAdminCredentials = internalMutation({
+  args: { email: v.string(), newPassword: v.string() },
+  returns: v.object({ success: v.boolean(), adminName: v.string(), email: v.string() }),
+  handler: async (ctx, args) => {
+    const email = args.email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Please give a valid email address.");
+    if (args.newPassword.length < MIN_PASSWORD_LENGTH) {
+      throw new Error(`The password must be at least ${MIN_PASSWORD_LENGTH} characters long.`);
+    }
+    const admins = [];
+    for await (const u of ctx.db.query("users")) {
+      if (u.role === "admin") admins.push(u);
+      if (admins.length > 1) break;
+    }
+    if (admins.length !== 1) throw new Error(`Expected exactly one administrator account, found ${admins.length}. Nothing was changed.`);
+    const admin = admins[0];
+    const taken = await ctx.db.query("users").withIndex("by_email", (q) => q.eq("email", email)).first();
+    if (taken && taken._id !== admin._id) throw new Error("This email is already used by another account. Nothing was changed.");
+
+    await ctx.db.patch(admin._id, {
+      email,
+      passwordHash: await hashPassword(args.newPassword),
+      sessionToken: undefined,
+      sessionExpiresAt: undefined,
+      updatedAt: Date.now(),
+    });
+    return { success: true, adminName: admin.name, email };
+  },
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 //             PASSWORD RESET (SMS, WHATSAPP, EMAIL)
 // ═══════════════════════════════════════════════════════════════════════
