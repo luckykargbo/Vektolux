@@ -65,10 +65,12 @@ abstract class AuthRepository {
     required String providerId,
   });
 
-  /// Link Sierra Leone phone number to complete profile setup.
+  /// Link Sierra Leone phone number to complete profile setup, or change it.
+  /// Changing an existing number requires [currentPin] when the account has a PIN.
   Future<UserEntity> linkPhoneNumber({
     required String userId,
     required String phoneNumber,
+    String? currentPin,
   });
 }
 

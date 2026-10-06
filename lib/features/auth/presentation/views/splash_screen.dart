@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../../../core/services/biometric_login_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/domain/entities/user_entity.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
@@ -96,13 +97,49 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
+  /// True when the app may open: biometric login is off, or the OS confirmed the user. Otherwise
+  /// the user stays on the lock prompt or chooses to sign in with their password instead.
+  Future<bool> _passBiometricLock(UserEntity user) async {
+    final biometrics = BiometricLoginService();
+    if (!await biometrics.isEnabled(user.id)) return true;
+    while (mounted) {
+      final methods = await biometrics.availableMethods();
+      if (methods.isNotEmpty && await biometrics.authenticate('Unlock Vektolux')) return true;
+      if (!mounted) return false;
+      final retry = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Vektolux is locked'),
+          content: Text(methods.isEmpty
+              ? 'Biometrics are no longer set up on this device. Sign in with your password to continue.'
+              : 'Use ${biometricLabel(methods)} to unlock, or sign in with your password.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Sign in with password')),
+            if (methods.isNotEmpty)
+              FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Try again')),
+          ],
+        ),
+      );
+      if (retry != true) {
+        if (mounted) context.read<AuthBloc>().add(const LogoutEvent());
+        return false;
+      }
+    }
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     return BlocListener<AuthBloc, AuthState>(
       listenWhen: (prev, curr) => prev.status != curr.status,
-      listener: (context, state) {
+      listener: (context, state) async {
         if (state.status == AuthStatus.authenticated && state.user != null) {
           final user = state.user!;
+          // A restored session opens only after the OS biometric check, when the user turned on
+          // biometric login (Settings → Account & Profile).
+          if (state.hasExistingSession && !await _passBiometricLock(user)) return;
+          if (!context.mounted) return;
           // Business accounts (agent/merchant) with pending or rejected
           // verification must be sandboxed until admin approves.
           final needsVerificationGate =

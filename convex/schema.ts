@@ -391,6 +391,11 @@ export default defineSchema({
     externalAuthId: v.optional(v.string()),
     phoneNumber: v.optional(v.string()),
     lastLoginAt: v.optional(v.number()),
+    // Account deletion requested by the owner (users.requestAccountDeletion). The account is
+    // signed out and kept for a 30-day recovery window; signing in again cancels the request.
+    // Nothing purges automatically: the final erasure is a separate, retention-aware step.
+    deletionRequestedAt: v.optional(v.number()),
+    deletionScheduledFor: v.optional(v.number()),
 
     // Geolocation (for drivers)
     currentLat: v.optional(v.number()),

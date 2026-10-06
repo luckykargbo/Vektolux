@@ -7,6 +7,7 @@ import { action, mutation, query, internalMutation, internalQuery } from "./_gen
 import { internal } from "./_generated/api";
 import { verifyAppleIdToken, verifyGoogleIdToken } from "./lib/oauth";
 import { issueSession } from "./lib/session";
+import { verifyAndTrackPin } from "./lib/pin";
 import { v } from "convex/values";
 import { userRole } from "./schema";
 import { verifyPassword } from "./auth";
@@ -162,6 +163,23 @@ export const getUserByEmail = internalQuery({
 //                    UPDATE USER PROFILE
 // ═══════════════════════════════════════════════════════════════════════
 
+/** True when the user's identity (and therefore their name) has been verified by Vektolux. */
+function isIdentityVerified(user: {
+  isVerified?: boolean;
+  verificationStatus?: string;
+  kycStatus?: string;
+}): boolean {
+  return (
+    user.isVerified === true ||
+    user.verificationStatus === "approved" ||
+    user.verificationStatus === "verified" ||
+    user.verificationStatus === "VERIFIED" ||
+    user.kycStatus === "approved" ||
+    user.kycStatus === "verified" ||
+    user.kycStatus === "VERIFIED"
+  );
+}
+
 export const updateUserProfile = mutation({
   args: {
     sessionToken: v.optional(v.string()),
@@ -204,9 +222,18 @@ export const updateUserProfile = mutation({
       throw new Error(`User not found with identifier: ${args.userId}`);
     }
 
+    // A verified identity's name is authoritative and cannot be changed by the account holder.
+    const nameChanged = args.name !== undefined && args.name.trim() !== userDoc.name;
+    if (nameChanged && isIdentityVerified(userDoc)) {
+      throw new Error("Your name is verified and cannot be changed.");
+    }
+    // The phone number changes only through linkPhoneNumber (PIN-protected, uniqueness-checked).
+    if (args.phone !== undefined && args.phone !== userDoc.phone) {
+      throw new Error("Change your phone number from Account & Profile.");
+    }
+
     const updates: Record<string, unknown> = { updatedAt: Date.now() };
-    if (args.name !== undefined) updates.name = args.name;
-    if (args.phone !== undefined) updates.phone = args.phone;
+    if (nameChanged) updates.name = args.name!.trim();
     if (args.avatarUrl !== undefined) updates.avatarUrl = args.avatarUrl;
     if (args.bio !== undefined) updates.bio = args.bio;
     if (args.address !== undefined) updates.address = args.address;
@@ -553,6 +580,8 @@ export const getUserProfile = query({
       isVerifiedSeller,
       canPublishListings: isVerifiedSeller || user.role === "admin",
       kycStatus: isSelf ? user.kycStatus : undefined,
+      identityVerified: isIdentityVerified(user),
+      memberSince: isSelf ? user._creationTime : undefined,
     };
   },
 });
@@ -887,6 +916,62 @@ export const deleteUserAccount = mutation({
   },
 });
 
+const ACCOUNT_DELETION_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * The account owner asks for their account to be deleted. Nothing is erased here: the account
+ * is marked deletion-pending for 30 days and signed out. Signing in again within that window
+ * cancels the request. Financial, audit and legally retained records are never touched by this.
+ */
+export const requestAccountDeletion = mutation({
+  args: {
+    sessionToken: v.optional(v.string()),
+    userId: v.optional(v.string()), // consistency check only
+    currentPin: v.optional(v.string()), // required when the account has a PIN
+  },
+  returns: v.object({
+    success: v.boolean(),
+    deletionScheduledFor: v.optional(v.number()),
+    errorCode: v.optional(v.string()),
+    message: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    const { userId, user } = await requireSelf(ctx, args.sessionToken, args.userId);
+
+    if (user.walletPinHash) {
+      const check = await verifyAndTrackPin(ctx, user, args.currentPin);
+      if (!check.ok) return { success: false, errorCode: check.code, message: check.message };
+    }
+
+    const balances = await ctx.db
+      .query("walletBalances")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .take(20);
+    const holdsFunds = balances.some(
+      (b) => b.availableBalance > 0 || b.pendingBalance > 0 || (b.escrowBalance ?? 0) > 0
+    );
+    if (holdsFunds) {
+      return {
+        success: false,
+        errorCode: "FUNDS_REMAINING",
+        message: "Withdraw your wallet balance and settle any escrow before deleting your account.",
+      };
+    }
+
+    const now = Date.now();
+    const deletionScheduledFor = user.deletionScheduledFor ?? now + ACCOUNT_DELETION_GRACE_MS;
+    await ctx.db.patch(userId, {
+      deletionRequestedAt: user.deletionRequestedAt ?? now,
+      deletionScheduledFor,
+      // Sign out everywhere.
+      sessionToken: undefined,
+      sessionExpiresAt: undefined,
+      updatedAt: now,
+    });
+    return { success: true, deletionScheduledFor };
+  },
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 //                  AUTHENTICATE WITH OAUTH (Google / Apple)
 // ═══════════════════════════════════════════════════════════════════════
@@ -972,6 +1057,9 @@ export const completeSocialSignIn = internalMutation({
         authProvider: args.provider,
         externalAuthId: args.sub,
         ...(args.avatarUrl && !existing.avatarUrl ? { avatarUrl: args.avatarUrl } : {}),
+        // Signing in within the 30-day window cancels a pending account deletion.
+        deletionRequestedAt: undefined,
+        deletionScheduledFor: undefined,
       });
       return {
         userId: existing._id as string,
@@ -1097,10 +1185,14 @@ export const linkPhoneNumber = mutation({
     sessionToken: v.optional(v.string()),
     userId: v.id("users"),
     phoneNumber: v.string(),
+    // Required to CHANGE an existing number when the account has a PIN.
+    currentPin: v.optional(v.string()),
   },
   returns: v.object({
     success: v.boolean(),
     phoneNumber: v.string(),
+    errorCode: v.optional(v.string()),
+    message: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
     // Only the account owner (valid session) may act on this account.
@@ -1117,7 +1209,30 @@ export const linkPhoneNumber = mutation({
     } else if (digits.startsWith("0")) {
       digits = digits.substring(1);
     }
+    if (!/^\d{8}$/.test(digits)) {
+      throw new Error("Enter a valid Sierra Leone phone number.");
+    }
     const formattedPhone = `+232${digits}`;
+
+    // A number identifies an account at sign-in, so it can belong to only one account.
+    const holder = await ctx.db
+      .query("users")
+      .withIndex("by_phone", (q) => q.eq("phone", formattedPhone))
+      .first();
+    if (holder && holder._id !== user._id) {
+      throw new Error("This phone number is already linked to another account.");
+    }
+
+    // Replacing an existing number requires the Account PIN when one is set. A failure is
+    // RETURNED (not thrown) so the attempt counter persists.
+    const currentPhone = (user.phone ?? "").trim();
+    const hasPhone = currentPhone.length > 0 && currentPhone !== "+232" && !currentPhone.startsWith("0000000000_");
+    if (hasPhone && currentPhone !== formattedPhone && user.walletPinHash) {
+      const check = await verifyAndTrackPin(ctx, user, args.currentPin);
+      if (!check.ok) {
+        return { success: false, phoneNumber: currentPhone, errorCode: check.code, message: check.message };
+      }
+    }
 
     const now = Date.now();
     await ctx.db.patch(args.userId, {

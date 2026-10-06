@@ -490,6 +490,9 @@ export const loginWithPhoneOrEmail = mutation({
         lastLoginAt: now,
         updatedAt: now,
         ...(upgradedHash ? { passwordHash: upgradedHash } : {}),
+        // Signing in within the 30-day window cancels a pending account deletion.
+        deletionRequestedAt: undefined,
+        deletionScheduledFor: undefined,
       });
       const isDriverVerified = Boolean(
         user.is_driver_verified ?? user.isVerifiedDriver ?? (user.role?.toLowerCase() === "driver")

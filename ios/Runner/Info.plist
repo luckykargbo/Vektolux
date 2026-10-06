@@ -70,6 +70,8 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Use Face ID to unlock Vektolux. Your face data stays on your iPhone and is never shared with Vektolux.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan Vektolux QR codes for fast payments, take profile and property photos, record property videos, and capture verification documents.</string>
 	<key>NSMicrophoneUsageDescription</key>

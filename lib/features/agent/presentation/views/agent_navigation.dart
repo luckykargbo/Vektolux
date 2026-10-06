@@ -19,7 +19,7 @@ import '../../../listings/presentation/views/my_listings_screen.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
 import '../../../messaging/domain/messaging_models.dart';
 import '../../../messaging/presentation/conversation_screen.dart';
-import '../../../profile/presentation/views/profile_screen.dart';
+import '../../../profile/presentation/views/account_profile_screen.dart';
 import '../../../real_estate/presentation/views/my_real_estate_escrows_screen.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
 import '../../../subscriptions/presentation/views/professional_subscription_screen.dart';
@@ -206,12 +206,11 @@ Future<void> openSubscription(BuildContext context) async {
   cubit.refreshStatus();
 }
 
-/// The existing Account screen: profile details, photo, PIN, payment methods, privacy, account
-/// deletion — all through the existing account functions.
+/// Settings → Account & Profile: verified profile, contact details, Account PIN, biometric login
+/// and the 30-day account deletion request — all through the existing account functions.
 Future<void> openAccountSettings(BuildContext context) async {
-  final user = AgentShellScope.of(context).user;
   final cubit = context.read<AgentWorkspaceCubit>();
-  await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProfileScreen(currentUserId: user.id)));
+  await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AccountProfileScreen()));
   cubit.loadProfile();
 }
 

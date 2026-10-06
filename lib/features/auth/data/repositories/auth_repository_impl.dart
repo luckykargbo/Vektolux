@@ -443,12 +443,14 @@ class AuthRepositoryImpl implements AuthRepository {
   Future<UserEntity> linkPhoneNumber({
     required String userId,
     required String phoneNumber,
+    String? currentPin,
   }) async {
     final result = await _convexClient.mutation(
       'users:linkPhoneNumber',
       args: {
         'userId': userId,
         'phoneNumber': phoneNumber,
+        if (currentPin != null) 'currentPin': currentPin,
       },
     );
 

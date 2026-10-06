@@ -12,6 +12,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vektolux/core/network/convex_client_wrapper.dart';
 import 'package:vektolux/core/theme/app_theme.dart';
 import 'package:vektolux/core/widgets/app_text_scale.dart';
@@ -21,12 +23,19 @@ import 'package:vektolux/features/auth/domain/repositories/auth_repository.dart'
 import 'package:vektolux/features/auth/presentation/bloc/auth_bloc.dart';
 import 'package:vektolux/features/auth/presentation/bloc/auth_event.dart';
 import 'package:vektolux/features/auth/presentation/bloc/auth_state.dart';
+import 'package:vektolux/features/profile/presentation/views/account_profile_screen.dart';
 import 'package:vektolux/features/profile/presentation/views/profile_screen.dart';
 import 'package:vektolux/features/wallet_payments/presentation/bloc/wallet_cubit.dart';
 
 class _MockAuthBloc extends MockBloc<AuthEvent, AuthState> implements AuthBloc {}
 
 typedef _Route = Object? Function(Map<String, dynamic> args);
+
+/// A refusal from the server (the mutation threw).
+class _ServerError {
+  final String message;
+  const _ServerError(this.message);
+}
 
 const _buyer = UserEntity(
   id: 'buyer_1',
@@ -79,7 +88,11 @@ class _Backend {
       final args = Map<String, dynamic>.from(body['args'] as Map);
       calls.add((path, args));
       final route = routes[path];
-      return http.Response(jsonEncode({'status': 'success', 'value': route == null ? null : route(args)}), 200);
+      final value = route == null ? null : route(args);
+      if (value is _ServerError) {
+        return http.Response(jsonEncode({'status': 'error', 'errorMessage': 'Uncaught Error: ${value.message}'}), 200);
+      }
+      return http.Response(jsonEncode({'status': 'success', 'value': value}), 200);
     }),
   );
 
@@ -105,7 +118,7 @@ Future<void> _settle(WidgetTester tester, [int frames = 8]) async {
   }
 }
 
-Future<void> _pump(WidgetTester tester, _Backend backend, UserEntity user) async {
+Future<_MockAuthBloc> _pump(WidgetTester tester, _Backend backend, UserEntity user) async {
   tester.view.physicalSize = const Size(1170, 2532); // 390 × 844 logical (iPhone 15)
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.resetPhysicalSize);
@@ -132,6 +145,32 @@ Future<void> _pump(WidgetTester tester, _Backend backend, UserEntity user) async
       ),
     ),
   );
+  await _settle(tester);
+  return bloc;
+}
+
+/// The signed-in session as the app stores it on the device (read by AuthRepositoryImpl).
+void _seedSession(UserEntity u) => SharedPreferences.setMockInitialValues({
+      'vkt_session_token': u.sessionToken!,
+      'vkt_user_id': u.id,
+      'vkt_user_data': jsonEncode({
+        'id': u.id, 'name': u.name, 'email': u.email, 'phone': u.phone, 'role': u.role.convexValue,
+        'isVerified': u.isVerified, 'verificationStatus': u.verificationStatus,
+        'bio': u.bio, 'address': u.address, 'region': u.region,
+      }),
+    });
+
+/// Routes the shared Account & Profile screen reads.
+Map<String, _Route> _accountProfileRoutes(UserEntity u) => {
+      'users:getUserProfile': (_) => {
+            '_id': u.id, 'name': u.name, 'identityVerified': u.isVerified, 'email': u.email, 'phone': u.phone,
+            'memberSince': DateTime.utc(2025, 4, 12, 12).millisecondsSinceEpoch,
+          },
+      'payments:getUserSecurityPinStatus': (_) => {'hasPin': false, 'hasPassword': true},
+    };
+
+Future<void> _openEditProfile(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Edit Profile').first);
   await _settle(tester);
 }
 
@@ -169,10 +208,146 @@ Future<void> _loadFonts() async {
 void main() {
   setUpAll(_loadFonts);
 
+  group('Account — Edit Profile and the shared Account & Profile screen', () {
+    setUp(() => _seedSession(_buyer));
+
+    testWidgets('name and phone are read-only; only area, address and bio are inputs', (tester) async {
+      await _pump(tester, _backend(), _buyer);
+      await _openEditProfile(tester);
+      final name = find.byKey(const Key('edit-profile-name'));
+      final phone = find.byKey(const Key('edit-profile-phone'));
+      expect(find.descendant(of: name, matching: find.text('Aminata Kamara')), findsOneWidget);
+      expect(find.descendant(of: name, matching: find.textContaining('managed by Vektolux')), findsOneWidget);
+      expect(find.descendant(of: name, matching: find.byType(EditableText)), findsNothing);
+      expect(find.descendant(of: phone, matching: find.text('+23276000111')), findsOneWidget);
+      expect(find.descendant(of: phone, matching: find.byType(EditableText)), findsNothing);
+      expect(find.byType(EditableText), findsNWidgets(2), reason: 'street address and bio only');
+    });
+
+    testWidgets('Account & Profile opens from the Account tab (the same screen agents use)', (tester) async {
+      await _pump(tester, _backend()..routes.addAll(_accountProfileRoutes(_buyer)), _buyer);
+      await _openTile(tester, 'profile-account-profile');
+      expect(find.byType(AccountProfileScreen), findsOneWidget);
+      expect(find.byKey(const Key('account-verified-name')), findsOneWidget);
+    });
+
+    testWidgets('the fake biometric switch is gone; Biometric login opens the shared screen\'s real setting', (tester) async {
+      final backend = _backend()..routes.addAll(_accountProfileRoutes(_buyer));
+      await _pump(tester, backend, _buyer);
+      expect(find.text('Biometric / FaceID Authorization'), findsNothing);
+      expect(find.textContaining('authorize escrow transactions'), findsNothing);
+      expect(find.byKey(const Key('profile-biometric-login')), findsOneWidget);
+      await _openTile(tester, 'profile-biometric-login');
+      expect(find.byType(AccountProfileScreen), findsOneWidget);
+      // No biometric hardware in the test: the real setting says so instead of offering a switch.
+      expect(find.byKey(const Key('account-biometric-unavailable')), findsOneWidget);
+      expect(find.byKey(const Key('account-biometric-switch')), findsNothing);
+    });
+
+    testWidgets('the old PIN sheet is gone; the Account PIN row opens the shared screen', (tester) async {
+      final backend = _backend()..routes.addAll(_accountProfileRoutes(_buyer));
+      await _pump(tester, backend, _buyer);
+      expect(find.text('Escrow Security PIN'), findsNothing);
+      await _openTile(tester, 'profile-account-pin');
+      expect(find.byType(AccountProfileScreen), findsOneWidget);
+      expect(find.byKey(const Key('account-pin-row')), findsOneWidget);
+    });
+
+    testWidgets('Delete Account goes through the shared 30-day request, never the old immediate delete', (tester) async {
+      final backend = _backend()
+        ..routes.addAll(_accountProfileRoutes(_buyer))
+        ..routes['users:requestAccountDeletion'] = (_) => {
+              'success': false,
+              'errorCode': 'FUNDS_REMAINING',
+              'message': 'Withdraw your wallet balance and settle any escrow before deleting your account.',
+            };
+      await _pump(tester, backend, _buyer);
+      expect(find.text('Delete Account & Erase Personal Data'), findsNothing);
+      expect(find.textContaining('scheduled for deletion after 30 days'), findsOneWidget);
+      await _openTile(tester, 'profile-delete-account');
+      expect(find.byType(AccountProfileScreen), findsOneWidget);
+
+      await tester.scrollUntilVisible(find.byKey(const Key('account-delete-button')), 150,
+          scrollable: find.byType(Scrollable).first);
+      await _openTile(tester, 'account-delete-button');
+      await tester.enterText(find.byKey(const Key('account-delete-confirm-input')), 'DELETE');
+      await _settle(tester, 2);
+      await tester.ensureVisible(find.byKey(const Key('account-delete-submit')));
+      await tester.tap(find.byKey(const Key('account-delete-submit')));
+      await _settle(tester);
+
+      expect(backend.count('users:requestAccountDeletion'), 1);
+      expect(find.textContaining('Withdraw your wallet balance'), findsOneWidget);
+      expect(backend.count('users:deleteUserAccount'), 0);
+    });
+
+    testWidgets('"Change phone number" opens the shared phone-change flow', (tester) async {
+      final backend = _backend()..routes.addAll(_accountProfileRoutes(_buyer));
+      await _pump(tester, backend, _buyer);
+      await _openEditProfile(tester);
+      await tester.ensureVisible(find.byKey(const Key('edit-profile-change-phone')));
+      await tester.tap(find.byKey(const Key('edit-profile-change-phone')));
+      await _settle(tester, 12);
+      expect(find.byType(AccountProfileScreen), findsOneWidget);
+      expect(find.byKey(const Key('account-phone-input')), findsOneWidget, reason: 'its phone sheet opens directly');
+      expect(backend.count('users:updateUserProfile'), 0);
+    });
+
+    testWidgets('bio and address still save; success only after the server accepts', (tester) async {
+      final backend = _backend()..routes['users:updateUserProfile'] = (_) => true;
+      final bloc = await _pump(tester, backend, _buyer);
+      await _openEditProfile(tester);
+      clearInteractions(bloc); // the Account tab refreshes the session once when it opens
+      await tester.enterText(find.byType(EditableText).at(0), '9 Wilkinson Road, Freetown');
+      await tester.enterText(find.byType(EditableText).at(1), 'Looking for a family home.');
+      await tester.ensureVisible(find.byKey(const Key('edit-profile-save')));
+      await tester.tap(find.byKey(const Key('edit-profile-save')));
+      await _settle(tester);
+      expect(backend.lastArgs('users:updateUserProfile'), {
+        'userId': 'buyer_1',
+        'address': '9 Wilkinson Road, Freetown',
+        'bio': 'Looking for a family home.',
+        'sessionToken': _buyer.sessionToken,
+      }, reason: 'name and phone are never sent from this sheet');
+      expect(find.text('Profile information updated successfully.'), findsOneWidget);
+      expect(find.byKey(const Key('edit-profile-save')), findsNothing, reason: 'the sheet closed');
+      verify(() => bloc.add(const RefreshUserSessionEvent())).called(1);
+    });
+
+    testWidgets('a rejected save shows the server reason and never claims success', (tester) async {
+      final backend = _backend()
+        ..routes['users:updateUserProfile'] = (_) => const _ServerError('Bio contains a phone number.');
+      final bloc = await _pump(tester, backend, _buyer);
+      await _openEditProfile(tester);
+      clearInteractions(bloc); // the Account tab refreshes the session once when it opens
+      await tester.enterText(find.byType(EditableText).at(1), 'Call me on 076 000 111');
+      await tester.ensureVisible(find.byKey(const Key('edit-profile-save')));
+      await tester.tap(find.byKey(const Key('edit-profile-save')));
+      await _settle(tester);
+      expect(find.text('Profile information updated successfully.'), findsNothing);
+      expect(find.byKey(const Key('edit-profile-error')), findsOneWidget);
+      expect(find.text('Bio contains a phone number.'), findsOneWidget);
+      expect(find.byKey(const Key('edit-profile-save')), findsOneWidget, reason: 'the sheet stays open');
+      verifyNever(() => bloc.add(const RefreshUserSessionEvent()));
+    });
+
+    testWidgets('a network failure is explained plainly and is not reported as success', (tester) async {
+      final backend = _backend()..routes['users:updateUserProfile'] = (_) => const _ServerError('HTTP 503: upstream');
+      await _pump(tester, backend, _buyer);
+      await _openEditProfile(tester);
+      await tester.enterText(find.byType(EditableText).at(1), 'New bio');
+      await tester.ensureVisible(find.byKey(const Key('edit-profile-save')));
+      await tester.tap(find.byKey(const Key('edit-profile-save')));
+      await _settle(tester);
+      expect(find.text('Profile information updated successfully.'), findsNothing);
+      expect(find.textContaining('could not be saved'), findsOneWidget);
+    });
+  });
+
   group('Account — only real data', () {
     testWidgets('the fake "Saved addresses" are gone', (tester) async {
       await _pump(tester, _backend(), _buyer);
-      expect(find.text('Account & Profile'), findsOneWidget);
+      expect(find.descendant(of: find.byType(AppBar), matching: find.text('Account & Profile')), findsOneWidget);
       expect(find.text('SAVED ADDRESSES'), findsNothing);
       expect(find.textContaining('Saved address'), findsNothing);
       expect(find.text('Work / Office'), findsNothing);

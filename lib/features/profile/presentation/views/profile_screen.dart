@@ -23,6 +23,7 @@ import '../../../../core/widgets/vektolux_avatar.dart';
 import '../../../operator/presentation/views/operator_dashboard_screen.dart';
 import '../../../admin/presentation/views/admin_dashboard_screen.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
+import 'account_profile_screen.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/my_listings_screen.dart';
 import '../../../agent/presentation/views/viewing_requests_entry.dart';
@@ -70,7 +71,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _pushNotifications = true;
   bool _smsAlerts = true;
 
-  bool _escrowBiometricEnabled = true;
 
   // ── Live Convex wallet data (replaces hardcoded _escrowBalance) ───
   double? _walletBalance; // used only to gate Withdraw; NOT displayed on this screen
@@ -200,11 +200,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
 
   void _showEditProfileModal(BuildContext context, UserEntity user) {
-    final nameCtrl = TextEditingController(text: user.name);
-    final phoneCtrl = TextEditingController(text: user.phone);
+    // Name and phone are protected by the server (verified identity; PIN-protected, unique phone),
+    // so they are shown read-only here and changed only through the shared Account & Profile screen.
     final bioCtrl = TextEditingController(text: user.bio ?? '');
     final addressCtrl = TextEditingController(text: user.address ?? '');
     String? selectedRegion = user.region;
+    final nameVerified = user.isVerified ||
+        user.isApprovedVerification ||
+        user.verificationStatus.toLowerCase() == 'verified' ||
+        const {'approved', 'verified', 'VERIFIED'}.contains(user.kycStatus);
+    bool isSaving = false;
+    String? saveError;
 
     showModalBottomSheet(
       context: context,
@@ -249,41 +255,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     const SizedBox(height: 6),
                     const Text(
-                      'Update your display name, contact phone number, address, and bio.',
+                      'Update your area, address and bio. Your name and phone number are managed in Account & Profile.',
                       style: TextStyle(fontSize: 13, color: AppColors.gray500),
                     ),
                     const SizedBox(height: 20),
-                    TextFormField(
-                      controller: nameCtrl,
-                      style: const TextStyle(
-                        color: AppColors.obsidian,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      cursorColor: const Color(0xFF10B981),
-                      decoration: const InputDecoration(
-                        labelText: 'Full Name',
-                        prefixIcon: Icon(Icons.person_outline),
-                      ),
+                    _ReadOnlyProfileField(
+                      key: const Key('edit-profile-name'),
+                      icon: Icons.person_outline,
+                      label: 'Full Name',
+                      value: user.name,
+                      note: nameVerified
+                          ? 'Verified name · managed by Vektolux after identity verification'
+                          : 'Your name is confirmed when your identity is verified',
                     ),
                     const SizedBox(height: 14),
-                    TextFormField(
-                      controller: phoneCtrl,
-                      keyboardType: TextInputType.phone,
-                      style: const TextStyle(
-                        color: AppColors.obsidian,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      cursorColor: const Color(0xFF10B981),
-                      decoration: const InputDecoration(
-                        labelText: 'Phone Number',
-                        prefixIcon: Icon(Icons.phone_outlined),
+                    _ReadOnlyProfileField(
+                      key: const Key('edit-profile-phone'),
+                      icon: Icons.phone_outlined,
+                      label: 'Phone Number',
+                      value: user.hasPhone ? user.phone : 'Not added',
+                      note: 'Changed securely in Account & Profile',
+                      action: TextButton.icon(
+                        key: const Key('edit-profile-change-phone'),
+                        onPressed: isSaving
+                            ? null
+                            : () {
+                                Navigator.of(modalCtx).pop();
+                                Navigator.of(this.context).push(MaterialPageRoute(
+                                  builder: (_) => const AccountProfileScreen(openPhoneChange: true),
+                                ));
+                              },
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.emeraldDark,
+                          padding: EdgeInsets.zero,
+                          minimumSize: const Size(0, 36),
+                        ),
+                        icon: const Icon(Icons.edit_outlined, size: 16),
+                        label: Text(
+                          user.hasPhone ? 'Change phone number' : 'Add phone number',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 14),
                     // Area / District Dropdown
                     DropdownButtonFormField<String>(
+                      // Fill the field's width; long area names end with "…" instead of overflowing.
+                      isExpanded: true,
                       initialValue: (selectedRegion != null && selectedRegion!.isNotEmpty)
                           ? selectedRegion
                           : null,
@@ -302,14 +320,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         prefixIcon: Icon(Icons.location_city_outlined, color: Color(0xFF64748B)),
                       ),
                       items: const [
-                        DropdownMenuItem(value: 'Freetown Central', child: Text('Freetown Central (Western Urban)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                        DropdownMenuItem(value: 'Lumley & Aberdeen', child: Text('Lumley & Aberdeen (Beachfront)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                        DropdownMenuItem(value: 'Wilkinson Road & Congo Cross', child: Text('Wilkinson Road & Congo Cross', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                        DropdownMenuItem(value: 'Hill Station & Regent', child: Text('Hill Station & Regent (Mountain)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                        DropdownMenuItem(value: 'Waterloo & Goderich', child: Text('Waterloo & Goderich (Western Rural)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                        DropdownMenuItem(value: 'Bo City', child: Text('Bo City (Southern Province)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                        DropdownMenuItem(value: 'Kenema', child: Text('Kenema (Eastern Province)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
-                        DropdownMenuItem(value: 'Makeni', child: Text('Makeni (Northern Province)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500))),
+                        DropdownMenuItem(value: 'Freetown Central', child: Text('Freetown Central (Western Urban)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'Lumley & Aberdeen', child: Text('Lumley & Aberdeen (Beachfront)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'Wilkinson Road & Congo Cross', child: Text('Wilkinson Road & Congo Cross', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'Hill Station & Regent', child: Text('Hill Station & Regent (Mountain)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'Waterloo & Goderich', child: Text('Waterloo & Goderich (Western Rural)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'Bo City', child: Text('Bo City (Southern Province)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'Kenema', child: Text('Kenema (Eastern Province)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'Makeni', child: Text('Makeni (Northern Province)', style: TextStyle(color: Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis)),
                       ],
                       onChanged: (val) => setModalState(() => selectedRegion = val),
                     ),
@@ -350,34 +368,74 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                     const SizedBox(height: 24),
+                    if (saveError != null) ...[
+                      Text(
+                        saveError!,
+                        key: const Key('edit-profile-error'),
+                        style: const TextStyle(color: AppColors.error, fontSize: 13, fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     SizedBox(
                       width: double.infinity,
                       height: 52,
                       child: ElevatedButton(
-                        onPressed: () {
-                          final updatedName = nameCtrl.text.trim();
-                          final updatedPhone = phoneCtrl.text.trim();
-                          final updatedBio = bioCtrl.text.trim();
-                          final updatedAddress = addressCtrl.text.trim();
-                          context.read<AuthBloc>().add(
-                                UpdateUserProfileEvent(
-                                  name: updatedName.isNotEmpty ? updatedName : null,
-                                  phone: updatedPhone.isNotEmpty ? updatedPhone : null,
-                                  bio: updatedBio.isNotEmpty ? updatedBio : null,
-                                  address: updatedAddress.isNotEmpty ? updatedAddress : null,
-                                  region: selectedRegion,
-                                ),
-                              );
-                          Navigator.of(modalCtx).pop();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Profile information updated successfully.'),
-                              backgroundColor: AppColors.emerald,
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                        },
-                        child: const Text('Save Changes'),
+                        key: const Key('edit-profile-save'),
+                        onPressed: isSaving
+                            ? null
+                            : () async {
+                                // Only the editable fields that actually changed are sent.
+                                final bio = bioCtrl.text.trim();
+                                final address = addressCtrl.text.trim();
+                                final bioChanged = bio != (user.bio ?? '').trim();
+                                final addressChanged = address != (user.address ?? '').trim();
+                                final regionChanged = (selectedRegion ?? '') != (user.region ?? '');
+                                if (!bioChanged && !addressChanged && !regionChanged) {
+                                  Navigator.of(modalCtx).pop();
+                                  return;
+                                }
+                                final repo = this.context.read<AuthRepository>();
+                                final bloc = this.context.read<AuthBloc>();
+                                final messenger = ScaffoldMessenger.of(this.context);
+                                setModalState(() {
+                                  isSaving = true;
+                                  saveError = null;
+                                });
+                                try {
+                                  await repo.updateUserProfile(
+                                    userId: user.id,
+                                    bio: bioChanged ? bio : null,
+                                    address: addressChanged ? address : null,
+                                    region: regionChanged ? selectedRegion : null,
+                                  );
+                                } catch (e) {
+                                  // Rejected or failed: keep the sheet open with the reason; never report success.
+                                  if (modalCtx.mounted) {
+                                    setModalState(() {
+                                      isSaving = false;
+                                      saveError = _userSafeProfileError(e);
+                                    });
+                                  }
+                                  return;
+                                }
+                                // The server accepted the change: refresh the signed-in account from it.
+                                bloc.add(const RefreshUserSessionEvent());
+                                if (modalCtx.mounted) Navigator.of(modalCtx).pop();
+                                messenger.showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Profile information updated successfully.'),
+                                    backgroundColor: AppColors.emerald,
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              },
+                        child: isSaving
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Text('Save Changes'),
                       ),
                     ),
                   ],
@@ -830,167 +888,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: const Text('Log Out', style: TextStyle(fontWeight: FontWeight.w700)),
             ),
           ],
-        );
-      },
-    );
-  }
-
-  void _showDeleteAccountDialog(BuildContext context, UserEntity? user) {
-    if (user == null) return;
-
-    showDialog(
-      context: context,
-      builder: (dialogCtx) {
-        bool isDeleting = false;
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) {
-            return AlertDialog(
-              backgroundColor: AppColors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              title: const Row(
-                children: [
-                  Icon(Icons.warning_amber_rounded, color: AppColors.error, size: 26),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Delete Account',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.obsidian,
-                        fontSize: 18,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Are you sure you want to permanently delete your Vektolux account?',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.obsidian,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  const Text(
-                    'This action cannot be undone. In accordance with Apple and Google data privacy compliance, all your personal information, profile data, listings, and saved sessions will be permanently erased.',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: AppColors.gray600,
-                      height: 1.4,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFEF2F2),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: const Color(0xFFFECACA)),
-                    ),
-                    child: const Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(Icons.info_outline_rounded, color: AppColors.error, size: 16),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Any remaining wallet balances must be withdrawn before account deletion.',
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              color: Color(0xFF991B1B),
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: isDeleting ? null : () => Navigator.of(dialogCtx).pop(),
-                  child: const Text(
-                    'Cancel',
-                    style: TextStyle(
-                      color: AppColors.gray500,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.error,
-                    foregroundColor: AppColors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  onPressed: isDeleting
-                      ? null
-                      : () async {
-                          setDialogState(() => isDeleting = true);
-                          try {
-                            final client = context.read<ConvexClientWrapper>();
-                            await client.mutation(
-                              'users:deleteUserAccount',
-                              args: {'userId': user.id},
-                            );
-
-                            if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
-                            if (!context.mounted) return;
-
-                            // Clear local session & cache
-                            context.read<AuthBloc>().add(const LogoutEvent());
-                            try {
-                              client.clearAuth();
-                            } catch (_) {}
-
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Your account and personal data have been permanently erased.'),
-                                backgroundColor: AppColors.obsidian,
-                                behavior: SnackBarBehavior.floating,
-                                duration: Duration(seconds: 4),
-                              ),
-                            );
-
-                            Navigator.of(context).pushAndRemoveUntil(
-                              MaterialPageRoute(builder: (_) => const LoginScreen()),
-                              (route) => false,
-                            );
-                          } catch (e) {
-                            if (dialogCtx.mounted) {
-                              setDialogState(() => isDeleting = false);
-                              ScaffoldMessenger.of(dialogCtx).showSnackBar(
-                                SnackBar(
-                                  content: Text('Failed to delete account: $e'),
-                                  backgroundColor: AppColors.error,
-                                ),
-                              );
-                            }
-                          }
-                        },
-                  child: isDeleting
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Text(
-                          'Delete Account',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                ),
-              ],
-            );
-          },
         );
       },
     );
@@ -1654,6 +1551,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                ],
+
+                // ── 1A2. Account & Profile (the shared screen, same as the agent Settings) ──
+                if (user != null) ...[
+                  _buildSectionHeader('ACCOUNT & SECURITY'),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: _buildSettingsTile(
+                      key: const Key('profile-account-profile'),
+                      icon: Icons.manage_accounts_outlined,
+                      title: 'Account & Profile',
+                      subtitle: 'Name, contact details, PIN, biometric login and account deletion',
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const AccountProfileScreen()),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 18),
@@ -2342,9 +2261,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: Column(
                     children: [
                       _buildSettingsTile(
+                        key: const Key('profile-account-pin'),
                         icon: Icons.lock_outline_rounded,
-                        title: 'Escrow Security PIN',
-                        subtitle: '4-digit authorization PIN for escrow payouts',
+                        title: 'Account PIN',
+                        subtitle: 'Set or change the PIN that protects payments and account changes',
                         trailing: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
@@ -2360,17 +2280,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
                         ),
-                        onTap: () => _showWalletPinModal(context, user),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => const AccountProfileScreen()),
+                        ),
                       ),
                       const Divider(height: 1, indent: 56),
-                      Material(type: MaterialType.transparency, child: SwitchListTile(
-                        secondary: const Icon(Icons.fingerprint_rounded, color: AppColors.gray600),
-                        title: const Text('Biometric / FaceID Authorization', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                        subtitle: const Text('Require FaceID / TouchID to authorize escrow transactions', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
-                        value: _escrowBiometricEnabled,
-                        activeThumbColor: AppColors.emerald,
-                        onChanged: (val) => setState(() => _escrowBiometricEnabled = val),
-                      )),
+                      _buildSettingsTile(
+                        key: const Key('profile-biometric-login'),
+                        icon: Icons.fingerprint_rounded,
+                        title: 'Biometric login',
+                        subtitle: 'Use Face ID, Touch ID or fingerprint when reopening your saved session',
+                        trailing: const Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 14,
+                          color: AppColors.gray400,
+                        ),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => const AccountProfileScreen()),
+                        ),
+                      ),
                       const Divider(height: 1, indent: 56),
                       _buildSettingsTile(
                         icon: Icons.qr_code_2_rounded,
@@ -2530,24 +2458,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                 const SizedBox(height: 16),
 
-                // ── 8. Delete Account (Apple Guideline 5.1.1(v) & Google Play Compliance) ──
+                // ── 8. Delete Account: the single deletion flow lives in Account & Profile ──
                 Center(
                   child: TextButton.icon(
+                    key: const Key('profile-delete-account'),
                     style: TextButton.styleFrom(
                       foregroundColor: AppColors.error,
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     ),
-                    icon: const Icon(Icons.delete_forever_rounded, size: 18, color: AppColors.error),
+                    icon: const Icon(Icons.delete_outline_rounded, size: 18, color: AppColors.error),
                     label: const Text(
-                      'Delete Account & Erase Personal Data',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.error,
-                        decoration: TextDecoration.underline,
-                      ),
+                      'Delete Account',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.error),
                     ),
-                    onPressed: () => _showDeleteAccountDialog(context, user),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const AccountProfileScreen()),
+                    ),
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(32, 0, 32, 0),
+                  child: Text(
+                    'Request account deletion — your account will be scheduled for deletion after 30 days.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 11.5, color: AppColors.gray500),
                   ),
                 ),
 
@@ -3314,220 +3248,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     // Scanning only PREPARES the payment; the server resolves recipient/amount and the
     // user must confirm with their PIN before any money moves.
     await QrPaySheet.show(context, payload: scanned, onPaid: () => _fetchWalletData());
-  }
-
-  void _showWalletPinModal(BuildContext context, UserEntity? user, {VoidCallback? onPinSet}) {
-    if (user == null) return;
-    final pinController = TextEditingController();
-    final confirmPinController = TextEditingController();
-    bool isSaving = false;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (modalCtx, setModalState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                left: 24,
-                right: 24,
-                top: 20,
-                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.gray300,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppColors.emeraldSurface,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.shield_rounded,
-                            color: AppColors.emeraldDark, size: 24),
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Wallet Security PIN',
-                              style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.obsidian,
-                              ),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              'Authorize Escrow payouts & Mobile Money',
-                              style: TextStyle(
-                                  fontSize: 12, color: AppColors.gray500),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: pinController,
-                    keyboardType: TextInputType.number,
-                    obscureText: true,
-                    maxLength: 4,
-                    style: const TextStyle(
-                      color: Color(0xFF0F172A),
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 8,
-                    ),
-                    cursorColor: const Color(0xFF10B981),
-                    decoration: const InputDecoration(
-                      labelText: 'Enter New 4-Digit PIN',
-                      labelStyle: TextStyle(color: Color(0xFF64748B)),
-                      hintText: '••••',
-                      hintStyle: TextStyle(color: Color(0xFF94A3B8)),
-                      prefixIcon: Icon(Icons.lock_outline_rounded, color: Color(0xFF64748B)),
-                      counterText: '',
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  TextFormField(
-                    controller: confirmPinController,
-                    keyboardType: TextInputType.number,
-                    obscureText: true,
-                    maxLength: 4,
-                    style: const TextStyle(
-                      color: Color(0xFF0F172A),
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 8,
-                    ),
-                    cursorColor: const Color(0xFF10B981),
-                    decoration: const InputDecoration(
-                      labelText: 'Confirm 4-Digit PIN',
-                      labelStyle: TextStyle(color: Color(0xFF64748B)),
-                      hintText: '••••',
-                      hintStyle: TextStyle(color: Color(0xFF94A3B8)),
-                      prefixIcon: Icon(Icons.lock_reset_rounded, color: Color(0xFF64748B)),
-                      counterText: '',
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.emerald,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                      ),
-                      onPressed: isSaving
-                          ? null
-                          : () async {
-                              final p1 = pinController.text.trim();
-                              final p2 = confirmPinController.text.trim();
-                              if (p1.length != 4) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content:
-                                          Text('PIN must be exactly 4 digits.')),
-                                );
-                                return;
-                              }
-                              if (p1 != p2) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text(
-                                          'PINs do not match. Please re-enter.')),
-                                );
-                                return;
-                              }
-
-                              setModalState(() => isSaving = true);
-                              try {
-                                final client =
-                                    context.read<ConvexClientWrapper>();
-                                final res = await client.mutation(
-                                  'payments:setWalletPin',
-                                  args: {'userId': user.id, 'pin': p1},
-                                );
-                                if (res.success) {
-                                  if (modalCtx.mounted) {
-                                    Navigator.of(modalCtx).pop();
-                                  }
-                                  if (onPinSet != null) {
-                                    onPinSet();
-                                  }
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                            '🛡️ Wallet Security PIN updated successfully!'),
-                                        backgroundColor: AppColors.emeraldDark,
-                                        behavior: SnackBarBehavior.floating,
-                                      ),
-                                    );
-                                  }
-                                } else {
-                                  throw Exception(
-                                      res.errorMessage ?? 'Failed to update PIN');
-                                }
-                              } catch (e) {
-                                setModalState(() => isSaving = false);
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Error: $e'),
-                                      backgroundColor: AppColors.error,
-                                    ),
-                                  );
-                                }
-                              }
-                            },
-                      child: isSaving
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                  color: Colors.white, strokeWidth: 2),
-                            )
-                          : const Text(
-                              'Save Security PIN',
-                              style: TextStyle(
-                                  fontWeight: FontWeight.w700, fontSize: 14),
-                            ),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
   }
 
   String _maskAccountNumber(String raw) {
@@ -5407,6 +5127,82 @@ class PaymentStatusBanner extends StatelessWidget {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A user-safe message for a refused or failed profile save (server reasons are shown as-is;
+/// transport / technical failures get a plain explanation).
+String _userSafeProfileError(Object error) {
+  final raw = error.toString().replaceFirst(RegExp(r'^(Exception|AuthException):\s*'), '').trim();
+  if (raw.toLowerCase().contains('session')) return 'Your session has ended. Please sign in again.';
+  final technical = raw.isEmpty ||
+      RegExp(r'HTTP \d|SocketException|ClientException|Failed to parse|Convex|Timeout', caseSensitive: false)
+          .hasMatch(raw);
+  return technical ? 'Your changes could not be saved. Check your connection and try again.' : raw;
+}
+
+/// A protected account value shown in the Edit Profile sheet: visibly not an input.
+class _ReadOnlyProfileField extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final String? note;
+  final Widget? action;
+
+  const _ReadOnlyProfileField({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.note,
+    this.action,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: AppColors.gray50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.gray200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, color: AppColors.gray500, size: 22),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label, style: const TextStyle(fontSize: 12, color: AppColors.gray500)),
+                    const SizedBox(height: 2),
+                    Text(
+                      value,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.obsidian),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.lock_outline_rounded, color: AppColors.gray400, size: 16),
+            ],
+          ),
+          if (note != null) ...[
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.only(left: 34),
+              child: Text(note!, style: const TextStyle(fontSize: 11.5, color: AppColors.gray500)),
+            ),
+          ],
+          if (action != null) Padding(padding: const EdgeInsets.only(left: 34), child: action!),
         ],
       ),
     );

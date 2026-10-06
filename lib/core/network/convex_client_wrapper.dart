@@ -423,6 +423,7 @@ class ConvexClientWrapper {
     'realEstate:deletePropertyListing',
     'realEstate:getMyPropertyListings',
     'users:deleteUserAccount',
+    'users:requestAccountDeletion',
     'verification:mockCompleteVerification',
     'admin:getAllUsers',
     'admin:toggleUserActiveStatus',

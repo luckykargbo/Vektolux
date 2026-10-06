@@ -32,6 +32,7 @@ import 'package:vektolux/features/auth/presentation/bloc/auth_bloc.dart';
 import 'package:vektolux/features/auth/presentation/bloc/auth_event.dart';
 import 'package:vektolux/features/auth/presentation/bloc/auth_state.dart';
 import 'package:vektolux/features/listings/presentation/views/property_detail_screen.dart';
+import 'package:vektolux/features/profile/presentation/views/account_profile_screen.dart';
 import 'package:vektolux/features/navigation/presentation/views/main_navigation_shell.dart';
 
 class _MockAuthBloc extends MockBloc<AuthEvent, AuthState> implements AuthBloc {}
@@ -838,6 +839,22 @@ void main() {
       await tester.tap(find.byKey(const Key('return-to-agent-workspace')));
       await _settle(tester);
       expect(_showsAgentNav(), isTrue);
+      await _tearDown(tester);
+    });
+
+    testWidgets('agent Settings → Account & profile opens the same shared AccountProfileScreen', (tester) async {
+      final backend = _Backend({
+        ..._agentRoutes(),
+        'users:getUserProfile': (_) => {'_id': 'agent_1', 'name': 'Mariama Sesay', 'identityVerified': true, 'email': 'mariama@test.vektolux', 'phone': '+23276111222'},
+        'payments:getUserSecurityPinStatus': (_) => {'hasPin': false, 'hasPassword': true},
+      });
+      await _pump(tester, user: _agentUser, backend: backend);
+      await tester.tap(find.byTooltip('Settings').first);
+      await _settle(tester);
+      await tester.tap(find.text('Account & profile'));
+      await _settle(tester);
+      expect(find.byType(AccountProfileScreen), findsOneWidget);
+      expect(find.byKey(const Key('account-profile-header')), findsOneWidget);
       await _tearDown(tester);
     });
   });
