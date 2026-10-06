@@ -873,49 +873,6 @@ export const verifyTransactionPin = query({
   },
 });
 
-/**
- * Permanently delete and anonymize user account (Apple App Store Guideline 5.1.1(v) & Google Play Compliance).
- */
-export const deleteUserAccount = mutation({
-  args: {
-    userId: v.string(),
-    sessionToken: v.optional(v.string()),
-  },
-  returns: v.object({
-    success: v.boolean(),
-    message: v.string(),
-  }),
-  handler: async (ctx, args) => {
-    // Authenticate caller — user can only delete own account unless admin
-    const auth = await requireAuthenticatedUser(ctx, { sessionToken: args.sessionToken, userId: args.userId });
-    const userId = auth.userId;
-    const user = auth.user;
-
-    const now = Date.now();
-    const randomizedSuffix = Math.random().toString(36).substring(2, 8);
-
-    // Anonymize and erase all PII in accordance with GDPR & App Store Guidelines
-    await ctx.db.patch(userId, {
-      name: "Deleted User",
-      email: `deleted_${now}_${randomizedSuffix}@vektolux.com`,
-      phone: `0000000000_${randomizedSuffix}`,
-      isActive: false,
-      sessionToken: undefined,
-      passwordHash: undefined,
-      walletPinHash: undefined,
-      avatarUrl: undefined,
-      bio: undefined,
-      address: undefined,
-      updatedAt: now,
-    });
-
-    return {
-      success: true,
-      message: "Your account and personal data have been permanently erased.",
-    };
-  },
-});
-
 const ACCOUNT_DELETION_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**

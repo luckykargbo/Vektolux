@@ -5,6 +5,8 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import * as usersModule from "./users";
+import { makeFunctionReference } from "convex/server";
 import type { Id } from "./_generated/dataModel";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
@@ -173,6 +175,52 @@ describe("account deletion request", () => {
     const after: any = await t.run((ctx) => ctx.db.get(u.id));
     expect(after.deletionRequestedAt).toBeUndefined();
     expect(after.deletionScheduledFor).toBeUndefined();
+  });
+});
+
+// The old immediate-erase mutation is gone: 30-day requestAccountDeletion is the only user deletion path.
+const LEGACY = "delete" + "UserAccount"; // built in pieces so this file never matches its own scan
+
+const appSources = import.meta.glob(
+  ["../lib/**/*.dart", "../admin-dashboard/src/**/*.{ts,tsx}", "./**/*.ts", "!./**/*.test.ts", "!./_generated/**"],
+  { query: "?raw", import: "default", eager: true }
+) as Record<string, string>;
+
+describe("legacy immediate account deletion is removed", () => {
+  test("the users module no longer exports it, and requestAccountDeletion is the exported path", () => {
+    expect(LEGACY in usersModule).toBe(false);
+    expect("requestAccountDeletion" in usersModule).toBe(true);
+  });
+
+  test("calling users:<legacy> fails and erases nothing, even for the account owner", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await makeUser(t, "Owner");
+    const legacy = makeFunctionReference<"mutation">(`users:${LEGACY}`);
+    await expect(t.mutation(legacy as any, { userId: owner.id, sessionToken: owner.token })).rejects.toThrow();
+    const doc: any = await t.run((ctx) => ctx.db.get(owner.id));
+    expect(doc.name).toBe("Owner");
+    expect(doc.isActive).toBe(true);
+    expect(doc.sessionToken).toBe(owner.token);
+    expect(doc.email).toContain("@t.vx");
+  });
+
+  test("no one can reach it against another account either", async () => {
+    const t = convexTest(schema, modules);
+    const victim = await makeUser(t, "Victim");
+    const attacker = await makeUser(t, "Attacker");
+    const legacy = makeFunctionReference<"mutation">(`users:${LEGACY}`);
+    await expect(t.mutation(legacy as any, { userId: victim.id, sessionToken: attacker.token })).rejects.toThrow();
+    expect(((await t.run((ctx) => ctx.db.get(victim.id))) as any).name).toBe("Victim");
+  });
+
+  test("no backend, app or admin source references it any more", () => {
+    const files = Object.keys(appSources);
+    // guard against a vacuous scan: all three source trees were actually read
+    expect(files.some((f) => f.startsWith("../lib/") && f.endsWith(".dart"))).toBe(true);
+    expect(files.some((f) => f.startsWith("../admin-dashboard/"))).toBe(true);
+    expect(files.some((f) => f === "./users.ts")).toBe(true);
+    const offenders = files.filter((f) => appSources[f].includes(LEGACY));
+    expect(offenders).toEqual([]);
   });
 });
 
