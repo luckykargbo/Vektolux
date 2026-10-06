@@ -21,6 +21,7 @@ import '../../../mobility/presentation/views/auto_marketplace_screen.dart';
 import '../../../explore/presentation/views/explore_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
 import '../../../real_estate/presentation/views/real_estate_marketplace_screen.dart';
+import '../../client_browsing_mode.dart';
 import '../widgets/client_onboarding_tour_modal.dart';
 
 class MainNavigationShell extends StatefulWidget {
@@ -90,7 +91,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
         _proStatus = null;
         _statusResolved = false;
         _statusError = null;
-        _clientView = false;
+        _setClientView(false);
       });
     } else if (!_statusResolved && _statusError != null) {
       _apply(() => _statusError = null); // a retry shows the "checking" view again
@@ -141,11 +142,23 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     return _statusError != null ? _ShellRoute.accessError : _ShellRoute.checking;
   }
 
-  void _openClientView() => setState(() => _clientView = true);
+  /// The view choice and the app-wide flag that hides posting entry points always move together.
+  void _setClientView(bool value) {
+    _clientView = value;
+    ClientBrowsingMode.active.value = value;
+  }
+
+  void _openClientView() => setState(() => _setClientView(true));
 
   void _returnToAgentView() {
-    setState(() => _clientView = false);
+    setState(() => _setClientView(false));
     _loadProfessionalStatus(context.read<AuthBloc>().state.user);
+  }
+
+  @override
+  void dispose() {
+    ClientBrowsingMode.active.value = false;
+    super.dispose();
   }
 
   void _checkAndShowTour() {

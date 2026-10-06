@@ -12,6 +12,7 @@ import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/verified_badge.dart';
 import '../../../auth/domain/entities/user_entity.dart';
+import '../../../navigation/client_browsing_mode.dart';
 import '../../../verification/presentation/views/identity_verification_screen.dart';
 import '../../../verification/presentation/widgets/verification_gate_banner.dart';
 import '../../../../core/widgets/sl_location_picker.dart';
@@ -481,6 +482,9 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Browsing as a client never offers posting (the server independently requires an approved
+    // role and an active subscription for every listing it creates).
+    if (ClientBrowsingMode.isActive) return const _ClientModeNotice();
     return Scaffold(
       backgroundColor: AppColors.gray50,
       appBar: AppBar(
@@ -1846,3 +1850,40 @@ class _DashedBorderPainter extends CustomPainter {
       oldDelegate.radius != radius;
 }
 
+
+/// Shown instead of the wizard while an agent browses Vektolux as a client.
+class _ClientModeNotice extends StatelessWidget {
+  const _ClientModeNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: const Key('create-listing-client-mode'),
+      backgroundColor: Colors.white,
+      appBar: AppBar(backgroundColor: Colors.white, foregroundColor: AppColors.obsidian, elevation: 0),
+      body: const SafeArea(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.storefront_outlined, size: 48, color: AppColors.emeraldDark),
+              SizedBox(height: 16),
+              Text(
+                "You're browsing as a client",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.obsidian),
+              ),
+              SizedBox(height: 8),
+              Text(
+                'Return to your agent dashboard to post or manage listings.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: AppColors.gray500),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

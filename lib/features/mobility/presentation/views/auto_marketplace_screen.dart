@@ -16,6 +16,7 @@ import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/vehicle_detail_screen.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
+import '../../../navigation/client_browsing_mode.dart';
 import 'delivery_van_booking_screen.dart';
 import 'my_escrow_orders_screen.dart';
 
@@ -200,7 +201,8 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
   Widget build(BuildContext context) {
     final filtered = _getFilteredVehicles();
     final user = context.watch<AuthBloc>().state.user;
-    final canPost = user != null && user.canPostVehicle;
+    // No posting entry point while an agent browses as a client (Settings → Browse as a client).
+    final canPost = user != null && user.canPostVehicle && !ClientBrowsingMode.isActive;
 
     return Scaffold(
       backgroundColor: AppColors.gray50,

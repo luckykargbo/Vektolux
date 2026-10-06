@@ -31,7 +31,9 @@ import 'package:vektolux/features/auth/domain/entities/user_entity.dart';
 import 'package:vektolux/features/auth/presentation/bloc/auth_bloc.dart';
 import 'package:vektolux/features/auth/presentation/bloc/auth_event.dart';
 import 'package:vektolux/features/auth/presentation/bloc/auth_state.dart';
+import 'package:vektolux/features/listings/presentation/views/create_listing_screen.dart';
 import 'package:vektolux/features/listings/presentation/views/property_detail_screen.dart';
+import 'package:vektolux/features/navigation/client_browsing_mode.dart';
 import 'package:vektolux/features/profile/presentation/views/account_profile_screen.dart';
 import 'package:vektolux/features/navigation/presentation/views/main_navigation_shell.dart';
 
@@ -83,6 +85,20 @@ const _agentUser = UserEntity(
   phone: '+23276111222',
   role: UserRole.agent,
   isVerified: true,
+  sessionToken: 'sess_agent_1_0123456789abcdef',
+);
+
+/// An approved agent whose session also carries seller flags (so the standard app would show
+/// posting buttons if client mode did not remove them).
+const _sellerAgentUser = UserEntity(
+  id: 'agent_1',
+  name: 'Mariama Sesay',
+  email: 'mariama@test.vektolux',
+  phone: '+23276111222',
+  role: UserRole.agent,
+  isVerified: true,
+  isVerifiedSeller: true,
+  verificationStatus: 'approved',
   sessionToken: 'sess_agent_1_0123456789abcdef',
 );
 
@@ -855,6 +871,86 @@ void main() {
       await _settle(tester);
       expect(find.byType(AccountProfileScreen), findsOneWidget);
       expect(find.byKey(const Key('account-profile-header')), findsOneWidget);
+      await _tearDown(tester);
+    });
+
+    // Settings → Browse as a client: the standard marketplace, with no posting entry points.
+    Future<void> openClientView(WidgetTester tester) async {
+      await tester.tap(find.byTooltip('Settings').first);
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('agent-settings-client-view')));
+      await _settle(tester);
+      expect(_showsBuyerNav(), isTrue);
+      expect(ClientBrowsingMode.isActive, isTrue);
+    }
+
+    Future<void> openBuyerTab(WidgetTester tester, String label) async {
+      await tester.tap(find.text(label).last);
+      await _settle(tester);
+    }
+
+    for (final subscribed in [true, false]) {
+      testWidgets('browsing as a client (${subscribed ? 'subscribed' : 'no subscription'}) offers no posting, '
+          'and the workspace returns intact', (tester) async {
+        final backend = _Backend(_agentRoutes(status: _status(subscribed: subscribed)));
+        await _pump(tester, user: _sellerAgentUser, backend: backend);
+        await openClientView(tester);
+
+        await openBuyerTab(tester, 'Real Estate');
+        expect(find.text('List Property'), findsNothing);
+        await openBuyerTab(tester, 'Auto Market');
+        expect(find.byType(FloatingActionButton), findsNothing);
+        await openBuyerTab(tester, 'Account');
+        expect(find.text('Create New Listing'), findsNothing);
+        expect(find.text('My Published Listings'), findsNothing);
+        expect(find.textContaining('VERIFICATION'), findsNothing);
+        expect(find.text('VERIFIED BUSINESS'), findsNothing);
+
+        await tester.tap(find.byKey(const Key('return-to-agent-workspace')));
+        await _settle(tester);
+        expect(_showsAgentNav(), isTrue);
+        expect(ClientBrowsingMode.isActive, isFalse);
+        // Switching views is presentation only: no role, subscription or profile write is ever sent.
+        final writes = backend.calls
+            .map((c) => c.$1)
+            .where((p) => RegExp(r':(switch|apply|set|update|cancel|create|delete|revoke|grant|request)', caseSensitive: false)
+                .hasMatch(p))
+            .toList();
+        expect(writes, isEmpty);
+        await _tearDown(tester);
+      });
+    }
+
+    testWidgets('the listing wizard itself refuses to open while browsing as a client', (tester) async {
+      final backend = _Backend(_agentRoutes());
+      await _pump(tester, user: _sellerAgentUser, backend: backend);
+      await openClientView(tester);
+      final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
+      nav.push(MaterialPageRoute(builder: (_) => CreateListingScreen(convexClient: backend.client(), currentUser: _sellerAgentUser)));
+      await _settle(tester);
+      expect(find.byKey(const Key('create-listing-client-mode')), findsOneWidget);
+      expect(backend.called('realEstate:createPropertyListing'), isFalse);
+      nav.pop();
+      await _settle(tester);
+      await _tearDown(tester);
+    });
+
+    testWidgets('an approved Real Estate Owner (never in client mode) still gets List Property', (tester) async {
+      final backend = _Backend({'subscriptions:getMyProfessionalStatus': (_) => _status(role: 'real_estate_owner', subscribed: false)});
+      await _pump(tester, user: _sellerAgentUser, backend: backend);
+      expect(_showsBuyerNav(), isTrue);
+      expect(ClientBrowsingMode.isActive, isFalse);
+      await openBuyerTab(tester, 'Real Estate');
+      expect(find.text('List Property'), findsOneWidget);
+      await _tearDown(tester);
+    });
+
+    testWidgets('a regular client is unaffected: no client-mode bar, posting rules unchanged', (tester) async {
+      final backend = _Backend({'subscriptions:getMyProfessionalStatus': (_) => _status(role: 'client', approved: false, subscribed: false)});
+      await _pump(tester, user: _clientUser, backend: backend);
+      expect(_showsBuyerNav(), isTrue);
+      expect(ClientBrowsingMode.isActive, isFalse);
+      expect(find.byKey(const Key('return-to-agent-workspace')), findsNothing);
       await _tearDown(tester);
     });
   });

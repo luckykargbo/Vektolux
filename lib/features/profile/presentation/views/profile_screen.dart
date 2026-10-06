@@ -23,6 +23,7 @@ import '../../../../core/widgets/vektolux_avatar.dart';
 import '../../../operator/presentation/views/operator_dashboard_screen.dart';
 import '../../../admin/presentation/views/admin_dashboard_screen.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
+import '../../../navigation/client_browsing_mode.dart';
 import 'account_profile_screen.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/my_listings_screen.dart';
@@ -1259,7 +1260,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final userRegion = user?.region;
         final userAddress = user?.address;
         final role = user?.role ?? UserRole.client;
-        final hasSellerStorefront = user?.hasVerifiedSellerStorefront == true || role == UserRole.admin;
+        // Browsing as a client shows the buyer view: no listing management or posting tools.
+        final hasSellerStorefront = !ClientBrowsingMode.isActive &&
+            (user?.hasVerifiedSellerStorefront == true || role == UserRole.admin);
         final isVendor = (role == UserRole.agent ||
             role == UserRole.merchant ||
             role == UserRole.driver ||
@@ -1578,8 +1581,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: 18),
                 ],
 
-                // ── 1B. Business Verification Status Card (Agents & Merchants) ──
-                if (user != null && (user.role == UserRole.agent || user.role == UserRole.merchant)) ...[
+                // ── 1B. Business Verification Status Card (Agents & Merchants; hidden in client mode) ──
+                if (user != null &&
+                    !ClientBrowsingMode.isActive &&
+                    (user.role == UserRole.agent || user.role == UserRole.merchant)) ...[
                   _buildBusinessVerificationCard(context, user),
                   const SizedBox(height: 18),
                 ],

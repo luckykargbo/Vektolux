@@ -17,6 +17,7 @@ import '../../../../core/widgets/vx_network_image.dart';
 import '../../../auth/domain/entities/user_entity.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
+import '../../../navigation/client_browsing_mode.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
 import '../../../saved/presentation/saved_hearts.dart';
 import 'my_real_estate_escrows_screen.dart';
@@ -411,7 +412,8 @@ class _RealEstateMarketplaceScreenState
   @override
   Widget build(BuildContext context) {
     final user = context.watch<AuthBloc>().state.user;
-    final canPost = user != null && user.canPostRealEstate;
+    // No posting entry point while an agent browses as a client (Settings → Browse as a client).
+    final canPost = user != null && user.canPostRealEstate && !ClientBrowsingMode.isActive;
     final filtered = _getFilteredListings();
 
     return Scaffold(
