@@ -411,6 +411,7 @@ export const loginWithPhoneOrEmail = mutation({
   args: {
     identifier: v.string(), // email or phone
     password: v.string(),
+    ip: v.optional(v.string()),
   },
   returns: v.object({
     success: v.boolean(),
@@ -444,6 +445,14 @@ export const loginWithPhoneOrEmail = mutation({
       const sanitizedId = args.identifier.trim();
       const now = Date.now();
       const idKey = `login:id:${sanitizedId.toLowerCase()}`;
+      const ipKey = args.ip && args.ip.trim() ? `login:ip:${args.ip.trim()}` : undefined;
+
+      if (ipKey) {
+        const ipLock = await lockRemainingMs(ctx, ipKey, now);
+        if (ipLock > 0) {
+          return { success: false, errorMessage: `Too many failed attempts. Please try again in ${minutes(ipLock)} minute(s) or reset your password.` };
+        }
+      }
 
       const idLock = await lockRemainingMs(ctx, idKey, now);
       if (idLock > 0) {
@@ -465,6 +474,7 @@ export const loginWithPhoneOrEmail = mutation({
       if (!ok || !user) {
         await recordFailure(ctx, idKey, LOGIN_POLICY, now);
         if (userKey) await recordFailure(ctx, userKey, LOGIN_POLICY, now);
+        if (ipKey) await recordFailure(ctx, ipKey, LOGIN_POLICY, now);
         return { success: false, errorMessage: GENERIC };
       }
 
@@ -474,7 +484,9 @@ export const loginWithPhoneOrEmail = mutation({
       }
 
       await clearLimit(ctx, idKey);
-      await clearLimit(ctx, userKey!);
+      if (userKey) await clearLimit(ctx, userKey);
+      if (ipKey) await clearLimit(ctx, ipKey);
+
 
       // An agent approved by the OLD admin flow (which never changed users.role) gets the role the
       // admin granted, from the stored approval evidence only (lib/legacyRoles.ts). Idempotent.
@@ -531,6 +543,62 @@ export const loginWithPhoneOrEmail = mutation({
     }
   },
 });
+
+/**
+ * Invalidates an active user or admin session token on logout.
+ */
+export const logout = mutation({
+  args: { sessionToken: v.optional(v.string()) },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const raw = args.sessionToken?.trim();
+    if (!raw || raw.length < 16) return false;
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_sessionToken", (q: any) => q.eq("sessionToken", raw))
+      .first();
+    if (user) {
+      await ctx.db.patch(user._id, {
+        sessionToken: undefined,
+        sessionExpiresAt: undefined,
+        updatedAt: Date.now(),
+      });
+      return true;
+    }
+    return false;
+  },
+});
+
+/**
+ * Validates an active admin session token and returns safe admin profile info.
+ */
+export const getAdminSession = query({
+  args: { sessionToken: v.optional(v.string()) },
+  returns: v.union(
+    v.object({
+      userId: v.string(),
+      name: v.string(),
+      email: v.string(),
+      role: v.string(),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, args) => {
+    try {
+      const { user } = await requireAdmin(ctx, { sessionToken: args.sessionToken });
+      return {
+        userId: user._id as string,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      };
+    } catch {
+      return null;
+    }
+  },
+});
+
+
 
 // ═══════════════════════════════════════════════════════════════════════
 //                      GET USER SESSION

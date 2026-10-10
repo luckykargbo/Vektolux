@@ -17,6 +17,10 @@ export type VerifiedIdentity = {
   email?: string;
   emailVerified: boolean;
   name?: string;
+  /** The `nonce` claim signed into the token (Apple: SHA-256 of the raw nonce the server issued). */
+  nonce?: string;
+  /** The token's own expiry, in ms. */
+  expiresAtMs: number;
 };
 
 // Public identifiers (also present in the Flutter app / web/index.html). Override via env.
@@ -65,6 +69,8 @@ export async function verifyGoogleIdToken(idToken: string): Promise<VerifiedIden
     email: c.email ? String(c.email).toLowerCase() : undefined,
     emailVerified: truthy(c.email_verified),
     name: c.name ? String(c.name) : undefined,
+    nonce: c.nonce ? String(c.nonce) : undefined,
+    expiresAtMs: Number(c.exp) * 1000,
   };
 }
 
@@ -114,5 +120,7 @@ export async function verifyAppleIdToken(idToken: string): Promise<VerifiedIdent
     sub: String(payload.sub),
     email: payload.email ? String(payload.email).toLowerCase() : undefined,
     emailVerified: truthy(payload.email_verified),
+    nonce: payload.nonce ? String(payload.nonce) : undefined,
+    expiresAtMs: Number(payload.exp) * 1000,
   };
 }

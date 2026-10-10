@@ -391,6 +391,9 @@ export default defineSchema({
     externalAuthId: v.optional(v.string()),
     phoneNumber: v.optional(v.string()),
     lastLoginAt: v.optional(v.number()),
+    // Set ONLY when ownership of `email` was proven: a code delivered to it (registration verification
+    // or password reset) or a provider-verified email (Google / Apple). Unset = not verified.
+    emailVerifiedAt: v.optional(v.number()),
     // Account deletion requested by the owner (users.requestAccountDeletion). The account is
     // signed out and kept for a 30-day recovery window; signing in again cancels the request.
     // Nothing purges automatically: the final erasure is a separate, retention-aware step.
@@ -1065,6 +1068,52 @@ export default defineSchema({
   })
     .index("by_identifier", ["identifier"])
     .index("by_identifier_code", ["identifier", "otpCode"]),
+
+  // ─── EMAIL VERIFICATION CODES (password registration) ───────────
+  email_verifications: defineTable({
+    userId: v.id("users"),
+    email: v.string(), // the address the code was sent to; must still be the account's email on use
+    codeHash: v.string(), // salted SHA-256, never the code itself
+    expiresAt: v.number(),
+    isUsed: v.boolean(),
+    attempts: v.optional(v.number()), // wrong guesses; the code is burned after the limit
+    createdAt: v.number(),
+  }).index("by_userId", ["userId"]),
+
+  // ─── LINKED SIGN-IN IDENTITIES (Google / Apple) ─────────────────
+  // One row per provider identity attached to an account. Linking only ever happens through an
+  // authenticated, PIN-protected action (users.linkSocialIdentity) or when the account is created.
+  // Older accounts keep their identity on users.authProvider/externalAuthId (still honoured).
+  auth_identities: defineTable({
+    userId: v.id("users"),
+    provider: v.string(), // "google" | "apple"
+    subject: v.string(), // the provider's stable user id
+    email: v.optional(v.string()), // provider-verified email at link time (informational)
+    linkedAt: v.number(),
+  })
+    .index("by_provider_subject", ["provider", "subject"])
+    .index("by_userId", ["userId"]),
+
+  // ─── OAUTH NONCES (server-issued, single use) ───────────────────
+  oauth_challenges: defineTable({
+    nonceHash: v.string(), // SHA-256 of the raw nonce
+    provider: v.string(),
+    expiresAt: v.number(),
+    usedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_nonceHash", ["nonceHash"])
+    .index("by_expiresAt", ["expiresAt"]),
+
+  // ─── PROVIDER ID TOKENS ALREADY ACCEPTED (replay protection) ────
+  oauth_token_uses: defineTable({
+    tokenHash: v.string(), // SHA-256 of the ID token
+    provider: v.string(),
+    expiresAt: v.number(), // the token's own expiry: rows are useless (and purged) after it
+    usedAt: v.number(),
+  })
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_expiresAt", ["expiresAt"]),
 
   // ─── ESCROW ORDERS ────────────────────────────────────────────────
   escrow_orders: defineTable({
