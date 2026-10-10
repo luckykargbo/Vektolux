@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 
-import { isAuthError, sessionFromRequest } from "@/lib/apiAuth";
+import { isAuthError, missingSession, sessionFromRequest } from "@/lib/apiAuth";
 import { CONVEX_URL } from "@/lib/convex";
 
 function getClient() { return new ConvexHttpClient(CONVEX_URL); }
@@ -14,13 +14,16 @@ function publicMessage(err: unknown, fallback: string): string {
 }
 
 export async function GET(request: Request) {
+  const sessionToken = sessionFromRequest(request);
+  if (!sessionToken) return missingSession();
+
   try {
     const { searchParams } = new URL(request.url);
     const vertical = (searchParams.get("vertical") ?? "all") as any;
     const client = getClient();
     const result = await client.query("admin:getAdminListings" as any, {
       vertical,
-      sessionToken: sessionFromRequest(request),
+      sessionToken,
     });
     return NextResponse.json({ success: true, data: result });
   } catch (err: any) {

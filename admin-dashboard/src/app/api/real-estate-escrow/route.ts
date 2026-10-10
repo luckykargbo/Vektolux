@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 
-import { isAuthError, sessionFromRequest } from "@/lib/apiAuth";
+import { isAuthError, missingSession, sessionFromRequest } from "@/lib/apiAuth";
 import { CONVEX_URL } from "@/lib/convex";
 
 function getClient() {
@@ -16,8 +16,10 @@ function publicMessage(err: unknown, fallback: string): string {
 }
 
 export async function GET(request: Request) {
+  const sessionToken = sessionFromRequest(request);
+  if (!sessionToken) return missingSession();
+
   try {
-    const sessionToken = sessionFromRequest(request);
     const client = getClient();
     const summary = await client.query("realEstateEscrow:getAdminRealEstateEscrowSummary" as any, { sessionToken });
     const escrows = summary?.recentContracts ?? [];
@@ -31,10 +33,12 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const sessionToken = sessionFromRequest(request);
+  if (!sessionToken) return missingSession();
+
   try {
     const body = await request.json();
     const { action, contractId, passId, milestoneIndex, proofUrls, damageDeductionAmount, notes } = body;
-    const sessionToken = sessionFromRequest(request);
     const client = getClient();
 
     let result;

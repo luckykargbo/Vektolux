@@ -2,7 +2,7 @@
 // Real-time analytics aggregation query endpoint for Overview dashboard
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
-import { isAuthError, sessionFromRequest } from "@/lib/apiAuth";
+import { isAuthError, missingSession, sessionFromRequest } from "@/lib/apiAuth";
 import { CONVEX_URL } from "@/lib/convex";
 
 export const dynamic = "force-dynamic";
@@ -17,15 +17,17 @@ function publicMessage(err: unknown, fallback: string): string {
 }
 
 export async function GET(request: Request) {
+  const sessionToken = sessionFromRequest(request);
+  if (!sessionToken) return missingSession();
+
   try {
     const { searchParams } = new URL(request.url);
     const adminId = searchParams.get("adminId") ?? undefined;
-    const sessionToken = sessionFromRequest(request);
 
     const client = getClient();
     const result = await client.query("adminPortal:getAdminAnalytics" as any, {
       adminId: adminId || undefined,
-      sessionToken: sessionToken || undefined,
+      sessionToken,
     });
 
     return NextResponse.json({ success: true, data: result });

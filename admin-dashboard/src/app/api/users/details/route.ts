@@ -5,7 +5,7 @@ import { ConvexHttpClient } from "convex/browser";
 
 export const dynamic = "force-dynamic";
 
-import { isAuthError, sessionFromRequest } from "@/lib/apiAuth";
+import { isAuthError, missingSession, sessionFromRequest } from "@/lib/apiAuth";
 import { CONVEX_URL } from "@/lib/convex";
 
 function getClient() {
@@ -18,10 +18,12 @@ function publicMessage(err: unknown, fallback: string): string {
 }
 
 export async function GET(request: Request) {
+  const sessionToken = sessionFromRequest(request);
+  if (!sessionToken) return missingSession();
+
   try {
     const { searchParams } = new URL(request.url);
     const adminId = searchParams.get("adminId");
-    const sessionToken = sessionFromRequest(request);
     const userId = searchParams.get("userId");
 
     if (!adminId || !userId) {

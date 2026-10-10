@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 
-import { isAuthError, sessionFromRequest } from "@/lib/apiAuth";
+import { isAuthError, missingSession, sessionFromRequest } from "@/lib/apiAuth";
 import { CONVEX_URL } from "@/lib/convex";
 
 function getClient() {
@@ -16,10 +16,12 @@ function publicMessage(err: unknown, fallback: string): string {
 }
 
 export async function GET(request: Request) {
+  const sessionToken = sessionFromRequest(request);
+  if (!sessionToken) return missingSession();
+
   try {
     const { searchParams } = new URL(request.url);
     const adminId = searchParams.get("adminId");
-    const sessionToken = sessionFromRequest(request);
     const roleFilter = searchParams.get("role") ?? undefined;
     const searchQuery = searchParams.get("q") ?? undefined;
 
@@ -48,6 +50,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const sessionToken = sessionFromRequest(request);
+  if (!sessionToken) return missingSession();
+
   try {
     const body = (await request.json()) as {
       adminId: string;
@@ -56,8 +61,6 @@ export async function POST(request: Request) {
     };
 
     const { adminId, userId, isActive } = body;
-
-    const sessionToken = sessionFromRequest(request);
 
     if (!adminId || !userId) {
       return NextResponse.json(

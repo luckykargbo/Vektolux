@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 
-import { isAuthError, sessionFromRequest } from "@/lib/apiAuth";
+import { isAuthError, missingSession, sessionFromRequest } from "@/lib/apiAuth";
 import { CONVEX_URL } from "@/lib/convex";
 
 function getClient() { return new ConvexHttpClient(CONVEX_URL); }
@@ -14,10 +14,12 @@ function publicMessage(err: unknown, fallback: string): string {
 }
 
 export async function GET(request: Request) {
+  const sessionToken = sessionFromRequest(request);
+  if (!sessionToken) return missingSession();
+
   try {
     const { searchParams } = new URL(request.url);
     const adminId = searchParams.get("adminId");
-    const sessionToken = sessionFromRequest(request);
     const statusFilter = (searchParams.get("status") ?? "pending") as any;
 
     if (!adminId) {
@@ -39,6 +41,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const sessionToken = sessionFromRequest(request);
+  if (!sessionToken) return missingSession();
+
   try {
     const body = await request.json() as {
       action: "approve" | "reject";
@@ -48,8 +53,6 @@ export async function POST(request: Request) {
     };
 
     const { action, adminId, agentId, reason } = body;
-
-    const sessionToken = sessionFromRequest(request);
 
     if (!adminId || !agentId) {
       return NextResponse.json({ success: false, error: "adminId and agentId are required." }, { status: 400 });

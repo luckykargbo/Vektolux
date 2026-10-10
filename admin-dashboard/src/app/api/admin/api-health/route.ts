@@ -2,7 +2,7 @@
 // Gateway health status and diagnostic ping endpoint
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
-import { isAuthError, sessionFromRequest } from "@/lib/apiAuth";
+import { isAuthError, missingSession, sessionFromRequest } from "@/lib/apiAuth";
 import { CONVEX_URL } from "@/lib/convex";
 
 export const dynamic = "force-dynamic";
@@ -17,17 +17,19 @@ function publicMessage(err: unknown, fallback: string): string {
 }
 
 export async function GET(request: Request) {
+  const sessionToken = sessionFromRequest(request);
+  if (!sessionToken) return missingSession();
+
   try {
     const { searchParams } = new URL(request.url);
     const adminId = searchParams.get("adminId") ?? undefined;
-    const sessionToken = sessionFromRequest(request);
 
     const client = getClient();
     const result = await client.query(
       "adminPortal:getApiGatewayHealthPanel" as any,
       {
         adminId: adminId || undefined,
-        sessionToken: sessionToken || undefined,
+        sessionToken,
       }
     );
 
@@ -42,6 +44,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const sessionToken = sessionFromRequest(request);
+  if (!sessionToken) return missingSession();
+
   try {
     const body = (await request.json()) as {
       action?: "ping" | "update-mask";
@@ -69,7 +74,7 @@ export async function POST(request: Request) {
           newMaskedValue: body.newMaskedValue,
           healthStatus: body.healthStatus || "operational",
           adminId: body.adminId || undefined,
-          sessionToken: sessionFromRequest(request),
+          sessionToken,
         }
       );
       return NextResponse.json({ success: true, data: result });
@@ -80,7 +85,7 @@ export async function POST(request: Request) {
       {
         serviceId: body.serviceId,
         adminId: body.adminId || undefined,
-        sessionToken: sessionFromRequest(request),
+        sessionToken,
       }
     );
 

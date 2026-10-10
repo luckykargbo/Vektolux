@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 
-import { isAuthError, sessionFromRequest } from "@/lib/apiAuth";
+import { isAuthError, missingSession, sessionFromRequest } from "@/lib/apiAuth";
 import { CONVEX_URL } from "@/lib/convex";
 
 function getClient() { return new ConvexHttpClient(CONVEX_URL); }
@@ -12,9 +12,11 @@ function publicMessage(err: unknown, fallback: string): string {
 }
 
 export async function POST(req: Request) {
+  const sessionToken = sessionFromRequest(req);
+  if (!sessionToken) return missingSession();
+
   try {
     const { adminId, listingId, listingType, reason } = await req.json();
-    const sessionToken = sessionFromRequest(req);
     const client = getClient();
     const result = await client.mutation("admin:takeDownListing" as any, {
       adminId,

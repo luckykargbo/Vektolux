@@ -15,19 +15,7 @@ import {
   AlertCircle
 } from "lucide-react";
 
-import { CONVEX_URL } from "@/lib/convexPublic";
-
-/** Every payments:* admin function authorises the admin's own session token (sent in the POST body). */
-function withSession<T extends Record<string, unknown>>(args: T): T & { sessionToken?: string } {
-  try {
-    const raw = typeof window !== "undefined" ? window.sessionStorage.getItem("adminSession") : null;
-    const token = raw ? JSON.parse(raw)?.user?.sessionToken : undefined;
-    return token ? { ...args, sessionToken: token } : args;
-  } catch {
-    return args;
-  }
-}
-
+import { adminFetch } from "@/lib/adminSession";
 
 export default function PaymentsPage() {
   const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
@@ -35,7 +23,6 @@ export default function PaymentsPage() {
   const [loadingMethods, setLoadingMethods] = useState(true);
   const [loadingClaims, setLoadingClaims] = useState(true);
   const [alert, setAlert] = useState<{ type: "success" | "error"; message: string } | null>(null);
-  const [adminId, setAdminId] = useState("");
 
   // Rejection Modal State
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
@@ -47,15 +34,6 @@ export default function PaymentsPage() {
   const [editStates, setEditStates] = useState<Record<string, any>>({});
 
   useEffect(() => {
-    const raw = sessionStorage.getItem("adminSession");
-    if (raw) {
-      try {
-        const session = JSON.parse(raw);
-        setAdminId(session.user._id);
-      } catch (e) {
-        console.error("Failed to parse session", e);
-      }
-    }
     fetchPaymentMethods();
     fetchClaims();
   }, []);
@@ -63,17 +41,13 @@ export default function PaymentsPage() {
   const fetchPaymentMethods = async () => {
     setLoadingMethods(true);
     try {
-      const res = await fetch(`${CONVEX_URL}/api/query/payments:getAllPaymentMethods`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: withSession({}) })
-      });
+      const res = await adminFetch("/api/payments?type=methods");
       const data = await res.json();
-      if (data.status === "success") {
-        setPaymentMethods(data.value);
+      if (res.ok && data.success) {
+        setPaymentMethods(data.data || []);
         // Initialize edit states
         const initialStates: Record<string, any> = {};
-        data.value.forEach((m: any) => {
+        (data.data || []).forEach((m: any) => {
           initialStates[m._id] = {
             displayName: m.displayName || "",
             accountNumber: m.accountNumber || "",
@@ -82,9 +56,12 @@ export default function PaymentsPage() {
           };
         });
         setEditStates(initialStates);
+      } else {
+        showAlert("error", data.error || "Failed to load payment methods.");
       }
     } catch (e) {
       console.error(e);
+      showAlert("error", "Error loading payment methods.");
     } finally {
       setLoadingMethods(false);
     }
@@ -93,17 +70,16 @@ export default function PaymentsPage() {
   const fetchClaims = async () => {
     setLoadingClaims(true);
     try {
-      const res = await fetch(`${CONVEX_URL}/api/query/payments:getPendingApprovalClaims`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: withSession({}) })
-      });
+      const res = await adminFetch("/api/payments?type=claims");
       const data = await res.json();
-      if (data.status === "success") {
-        setClaims(data.value);
+      if (res.ok && data.success) {
+        setClaims(data.data || []);
+      } else {
+        showAlert("error", data.error || "Failed to load payment claims.");
       }
     } catch (e) {
       console.error(e);
+      showAlert("error", "Error loading payment claims.");
     } finally {
       setLoadingClaims(false);
     }
@@ -111,17 +87,17 @@ export default function PaymentsPage() {
 
   const seedDefaultMethods = async () => {
     try {
-      const res = await fetch(`${CONVEX_URL}/api/mutation/payments:seedDefaultPaymentMethods`, {
+      const res = await adminFetch("/api/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: withSession({}) })
+        body: JSON.stringify({ action: "seedDefaultPaymentMethods" })
       });
       const data = await res.json();
-      if (data.status === "success") {
+      if (res.ok && data.success) {
         showAlert("success", "Default payment methods seeded successfully.");
         fetchPaymentMethods();
       } else {
-        showAlert("error", "Failed to seed default methods.");
+        showAlert("error", data.error || "Failed to seed default methods.");
       }
     } catch (e) {
       console.error(e);
@@ -131,18 +107,22 @@ export default function PaymentsPage() {
 
   const handleToggleMethod = async (id: string, currentEnabled: boolean) => {
     try {
-      const res = await fetch(`${CONVEX_URL}/api/mutation/payments:updatePaymentMethod`, {
+      const res = await adminFetch("/api/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: withSession({ settingsId: id, isEnabled: !currentEnabled }) })
+        body: JSON.stringify({
+          action: "updatePaymentMethod",
+          settingsId: id,
+          isEnabled: !currentEnabled,
+        }),
       });
       const data = await res.json();
-      if (data.status === "success") {
+      if (res.ok && data.success) {
         setPaymentMethods(methods =>
           methods.map(m => (m._id === id ? { ...m, isEnabled: !currentEnabled } : m))
         );
       } else {
-        showAlert("error", "Failed to toggle payment method.");
+        showAlert("error", data.error || "Failed to toggle payment method.");
       }
     } catch (e) {
       console.error(e);
@@ -152,18 +132,22 @@ export default function PaymentsPage() {
 
   const handleSaveMethod = async (id: string) => {
     try {
-      const updates = editStates[id];
-      const res = await fetch(`${CONVEX_URL}/api/mutation/payments:updatePaymentMethod`, {
+      const updates = editStates[id] || {};
+      const res = await adminFetch("/api/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: withSession({ settingsId: id, ...updates }) })
+        body: JSON.stringify({
+          action: "updatePaymentMethod",
+          settingsId: id,
+          ...updates,
+        }),
       });
       const data = await res.json();
-      if (data.status === "success") {
+      if (res.ok && data.success) {
         showAlert("success", "Payment method updated successfully.");
         fetchPaymentMethods();
       } else {
-        showAlert("error", "Failed to update payment method.");
+        showAlert("error", data.error || "Failed to update payment method.");
       }
     } catch (e) {
       console.error(e);
@@ -174,17 +158,20 @@ export default function PaymentsPage() {
   const handleApprove = async (claimId: string) => {
     setProcessing(true);
     try {
-      const res = await fetch(`${CONVEX_URL}/api/mutation/payments:approvePaymentClaim`, {
+      const res = await adminFetch("/api/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: withSession({ claimId, adminUserId: adminId }) })
+        body: JSON.stringify({
+          action: "approvePaymentClaim",
+          claimId,
+        }),
       });
       const data = await res.json();
-      if (data.status === "success") {
+      if (res.ok && data.success) {
         showAlert("success", "Claim approved and locked successfully.");
         fetchClaims();
       } else {
-        showAlert("error", "Could not approve this claim. An automated (aggregator) payment can be approved only after the provider has confirmed the exact amount; a manual claim must be for the claimant's own order.");
+        showAlert("error", data.error || "Could not approve this claim. An automated (aggregator) payment can be approved only after the provider has confirmed the exact amount; a manual claim must be for the claimant's own order.");
       }
     } catch (e) {
       console.error(e);
@@ -207,20 +194,22 @@ export default function PaymentsPage() {
     }
     setProcessing(true);
     try {
-      const res = await fetch(`${CONVEX_URL}/api/mutation/payments:rejectPaymentClaim`, {
+      const res = await adminFetch("/api/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          args: withSession({ claimId: selectedClaimId, adminUserId: adminId, rejectionReason })
-        })
+          action: "rejectPaymentClaim",
+          claimId: selectedClaimId,
+          rejectionReason,
+        }),
       });
       const data = await res.json();
-      if (data.status === "success") {
+      if (res.ok && data.success) {
         showAlert("success", "Claim rejected.");
         setRejectModalOpen(false);
         fetchClaims();
       } else {
-        showAlert("error", "Failed to reject claim.");
+        showAlert("error", data.error || "Failed to reject claim.");
       }
     } catch (e) {
       console.error(e);

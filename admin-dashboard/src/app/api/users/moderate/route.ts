@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 
-import { isAuthError, sessionFromRequest } from "@/lib/apiAuth";
+import { isAuthError, missingSession, sessionFromRequest } from "@/lib/apiAuth";
 import { CONVEX_URL } from "@/lib/convex";
 
 function getClient() {
@@ -16,6 +16,9 @@ function publicMessage(err: unknown, fallback: string): string {
 }
 
 export async function POST(request: Request) {
+  const sessionToken = sessionFromRequest(request);
+  if (!sessionToken) return missingSession();
+
   try {
     const body = (await request.json()) as {
       action: "verify" | "status" | "delete" | "purge_mock";
@@ -25,8 +28,6 @@ export async function POST(request: Request) {
     };
 
     const { action, adminId, userId, status } = body;
-
-    const sessionToken = sessionFromRequest(request);
 
     if (!adminId) {
       return NextResponse.json(
