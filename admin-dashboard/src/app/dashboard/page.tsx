@@ -214,8 +214,7 @@ export default function DashboardPage() {
         </h3>
         <ul>
           <li>
-            Connected to Convex Cloud deployment{" "}
-            <code>ideal-poodle-813.convex.cloud</code>.
+            Connected to Convex Cloud production deployment.
           </li>
           <li>
             Zero mock numbers: live database aggregations are derived directly from the{" "}

@@ -5,11 +5,21 @@
 
 /// API and backend configuration constants.
 abstract final class ApiConstants {
-  /// Convex deployment URL.
+  /// Default production Convex deployment URL.
+  /// Override at build time via `--dart-define=CONVEX_URL=https://<your-prod-deployment>.convex.cloud`.
+  static const String defaultProdConvexUrl = 'https://vektolux-prod.convex.cloud';
+  static const String defaultDevConvexUrl = 'https://ideal-poodle-813.convex.cloud';
+
+  /// Convex deployment URL. Configurable via `--dart-define=CONVEX_URL=<url>`.
+  /// Automatically defaults to the production backend in release builds (`dart.vm.product`)
+  /// and the development deployment in debug/profile builds.
   static const String convexUrl = String.fromEnvironment(
     'CONVEX_URL',
-    defaultValue: 'https://ideal-poodle-813.convex.cloud',
+    defaultValue: bool.fromEnvironment('dart.vm.product')
+        ? defaultProdConvexUrl
+        : defaultDevConvexUrl,
   );
+
 
   // (No Paystack/Flutterwave: payments go through Monime / the Vektolux wallet on the server.)
 
