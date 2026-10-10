@@ -6,7 +6,7 @@ import styles from "./login.module.css";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("admin@vektolux.sl");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -26,19 +26,27 @@ export default function LoginPage() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        setError(data.error ?? "Login failed. Check your credentials.");
+        setError(data.error ?? "Invalid email or password.");
         setLoading(false);
         return;
       }
 
-      // Store session in sessionStorage (local only — clears on browser close)
-      sessionStorage.setItem("adminSession", JSON.stringify(data.session));
-      router.push("/dashboard");
+      // Store non-sensitive user metadata for layout UI display
+      if (data.session) {
+        sessionStorage.setItem("adminSession", JSON.stringify(data.session));
+      }
+
+      const fromParam = typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("from")
+        : null;
+      const destination = fromParam && fromParam.startsWith("/dashboard") ? fromParam : "/dashboard";
+      router.push(destination);
     } catch (err) {
-      setError("Network error — is the server running?");
+      setError("Network error — please check your connection.");
       setLoading(false);
     }
   }
+
 
   return (
     <main className={styles.main}>

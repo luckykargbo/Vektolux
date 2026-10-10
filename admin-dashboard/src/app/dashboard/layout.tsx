@@ -12,22 +12,55 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [session, setSession] = useState<AdminSession | null>(null);
 
   useEffect(() => {
+    let mounted = true;
     const raw = sessionStorage.getItem("adminSession");
-    if (!raw) {
-      router.push("/");
-      return;
+    if (raw) {
+      try {
+        setSession(JSON.parse(raw));
+      } catch {
+        // will fallback to /api/auth/me below
+      }
     }
-    try {
-      setSession(JSON.parse(raw));
-    } catch {
-      router.push("/");
-    }
+
+    fetch("/api/auth/me", { credentials: "same-origin" })
+      .then((res) => {
+        if (!res.ok) throw new Error("Unauthorized");
+        return res.json();
+      })
+      .then((data) => {
+        if (!mounted) return;
+        if (data.success && data.user) {
+          const freshSession: AdminSession = {
+            user: data.user,
+            loggedInAt: Date.now(),
+          };
+          setSession(freshSession);
+          sessionStorage.setItem("adminSession", JSON.stringify(freshSession));
+        } else {
+          router.push("/login");
+        }
+      })
+      .catch(() => {
+        if (mounted && !raw) {
+          router.push("/login");
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
   }, [router]);
 
-  function handleLogout() {
+  async function handleLogout() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+    } catch {
+      // ignore
+    }
     sessionStorage.removeItem("adminSession");
-    router.push("/");
+    router.push("/login");
   }
+
 
   if (!session) {
     return (
