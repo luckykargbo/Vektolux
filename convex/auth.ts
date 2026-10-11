@@ -12,6 +12,16 @@ import { userRole } from "./schema";
 import { clearLimit, consume, lockRemainingMs, minutes, recordFailure } from "./lib/rateLimit";
 import { issueSession } from "./lib/session";
 import { restoreLegacyAgentRole } from "./lib/legacyRoles";
+import { requireAdmin } from "./lib/auth";
+import {
+  generateTotpSecret,
+  generateOtpauthUrl,
+  verifyTotpCode,
+  encryptTotpSecret,
+  decryptTotpSecret,
+  generateBackupCodes,
+  hashBackupCode,
+} from "./lib/totp";
 
 const MIN_PASSWORD_LENGTH = 8;
 // Login: 5 wrong attempts within 15 min locks that account/identifier for 15 min.
@@ -412,9 +422,11 @@ export const loginWithPhoneOrEmail = mutation({
     identifier: v.string(), // email or phone
     password: v.string(),
     ip: v.optional(v.string()),
+    totpCode: v.optional(v.string()), // 6-digit TOTP code or backup code
   },
   returns: v.object({
     success: v.boolean(),
+    mfaRequired: v.optional(v.boolean()),
     errorMessage: v.optional(v.string()),
     userId: v.optional(v.string()),
     sessionToken: v.optional(v.string()),
@@ -454,17 +466,21 @@ export const loginWithPhoneOrEmail = mutation({
         }
       }
 
-      const idLock = await lockRemainingMs(ctx, idKey, now);
-      if (idLock > 0) {
-        return { success: false, errorMessage: `Too many failed attempts. Please try again in ${minutes(idLock)} minute(s) or reset your password.` };
-      }
-
       const user = await findUserByIdentifier(ctx, sanitizedId);
-      const userKey = user ? `login:user:${user._id}` : undefined;
-      if (userKey) {
-        const userLock = await lockRemainingMs(ctx, userKey, now);
-        if (userLock > 0) {
-          return { success: false, errorMessage: `Too many failed attempts. Please try again in ${minutes(userLock)} minute(s) or reset your password.` };
+      const isAdminAccount = user?.role === "admin" || sanitizedId.toLowerCase().includes("admin@vektolux");
+
+      // Account lockout is applied ONLY to admin accounts so attackers cannot DoS normal mobile users
+      if (isAdminAccount) {
+        const idLock = await lockRemainingMs(ctx, idKey, now);
+        if (idLock > 0) {
+          return { success: false, errorMessage: `Too many failed attempts. Please try again in ${minutes(idLock)} minute(s) or reset your password.` };
+        }
+        const userKey = user ? `login:user:${user._id}` : undefined;
+        if (userKey) {
+          const userLock = await lockRemainingMs(ctx, userKey, now);
+          if (userLock > 0) {
+            return { success: false, errorMessage: `Too many failed attempts. Please try again in ${minutes(userLock)} minute(s) or reset your password.` };
+          }
         }
       }
 
@@ -472,9 +488,12 @@ export const loginWithPhoneOrEmail = mutation({
       // response never reveals which emails/phones are registered. Every failure is counted.
       const ok = !!user && !!user.passwordHash && (await verifyPassword(args.password, user.passwordHash));
       if (!ok || !user) {
-        await recordFailure(ctx, idKey, LOGIN_POLICY, now);
-        if (userKey) await recordFailure(ctx, userKey, LOGIN_POLICY, now);
         if (ipKey) await recordFailure(ctx, ipKey, LOGIN_POLICY, now);
+        if (isAdminAccount) {
+          await recordFailure(ctx, idKey, LOGIN_POLICY, now);
+          const userKey = user ? `login:user:${user._id}` : undefined;
+          if (userKey) await recordFailure(ctx, userKey, LOGIN_POLICY, now);
+        }
         return { success: false, errorMessage: GENERIC };
       }
 
@@ -483,17 +502,80 @@ export const loginWithPhoneOrEmail = mutation({
         return { success: false, errorMessage: "This account has been deactivated. Please contact support." };
       }
 
+      // ─── TOTP TWO-FACTOR AUTHENTICATION ENFORCEMENT ─────────────────
+      // If TOTP is enabled on the account, verify 2FA code before issuing any session token
+      if (user.totpEnabled) {
+        if (!args.totpCode || !args.totpCode.trim()) {
+          // Strictly reject without issuing any session token
+          return {
+            success: false,
+            mfaRequired: true,
+            errorMessage: "Two-factor authentication code required.",
+          };
+        }
+
+        const totpKey = `login:totp:${user._id}`;
+        const totpLock = await lockRemainingMs(ctx, totpKey, now);
+        if (totpLock > 0) {
+          return {
+            success: false,
+            errorMessage: `Too many failed 2FA attempts. Please try again in ${minutes(totpLock)} minute(s) or use an emergency backup code.`,
+          };
+        }
+
+        let totpValid = false;
+        let usedBackupIndex = -1;
+
+        if (user.totpSecretEncrypted) {
+          try {
+            const plainSecret = await decryptTotpSecret(user.totpSecretEncrypted);
+            totpValid = await verifyTotpCode(plainSecret, args.totpCode, now);
+          } catch (e) {
+            console.error("[TOTP] Secret decryption failed:", e);
+          }
+        }
+
+        // Check emergency backup codes if standard TOTP code didn't match
+        if (!totpValid && Array.isArray(user.totpBackupCodesHashed) && user.totpBackupCodesHashed.length > 0) {
+          const providedHash = await hashBackupCode(args.totpCode);
+          usedBackupIndex = user.totpBackupCodesHashed.indexOf(providedHash);
+          if (usedBackupIndex !== -1) {
+            totpValid = true;
+          }
+        }
+
+        if (!totpValid) {
+          await recordFailure(ctx, totpKey, LOGIN_POLICY, now);
+          return {
+            success: false,
+            errorMessage: "Invalid two-factor authentication code.",
+          };
+        }
+
+        // Successfully verified TOTP: clear TOTP limit
+        await clearLimit(ctx, totpKey);
+
+        // If a single-use backup code was used, remove it from the array
+        if (usedBackupIndex !== -1 && Array.isArray(user.totpBackupCodesHashed)) {
+          const updatedBackupCodes = [...user.totpBackupCodesHashed];
+          updatedBackupCodes.splice(usedBackupIndex, 1);
+          await ctx.db.patch(user._id, { totpBackupCodesHashed: updatedBackupCodes });
+        }
+      }
+
       await clearLimit(ctx, idKey);
+      const userKey = user ? `login:user:${user._id}` : undefined;
       if (userKey) await clearLimit(ctx, userKey);
       if (ipKey) await clearLimit(ctx, ipKey);
-
 
       // An agent approved by the OLD admin flow (which never changed users.role) gets the role the
       // admin granted, from the stored approval evidence only (lib/legacyRoles.ts). Idempotent.
       const legacy = await restoreLegacyAgentRole(ctx, user, { now });
       const role = legacy.restored ? ("agent" as const) : user.role;
 
-      const { sessionToken, sessionExpiresAt } = issueSession(now);
+      // Admin sessions strictly enforce 8-hour TTL server-side
+      const isAdmin = role === "admin" || user.role === "admin";
+      const { sessionToken, sessionExpiresAt } = issueSession(now, isAdmin);
       // Transparently upgrade legacy (SHA-256 / plaintext) password records to salted PBKDF2.
       const upgradedHash = user.passwordHash!.includes(":") ? undefined : await hashPassword(args.password);
       await ctx.db.patch(user._id, {
@@ -595,6 +677,126 @@ export const getAdminSession = query({
     } catch {
       return null;
     }
+  },
+});
+
+/**
+ * Initiates TOTP 2FA enrollment for an authenticated administrator.
+ * Generates secret, otpauth URI, and emergency backup codes, and stores
+ * the encrypted secret in totpPendingSecretEncrypted until verified.
+ */
+export const setupTotp = mutation({
+  args: { sessionToken: v.string() },
+  returns: v.union(
+    v.object({
+      success: v.boolean(),
+      secret: v.string(),
+      otpauthUrl: v.string(),
+      backupCodes: v.array(v.string()),
+    }),
+    v.object({
+      success: v.literal(false),
+      errorMessage: v.string(),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const { user } = await requireAdmin(ctx, { sessionToken: args.sessionToken });
+    const secret = generateTotpSecret();
+    const otpauthUrl = generateOtpauthUrl(user.email, secret, "Vektolux Admin");
+    const backupCodes = generateBackupCodes();
+    const encryptedSecret = await encryptTotpSecret(secret);
+
+    await ctx.db.patch(user._id, {
+      totpPendingSecretEncrypted: encryptedSecret,
+      updatedAt: Date.now(),
+    });
+
+    return {
+      success: true,
+      secret,
+      otpauthUrl,
+      backupCodes,
+    };
+  },
+});
+
+/**
+ * Confirms and activates TOTP 2FA using a valid code from the authenticator app.
+ * Promotes totpPendingSecretEncrypted to totpSecretEncrypted, hashes backup codes,
+ * and sets totpEnabled: true.
+ */
+export const enableTotp = mutation({
+  args: {
+    sessionToken: v.string(),
+    code: v.string(),
+    backupCodes: v.array(v.string()),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    errorMessage: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    const { user } = await requireAdmin(ctx, { sessionToken: args.sessionToken });
+    if (!user.totpPendingSecretEncrypted) {
+      return { success: false, errorMessage: "No pending 2FA setup found. Please generate a new QR code." };
+    }
+
+    const plainSecret = await decryptTotpSecret(user.totpPendingSecretEncrypted);
+    const valid = await verifyTotpCode(plainSecret, args.code);
+    if (!valid) {
+      return { success: false, errorMessage: "Invalid verification code. Please check your authenticator app and try again." };
+    }
+
+    const hashedBackupCodes = await Promise.all(args.backupCodes.map((c) => hashBackupCode(c)));
+
+    await ctx.db.patch(user._id, {
+      totpEnabled: true,
+      totpSecretEncrypted: user.totpPendingSecretEncrypted,
+      totpPendingSecretEncrypted: undefined,
+      totpBackupCodesHashed: hashedBackupCodes,
+      updatedAt: Date.now(),
+    });
+
+    return { success: true };
+  },
+});
+
+/**
+ * Disables TOTP 2FA. Requires both current admin password and valid TOTP code.
+ */
+export const disableTotp = mutation({
+  args: {
+    sessionToken: v.string(),
+    password: v.string(),
+    code: v.string(),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    errorMessage: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    const { user } = await requireAdmin(ctx, { sessionToken: args.sessionToken });
+    if (!user.passwordHash || !(await verifyPassword(args.password, user.passwordHash))) {
+      return { success: false, errorMessage: "Invalid administrator password." };
+    }
+
+    if (user.totpSecretEncrypted) {
+      const plainSecret = await decryptTotpSecret(user.totpSecretEncrypted);
+      const valid = await verifyTotpCode(plainSecret, args.code);
+      if (!valid) {
+        return { success: false, errorMessage: "Invalid 2FA code." };
+      }
+    }
+
+    await ctx.db.patch(user._id, {
+      totpEnabled: false,
+      totpSecretEncrypted: undefined,
+      totpPendingSecretEncrypted: undefined,
+      totpBackupCodesHashed: undefined,
+      updatedAt: Date.now(),
+    });
+
+    return { success: true };
   },
 });
 

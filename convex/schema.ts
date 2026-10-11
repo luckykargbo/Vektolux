@@ -391,6 +391,11 @@ export default defineSchema({
     externalAuthId: v.optional(v.string()),
     phoneNumber: v.optional(v.string()),
     lastLoginAt: v.optional(v.number()),
+    // Two-Factor Authentication (TOTP / Google Authenticator)
+    totpEnabled: v.optional(v.boolean()),
+    totpSecretEncrypted: v.optional(v.string()),
+    totpPendingSecretEncrypted: v.optional(v.string()),
+    totpBackupCodesHashed: v.optional(v.array(v.string())),
     // Set ONLY when ownership of `email` was proven: a code delivered to it (registration verification
     // or password reset) or a provider-verified email (Google / Apple). Unset = not verified.
     emailVerifiedAt: v.optional(v.number()),
