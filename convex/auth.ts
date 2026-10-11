@@ -12,6 +12,9 @@ import { userRole } from "./schema";
 import { clearLimit, consume, lockRemainingMs, minutes, recordFailure } from "./lib/rateLimit";
 import { issueSession } from "./lib/session";
 import { restoreLegacyAgentRole } from "./lib/legacyRoles";
+import { requireSelf } from "./lib/auth";
+import type { MutationCtx } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
 import { requireAdmin } from "./lib/auth";
 import {
   generateTotpSecret,
@@ -26,10 +29,19 @@ import {
 const MIN_PASSWORD_LENGTH = 8;
 // Login: 5 wrong attempts within 15 min locks that account/identifier for 15 min.
 const LOGIN_POLICY = { max: 5, windowMs: 15 * 60 * 1000, lockMs: 15 * 60 * 1000 };
+// Failed logins per client IP: 20 within 15 min blocks that IP for 15 min. Deliberately looser than the
+// admin account policy because several customers can share one address (mobile carrier NAT); it
+// only ever blocks the address the failures came from, never an account.
+const LOGIN_IP_POLICY = { max: 20, windowMs: 15 * 60 * 1000, lockMs: 15 * 60 * 1000 };
 // Reset requests: at most 3 codes per 15 min per account (stops inbox flooding).
 const RESET_REQUEST_POLICY = { max: 3, windowMs: 15 * 60 * 1000 };
 // Reset code guesses: a code is burned after 5 wrong guesses.
 const RESET_CODE_MAX_ATTEMPTS = 5;
+// Email-verification codes: valid 10 minutes, single use, burned after 5 wrong guesses,
+// at most 3 sent per 15 minutes per account.
+const EMAIL_VERIFY_TTL_MS = 10 * 60 * 1000;
+const EMAIL_VERIFY_MAX_ATTEMPTS = 5;
+const EMAIL_VERIFY_SEND_POLICY = { max: 3, windowMs: 15 * 60 * 1000 };
 
 async function sha256Hex(input: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
@@ -39,6 +51,65 @@ async function sha256Hex(input: string): Promise<string> {
 /** Reset codes are stored hashed (bound to the identifier), never in plain text. */
 async function hashResetCode(identifier: string, code: string): Promise<string> {
   return "h1:" + (await sha256Hex(`vektolux-reset:${identifier}:${code}`));
+}
+
+/** Verification codes are stored hashed and bound to BOTH the account and the address they were sent to. */
+async function hashEmailVerificationCode(userId: string, email: string, code: string): Promise<string> {
+  return "v1:" + (await sha256Hex(`vektolux-emailverify:${userId}:${email}:${code}`));
+}
+
+/**
+ * Creates a fresh verification challenge for the account's CURRENT email (retiring older ones) and
+ * queues the email through the existing Resend sender. Nothing is marked verified here.
+ */
+async function issueEmailVerification(ctx: MutationCtx, user: Doc<"users">, now: number): Promise<void> {
+  const email = user.email?.trim().toLowerCase();
+  if (!email || email.endsWith("@users.vektolux.invalid")) return;
+  const open = await ctx.db
+    .query("email_verifications")
+    .withIndex("by_userId", (q) => q.eq("userId", user._id))
+    .filter((q) => q.eq(q.field("isUsed"), false))
+    .take(20);
+  for (const old of open) await ctx.db.patch(old._id, { isUsed: true });
+  const code = secureSixDigitCode();
+  await ctx.db.insert("email_verifications", {
+    userId: user._id,
+    email,
+    codeHash: await hashEmailVerificationCode(user._id, email, code),
+    expiresAt: now + EMAIL_VERIFY_TTL_MS,
+    isUsed: false,
+    attempts: 0,
+    createdAt: now,
+  });
+  await ctx.scheduler.runAfter(0, internal.emails.sendOtpEmail, {
+    to: email,
+    otpCode: code,
+    recipientName: user.name ?? "User",
+  });
+}
+
+/**
+ * The client address to rate-limit a login by. Never taken from a caller-supplied argument alone:
+ *  - the platform-observed request IP (`ctx.meta`), which a client cannot choose; or
+ *  - the address forwarded by the admin-dashboard server, accepted ONLY when the call carries the
+ *    shared LOGIN_PROXY_SECRET (the dashboard server sees the real browser; Convex sees the server).
+ * Returns undefined when neither is available (then only account-level limits apply).
+ */
+async function resolveLoginClientIp(
+  ctx: MutationCtx,
+  forwardedIp: string | undefined,
+  proxySecret: string | undefined
+): Promise<string | undefined> {
+  const configured = process.env.LOGIN_PROXY_SECRET;
+  const forwarded = forwardedIp?.trim();
+  if (
+    configured && configured.length >= 16 && proxySecret && safeEqual(proxySecret, configured) &&
+    forwarded && /^[0-9a-fA-F:.]{3,45}$/.test(forwarded)
+  ) {
+    return forwarded.toLowerCase();
+  }
+  const observed = (await ctx.meta.getRequestMetadata()).ip;
+  return observed ? observed.toLowerCase() : undefined;
 }
 
 /** Cryptographically random 6-digit code. */
@@ -274,6 +345,8 @@ export const registerUser = mutation({
     address: v.optional(v.string()),
     region: v.optional(v.string()),
     pendingApplicationRole: v.optional(v.string()),
+    emailVerified: v.optional(v.boolean()),
+    emailVerificationRequired: v.optional(v.boolean()),
   }),
   handler: async (ctx, args) => {
     try {
@@ -286,26 +359,21 @@ export const registerUser = mutation({
       const canonicalRole = "client";
       const applicationRole = requestedApplicationRole(args.role);
 
-      // 1. Check for duplicate email (case-insensitive)
-      const existingByEmail = await findUserByIdentifier(ctx, normalizedEmail);
-      if (existingByEmail) {
-        return {
-          success: false,
-          errorMessage: "An account with this email already exists.",
-        };
-      }
-
-      // 2. Check for duplicate phone
-      const existingByPhone = await findUserByIdentifier(ctx, normalizedPhone);
-      if (existingByPhone) {
-        return {
-          success: false,
-          errorMessage: "An account with this phone number already exists.",
-        };
-      }
-
+      // Checked BEFORE any existence lookup so this answer cannot depend on whether the email exists.
       if (!args.password || args.password.length < MIN_PASSWORD_LENGTH) {
         return { success: false, errorMessage: `Password must be at least ${MIN_PASSWORD_LENGTH} characters long.` };
+      }
+
+      // 1+2. Duplicate email / phone: ONE answer for both, so the response never says which
+      // address or number is already registered (no account enumeration).
+      const existingByEmail = await findUserByIdentifier(ctx, normalizedEmail);
+      const existingByPhone = existingByEmail ? null : await findUserByIdentifier(ctx, normalizedPhone);
+      if (existingByEmail || existingByPhone) {
+        return {
+          success: false,
+          errorMessage:
+            "We couldn't create an account with these details. If you already have a Vektolux account, sign in or use Forgot password.",
+        };
       }
 
       // The supporting document (if any) must be a real, acceptable file we hold. The URL stored
@@ -391,6 +459,11 @@ export const registerUser = mutation({
         });
       }
 
+      // 7. Prove ownership of the address: the account stays UNVERIFIED (no emailVerifiedAt) until
+      // the code mailed to it is entered (auth.verifyEmail). Limited access before that is unchanged.
+      const created = await ctx.db.get(userId);
+      if (created) await issueEmailVerification(ctx, created, now);
+
       return {
         success: true,
         userId: userId as string,
@@ -400,6 +473,8 @@ export const registerUser = mutation({
         phone: args.phone,
         role: canonicalRole,
         avatarUrl: args.avatarUrl,
+        emailVerified: false,
+        emailVerificationRequired: true,
         ...(applicationRole ? { pendingApplicationRole: applicationRole } : {}),
       };
     } catch (err: any) {
@@ -421,7 +496,11 @@ export const loginWithPhoneOrEmail = mutation({
   args: {
     identifier: v.string(), // email or phone
     password: v.string(),
+    // NOT trusted on its own: a caller can send anything here. It is honoured only together with a
+    // `proxySecret` that matches LOGIN_PROXY_SECRET (i.e. the admin-dashboard server, which has
+    // already derived the real browser IP). Otherwise the platform-observed IP is used.
     ip: v.optional(v.string()),
+    proxySecret: v.optional(v.string()),
     totpCode: v.optional(v.string()), // 6-digit TOTP code or backup code
   },
   returns: v.object({
@@ -437,6 +516,7 @@ export const loginWithPhoneOrEmail = mutation({
     address: v.optional(v.string()),
     region: v.optional(v.string()),
     isVerified: v.optional(v.boolean()),
+    emailVerified: v.optional(v.boolean()),
     verificationStatus: v.optional(v.string()),
     businessName: v.optional(v.string()),
     tinNumber: v.optional(v.string()),
@@ -457,7 +537,10 @@ export const loginWithPhoneOrEmail = mutation({
       const sanitizedId = args.identifier.trim();
       const now = Date.now();
       const idKey = `login:id:${sanitizedId.toLowerCase()}`;
-      const ipKey = args.ip && args.ip.trim() ? `login:ip:${args.ip.trim()}` : undefined;
+      // The IP bucket is keyed by an address the SERVER derived: the platform's view of the request
+      // (ctx.meta), or the dashboard proxy's forwarded address when it proves it is the proxy.
+      const clientIp = await resolveLoginClientIp(ctx, args.ip, args.proxySecret);
+      const ipKey = clientIp ? `login:ip:${clientIp}` : undefined;
 
       if (ipKey) {
         const ipLock = await lockRemainingMs(ctx, ipKey, now);
@@ -488,7 +571,7 @@ export const loginWithPhoneOrEmail = mutation({
       // response never reveals which emails/phones are registered. Every failure is counted.
       const ok = !!user && !!user.passwordHash && (await verifyPassword(args.password, user.passwordHash));
       if (!ok || !user) {
-        if (ipKey) await recordFailure(ctx, ipKey, LOGIN_POLICY, now);
+        if (ipKey) await recordFailure(ctx, ipKey, LOGIN_IP_POLICY, now);
         if (isAdminAccount) {
           await recordFailure(ctx, idKey, LOGIN_POLICY, now);
           const userKey = user ? `login:user:${user._id}` : undefined;
@@ -566,7 +649,8 @@ export const loginWithPhoneOrEmail = mutation({
       await clearLimit(ctx, idKey);
       const userKey = user ? `login:user:${user._id}` : undefined;
       if (userKey) await clearLimit(ctx, userKey);
-      if (ipKey) await clearLimit(ctx, ipKey);
+      // The IP counter is deliberately NOT cleared on success: otherwise an attacker holding one valid
+      // account could reset it between guesses. It simply expires with its window.
 
       // An agent approved by the OLD admin flow (which never changed users.role) gets the role the
       // admin granted, from the stored approval evidence only (lib/legacyRoles.ts). Idempotent.
@@ -605,6 +689,7 @@ export const loginWithPhoneOrEmail = mutation({
         address: user.address,
         region: user.region,
         isVerified: user.isVerified,
+        emailVerified: !!user.emailVerifiedAt,
         verificationStatus: user.verificationStatus ?? (user.isVerified ? "verified" : "unverified"),
         businessName: user.businessName,
         tinNumber: user.tinNumber,
@@ -821,6 +906,7 @@ export const getUserSession = query({
       address: v.optional(v.string()),
       region: v.optional(v.string()),
       isVerified: v.boolean(),
+      emailVerified: v.optional(v.boolean()),
       isActive: v.boolean(),
       avatarUrl: v.optional(v.string()),
       walletAddress: v.optional(v.string()),
@@ -873,6 +959,7 @@ export const getUserSession = query({
         address: user.address,
         region: user.region,
         isVerified: user.isVerified,
+        emailVerified: !!user.emailVerifiedAt,
         isActive: user.isActive,
         avatarUrl: user.avatarUrl,
         walletAddress: user.walletAddress,
@@ -896,6 +983,66 @@ export const getUserSession = query({
 
 // ═══════════════════════════════════════════════════════════════════════
 //                    SEED DEMO / TEST USERS (PRODUCTION ENFORCED)
+// ═════════════════════════════════════════════════
+//                  EMAIL OWNERSHIP VERIFICATION
+// ═════════════════════════════════════════════════
+
+/** Signed-in user asks for a new code for THEIR OWN current email. */
+export const resendEmailVerification = mutation({
+  args: { sessionToken: v.string() },
+  returns: v.object({ success: v.boolean(), alreadyVerified: v.optional(v.boolean()), message: v.string() }),
+  handler: async (ctx, args) => {
+    const { user } = await requireSelf(ctx, args.sessionToken);
+    if (user.emailVerifiedAt) return { success: true, alreadyVerified: true, message: "Your email is already verified." };
+    const now = Date.now();
+    if (!(await consume(ctx, `email-verify-send:${user._id}`, EMAIL_VERIFY_SEND_POLICY, now))) {
+      return { success: false, message: "Too many requests. Please wait 15 minutes and try again." };
+    }
+    await issueEmailVerification(ctx, user, now);
+    return { success: true, message: "A new 6-digit code has been sent to your email." };
+  },
+});
+
+/**
+ * Marks the signed-in user's email as verified when the code mailed to it is entered. The account
+ * is always the session's own: a code can never verify (or change) another user's email.
+ */
+export const verifyEmail = mutation({
+  args: { sessionToken: v.string(), code: v.string() },
+  returns: v.object({ success: v.boolean(), message: v.string() }),
+  handler: async (ctx, args) => {
+    const INVALID = { success: false, message: "Invalid or expired verification code. Please request a new one." };
+    const { user } = await requireSelf(ctx, args.sessionToken);
+    if (user.emailVerifiedAt) return { success: true, message: "Your email is already verified." };
+    const code = args.code.trim();
+    if (!/^\d{6}$/.test(code)) return { success: false, message: "Please enter the 6-digit verification code." };
+    const now = Date.now();
+
+    // Only the most recent challenge counts, and only if it was sent to the address the account has NOW.
+    const record = await ctx.db
+      .query("email_verifications")
+      .withIndex("by_userId", (q) => q.eq("userId", user._id))
+      .order("desc")
+      .first();
+    const email = user.email?.trim().toLowerCase();
+    if (!record || record.isUsed || record.expiresAt <= now || !email || record.email !== email) return INVALID;
+
+    const expected = await hashEmailVerificationCode(user._id, email, code);
+    if (!safeEqual(expected, record.codeHash)) {
+      // Counted and RETURNED (not thrown) so the counter persists; the code is burned at the limit.
+      const attempts = (record.attempts ?? 0) + 1;
+      await ctx.db.patch(record._id, { attempts, isUsed: attempts >= EMAIL_VERIFY_MAX_ATTEMPTS });
+      return attempts >= EMAIL_VERIFY_MAX_ATTEMPTS
+        ? { success: false, message: "Too many incorrect codes. Please request a new code." }
+        : INVALID;
+    }
+
+    await ctx.db.patch(record._id, { isUsed: true });
+    await ctx.db.patch(user._id, { emailVerifiedAt: now, updatedAt: now });
+    return { success: true, message: "Your email has been verified." };
+  },
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 
 export const seedDemoUsers = internalMutation({
@@ -1128,7 +1275,14 @@ export const verifyResetOtpAndSetPassword = mutation({
 
       const passwordHash = await hashPassword(args.newPassword);
       // New password => every existing session is invalidated by issuing a fresh one.
-      await ctx.db.patch(user._id, { passwordHash, ...issueSession(now), updatedAt: now });
+      // Receiving and entering the code that was mailed to the account's address proves the owner
+      // controls that mailbox.
+      await ctx.db.patch(user._id, {
+        passwordHash,
+        ...issueSession(now),
+        updatedAt: now,
+        ...(user.emailVerifiedAt ? {} : { emailVerifiedAt: now }),
+      });
       await ctx.db.patch(record._id, { isUsed: true });
       // A successful reset lifts any login lockout for the account.
       await clearLimit(ctx, `login:user:${user._id}`);

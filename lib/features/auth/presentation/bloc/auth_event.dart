@@ -148,16 +148,20 @@ class SocialAuthEvent extends AuthEvent {
   /// Profile photo URL (Google only; Apple does not provide one).
   final String? avatarUrl;
 
+  /// Apple only: the raw one-time nonce issued by the server for this attempt.
+  final String? nonce;
+
   const SocialAuthEvent({
     required this.provider,
     required this.token,
     required this.email,
     this.name,
     this.avatarUrl,
+    this.nonce,
   });
 
   @override
-  List<Object?> get props => [provider, token, email, name, avatarUrl];
+  List<Object?> get props => [provider, token, email, name, avatarUrl, nonce];
 }
 
 /// Link phone number to authenticated user profile to complete setup.

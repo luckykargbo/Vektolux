@@ -292,6 +292,7 @@ describe("social sign-in", () => {
     await t.mutation(api.users.requestAccountDeletion, { sessionToken: u.token });
     await t.mutation(internal.users.completeSocialSignIn, {
       provider: "google", sub: "g-sub-1", emailVerified: false,
+      tokenHash: "test-token-hash-1", tokenExpiresAt: Date.now() + 600_000,
     });
     const after: any = await t.run((ctx) => ctx.db.get(u.id));
     expect(after.deletionRequestedAt).toBeUndefined();

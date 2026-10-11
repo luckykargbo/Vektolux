@@ -19,7 +19,9 @@ import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/services/biometric_login_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/domain/entities/user_entity.dart';
+import '../../../auth/data/services/social_credential_provider.dart';
 import '../../../auth/domain/repositories/auth_repository.dart';
+import '../../../auth/presentation/views/verify_email_screen.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../auth/presentation/bloc/auth_event.dart';
 import '../../../auth/presentation/views/login_screen.dart';
@@ -92,11 +94,14 @@ class _AccountProfile {
 class AccountProfileScreen extends StatefulWidget {
   final BiometricLoginService? biometrics;
 
+  /// Runs the real Google/Apple authentication UI when linking (injectable for tests).
+  final SocialCredentialProvider? credentials;
+
   /// Opens the phone-change sheet as soon as the PIN status is known (used by the Account tab's
   /// "Change phone number" link, so there is a single phone-change flow).
   final bool openPhoneChange;
 
-  const AccountProfileScreen({super.key, this.biometrics, this.openPhoneChange = false});
+  const AccountProfileScreen({super.key, this.biometrics, this.credentials, this.openPhoneChange = false});
 
   @override
   State<AccountProfileScreen> createState() => _AccountProfileScreenState();
@@ -108,6 +113,8 @@ class _AccountProfileScreenState extends State<AccountProfileScreen> {
   _AccountProfile? _profile;
   bool? _hasPin; // null = not known yet
   bool _pinStatusFailed = false;
+  AccountSecurityStatus? _security; // authoritative, from the backend
+  bool _securityFailed = false;
   List<BiometricMethod> _methods = const [];
   bool _biometricEnabled = false;
   bool _biometricBusy = false;
@@ -121,6 +128,7 @@ class _AccountProfileScreenState extends State<AccountProfileScreen> {
     if (user != null) _profile = _AccountProfile.fromSession(user);
     _loadProfile();
     final pinStatus = _loadPinStatus();
+    _loadSecurity();
     _loadBiometrics();
     if (widget.openPhoneChange) {
       pinStatus.whenComplete(() {
@@ -152,6 +160,71 @@ class _AccountProfileScreenState extends State<AccountProfileScreen> {
         _pinStatusFailed = true;
       }
     });
+  }
+
+  Future<void> _loadSecurity() async {
+    if (_user == null) return;
+    setState(() => _securityFailed = false);
+    try {
+      final status = await context.read<AuthRepository>().getAccountSecurityStatus();
+      if (!mounted) return;
+      setState(() => _security = status);
+    } catch (_) {
+      if (mounted) setState(() => _securityFailed = true);
+    }
+  }
+
+  Future<void> _verifyEmail() async {
+    final status = _security;
+    if (status == null) return;
+    final repository = context.read<AuthRepository>();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (sheetContext) => _SheetFrame(
+        icon: Icons.mark_email_read_outlined,
+        title: 'Verify your email',
+        subtitle: 'Confirm that you own this address.',
+        children: [
+          EmailVerificationPanel(
+            repository: repository,
+            email: status.email,
+            onVerified: () {
+              // Re-read the truth from the server; the panel's own message only reflects its reply.
+              _loadSecurity();
+              Future.delayed(const Duration(milliseconds: 900), () {
+                if (sheetContext.mounted) Navigator.of(sheetContext).pop();
+              });
+            },
+          ),
+        ],
+      ),
+    );
+    if (mounted) _loadSecurity();
+  }
+
+  Future<void> _linkProvider(String provider) async {
+    final status = _security;
+    if (status == null) return;
+    final repository = context.read<AuthRepository>();
+    final credentials = widget.credentials ?? PlatformSocialCredentialProvider(repository);
+    final linked = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => _LinkProviderSheet(
+        provider: provider,
+        status: status,
+        repository: repository,
+        credentials: credentials,
+      ),
+    );
+    if (!mounted) return;
+    await _loadSecurity(); // authoritative status, whatever happened in the sheet
+    if (linked == true && mounted) _snack('${_providerLabel(provider)} linked to your account.');
   }
 
   Future<void> _loadBiometrics() async {
@@ -324,6 +397,8 @@ class _AccountProfileScreenState extends State<AccountProfileScreen> {
                   _pinCard(),
                   const SizedBox(height: 14),
                   _biometricCard(),
+                  const SizedBox(height: 14),
+                  _signInMethodsCard(),
                   const SizedBox(height: 22),
                   _deleteCard(),
                 ],
@@ -377,6 +452,55 @@ class _AccountProfileScreenState extends State<AccountProfileScreen> {
                   onPressed: _hasPin == null ? null : _setOrChangePin,
                 ),
         ),
+      ],
+    );
+  }
+
+  Widget _signInMethodsCard() {
+    final s = _security;
+    return _SectionCard(
+      icon: Icons.verified_user_outlined,
+      title: 'Email & Sign-in Methods',
+      subtitle: 'Verify your email and link Google or Apple to this account',
+      children: [
+        if (s == null)
+          _Row(
+            key: const Key('account-security-loading'),
+            label: 'Status',
+            value: _securityFailed ? 'Could not load' : 'Checking…',
+            trailing: _securityFailed
+                ? _OutlineAction(icon: Icons.refresh_rounded, label: 'Retry', onPressed: _loadSecurity)
+                : null,
+          )
+        else ...[
+          _Row(
+            key: const Key('account-email-verification-row'),
+            label: 'Email',
+            value: s.emailVerified ? 'Verified' : 'Not verified',
+            trailing: s.emailVerified
+                ? null
+                : _OutlineAction(
+                    key: const Key('account-email-verify-action'),
+                    icon: Icons.mark_email_read_outlined,
+                    label: 'Verify',
+                    onPressed: _verifyEmail,
+                  ),
+          ),
+          for (final provider in const ['google', 'apple'])
+            _Row(
+              key: Key('account-link-$provider-row'),
+              label: _providerLabel(provider),
+              value: s.isLinked(provider) ? 'Linked' : 'Not linked',
+              trailing: s.isLinked(provider)
+                  ? null
+                  : _OutlineAction(
+                      key: Key('account-link-$provider-action'),
+                      icon: Icons.link_rounded,
+                      label: 'Link',
+                      onPressed: () => _linkProvider(provider),
+                    ),
+            ),
+        ],
       ],
     );
   }
@@ -449,6 +573,8 @@ class _AccountProfileScreenState extends State<AccountProfileScreen> {
         ),
       );
 }
+
+String _providerLabel(String provider) => provider == 'apple' ? 'Apple' : 'Google';
 
 String _formatPhone(String phone) {
   final p = phone.replaceAll(' ', '');
@@ -932,6 +1058,114 @@ class _PhoneChangeSheetState extends State<_PhoneChangeSheet> {
 }
 
 // ─── PIN ────────────────────────────────────────────────────────────
+
+class _LinkProviderSheet extends StatefulWidget {
+  final String provider;
+  final AccountSecurityStatus status;
+  final AuthRepository repository;
+  final SocialCredentialProvider credentials;
+
+  const _LinkProviderSheet({
+    required this.provider,
+    required this.status,
+    required this.repository,
+    required this.credentials,
+  });
+
+  @override
+  State<_LinkProviderSheet> createState() => _LinkProviderSheetState();
+}
+
+class _LinkProviderSheetState extends State<_LinkProviderSheet> {
+  final _secret = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _secret.dispose();
+    super.dispose();
+  }
+
+  String get _secretLabel => widget.status.hasPin ? 'Account PIN' : 'Account password';
+
+  Future<void> _submit() async {
+    final label = _providerLabel(widget.provider);
+    if (widget.status.needsSecret && _secret.text.isEmpty) {
+      setState(() => _error = 'Enter your $_secretLabel to continue.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final credential = await widget.credentials.obtain(widget.provider);
+      if (!mounted) return;
+      if (credential == null) {
+        // Cancelled in the provider UI: nothing was sent, nothing changed.
+        setState(() {
+          _busy = false;
+          _error = '$label sign-in was cancelled. Nothing was changed.';
+        });
+        return;
+      }
+      await widget.repository.linkSocialIdentity(
+        provider: widget.provider,
+        providerId: credential.idToken,
+        nonce: credential.nonce,
+        secret: widget.status.needsSecret ? _secret.text : null,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      _secret.clear();
+      setState(() {
+        _busy = false;
+        _error = e.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = 'Could not link $label. Nothing was changed. Please try again.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = _providerLabel(widget.provider);
+    return _SheetFrame(
+      icon: Icons.link_rounded,
+      title: 'Link $label',
+      subtitle: 'Sign in to this account with $label from now on. '
+          'A matching email address is never enough: you confirm it is your account here.',
+      children: [
+        if (widget.status.needsSecret) ...[
+          widget.status.hasPin
+              ? _PinField(key: const Key('account-link-secret'), controller: _secret, label: 'Account PIN', autofocus: true)
+              : TextField(
+                  key: const Key('account-link-secret'),
+                  controller: _secret,
+                  obscureText: true,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'Account password', border: OutlineInputBorder()),
+                ),
+          const SizedBox(height: 12),
+        ],
+        _SheetError(_error),
+        _PrimaryButton(
+          key: const Key('account-link-submit'),
+          label: 'Continue with $label',
+          busy: _busy,
+          onPressed: _submit,
+        ),
+      ],
+    );
+  }
+}
 
 class _PinSheet extends StatefulWidget {
   final String userId;

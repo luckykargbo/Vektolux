@@ -311,6 +311,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       final result = await _repository.socialSignIn(
         provider: event.provider,
         providerId: event.token,
+        nonce: event.nonce,
         email: event.email,
         name: event.name,
         avatarUrl: event.avatarUrl,

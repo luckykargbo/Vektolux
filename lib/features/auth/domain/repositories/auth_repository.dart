@@ -63,6 +63,30 @@ abstract class AuthRepository {
     String? avatarUrl,
     required String provider,
     required String providerId,
+    String? nonce,
+  });
+
+  /// Apple sign-in step 1: a one-time server nonce. Give Apple only `nonceHash`; send the raw
+  /// `nonce` back with the identity token.
+  Future<({String nonce, String nonceHash})> createOAuthChallenge({required String provider});
+
+  /// Proves ownership of the account's email with the code that was mailed to it.
+  Future<void> verifyEmail({required String code});
+
+  /// Sends a fresh email-verification code to the signed-in user's own address.
+  Future<void> resendEmailVerification();
+
+  /// Authoritative email-verification / linked-provider status from the backend.
+  Future<AccountSecurityStatus> getAccountSecurityStatus();
+
+  /// Links a Google/Apple identity to the signed-in account. [secret] is the Account PIN (or the
+  /// account password when no PIN exists) whenever [AccountSecurityStatus.needsSecret] is true.
+  /// Throws [AuthException] with the server's message when linking is refused.
+  Future<void> linkSocialIdentity({
+    required String provider,
+    required String providerId,
+    String? nonce,
+    String? secret,
   });
 
   /// Link Sierra Leone phone number to complete profile setup, or change it.
@@ -75,6 +99,29 @@ abstract class AuthRepository {
 }
 
 /// Authentication and credential failure exceptions (invalid password, account not found).
+/// What the backend reports about the signed-in account's email proof and linked providers.
+class AccountSecurityStatus {
+  final String email;
+  final bool emailVerified;
+  final bool hasPin;
+  final bool hasPassword;
+  final bool googleLinked;
+  final bool appleLinked;
+
+  const AccountSecurityStatus({
+    required this.email,
+    required this.emailVerified,
+    required this.hasPin,
+    required this.hasPassword,
+    required this.googleLinked,
+    required this.appleLinked,
+  });
+
+  /// Linking re-authenticates with the PIN, or the password when there is no PIN.
+  bool get needsSecret => hasPin || hasPassword;
+  bool isLinked(String provider) => provider == 'apple' ? appleLinked : googleLinked;
+}
+
 class AuthException implements Exception {
   final String message;
   final bool isCredentialFailure;

@@ -3,14 +3,17 @@
 // VEKTOLUX — User Profile Queries & Mutations
 // ═══════════════════════════════════════════════════════════════════════
 
-import { action, mutation, query, internalMutation, internalQuery } from "./_generated/server";
+import { action, mutation, query, internalMutation, internalQuery, MutationCtx } from "./_generated/server";
+import { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { verifyAppleIdToken, verifyGoogleIdToken } from "./lib/oauth";
 import { issueSession } from "./lib/session";
 import { verifyAndTrackPin } from "./lib/pin";
 import { v } from "convex/values";
 import { userRole } from "./schema";
-import { verifyPassword } from "./auth";
+import { findUserByIdentifier, verifyPassword } from "./auth";
+import { consume } from "./lib/rateLimit";
+import { consumeChallenge, issueChallenge, recordTokenUse, sha256Hex, tokenAlreadyUsed } from "./lib/oauthState";
 import { hasCarDealerCapability, isRoleApproved, professionalBadge, professionalTitle, roleForApplication } from "./lib/permissions";
 import { requireAuthenticatedUser, requireAdmin, requireSelf, resolveOptionalUser } from "./lib/auth";
 import { isListingPublic, toPublicProperty, toPublicVehicle } from "./lib/publicListing";
@@ -958,7 +961,84 @@ function _generateSessionToken(): string {
 // If hasPhone is false, client prompts to complete Sierra Leone phone number.
 // ═══════════════════════════════════════════════════════════════════════
 
+// ─── OAuth sign-in: shapes shared by sign-in and the response union ──────────────────────────────
+const socialUser = v.object({
+  id: v.string(),
+  name: v.string(),
+  email: v.string(),
+  phone: v.string(),
+  phoneNumber: v.optional(v.string()),
+  role: v.string(),
+  isVerified: v.boolean(),
+  avatarUrl: v.optional(v.string()),
+  walletAddress: v.optional(v.string()),
+});
+const socialSuccess = v.object({
+  userId: v.string(),
+  hasPhone: v.boolean(),
+  sessionToken: v.string(),
+  user: socialUser,
+  emailVerified: v.optional(v.boolean()),
+});
+// Returned (not thrown) when the identity may not be used to sign in. No session is issued and
+// nothing about the existing account is changed.
+const socialBlocked = v.object({ blocked: v.literal(true), code: v.string(), message: v.string() });
+
+const oauthProvider = v.union(v.literal("google"), v.literal("apple"));
+const providerLabel = (p: string) => (p === "apple" ? "Apple" : "Google");
+const unverifiable = (p: string) => new Error(`${providerLabel(p)} sign-in could not be verified.`);
+
+export const ACCOUNT_LINK_REQUIRED_MESSAGE =
+  "A Vektolux account already uses this email. Sign in with your Vektolux password first, then link Google or Apple from your account settings. If you do not remember your password, use Forgot password.";
+
+/** The account an identity is attached to: a linked identity row, else the legacy single-provider fields. */
+async function findAccountForIdentity(ctx: MutationCtx, provider: string, sub: string): Promise<Doc<"users"> | null> {
+  const identity = await ctx.db
+    .query("auth_identities")
+    .withIndex("by_provider_subject", (q) => q.eq("provider", provider).eq("subject", sub))
+    .first();
+  if (identity) return await ctx.db.get(identity.userId);
+  return await ctx.db
+    .query("users")
+    .withIndex("by_external_auth", (q) => q.eq("authProvider", provider).eq("externalAuthId", sub))
+    .first();
+}
+
+/** Replay / nonce gates for one verified token. Throws a generic error when refused. */
+async function passOAuthGates(
+  ctx: MutationCtx,
+  a: { provider: string; tokenHash: string; nonce?: string },
+  now: number
+): Promise<void> {
+  if (await tokenAlreadyUsed(ctx, a.provider, a.tokenHash)) throw unverifiable(a.provider);
+  // Apple tokens must carry the nonce the server issued to THIS attempt (matched against the token
+  // in verifyProviderToken); here it is burned so it can never be used again.
+  if (a.provider === "apple" && !(await consumeChallenge(ctx, "apple", a.nonce, now))) throw unverifiable("apple");
+}
+
+/**
+ * Step 1 of an Apple sign-in. The server issues a one-time nonce; the app gives Apple only
+ * `nonceHash`, and later sends the raw `nonce` back with the identity token.
+ */
+export const createOAuthChallenge = mutation({
+  args: { provider: oauthProvider },
+  returns: v.object({ nonce: v.string(), nonceHash: v.string(), expiresAt: v.number() }),
+  handler: async (ctx, args) => {
+    // The caller is not signed in yet, so this is bounded globally to keep the table from being flooded.
+    if (!(await consume(ctx, "oauth-challenge:global", { max: 600, windowMs: 60_000 }))) {
+      throw new Error("Too many sign-in attempts right now. Please try again in a moment.");
+    }
+    return await issueChallenge(ctx, args.provider);
+  },
+});
+
 // INTERNAL: completes a social sign-in for an identity ALREADY verified by socialSignIn.
+//
+// Account-takeover rule: a provider identity that is not yet linked NEVER signs in to an existing
+// account just because its (provider-verified) email matches. That would let anyone who controls a
+// Google/Apple identity with that email reach an account they do not own. Such an attempt is
+// refused without touching the account; linking happens only through users.linkSocialIdentity
+// (signed in + Account PIN when set).
 export const completeSocialSignIn = internalMutation({
   args: {
     provider: v.string(),
@@ -967,61 +1047,54 @@ export const completeSocialSignIn = internalMutation({
     emailVerified: v.boolean(),
     name: v.optional(v.string()),
     avatarUrl: v.optional(v.string()),
+    tokenHash: v.string(),
+    tokenExpiresAt: v.number(),
+    nonce: v.optional(v.string()),
   },
-  returns: v.object({
-    userId: v.string(),
-    hasPhone: v.boolean(),
-    sessionToken: v.string(),
-    user: v.object({
-      id: v.string(),
-      name: v.string(),
-      email: v.string(),
-      phone: v.string(),
-      phoneNumber: v.optional(v.string()),
-      role: v.string(),
-      isVerified: v.boolean(),
-      avatarUrl: v.optional(v.string()),
-      walletAddress: v.optional(v.string()),
-    }),
-  }),
+  returns: v.union(socialSuccess, socialBlocked),
   handler: async (ctx, args) => {
     const now = Date.now();
-    const { sessionToken, sessionExpiresAt } = issueSession(now);
+    await passOAuthGates(ctx, { provider: args.provider, tokenHash: args.tokenHash, nonce: args.nonce }, now);
     const verifiedEmail = args.emailVerified && args.email ? args.email.trim().toLowerCase() : undefined;
 
-    // 1. The provider's stable subject id identifies the account.
-    let existing = await ctx.db
-      .query("users")
-      .withIndex("by_external_auth", (q) => q.eq("authProvider", args.provider).eq("externalAuthId", args.sub))
-      .first();
-
-    // 2. Otherwise link an existing account ONLY by an email the provider itself verified.
-    if (!existing && verifiedEmail) {
-      existing = await ctx.db.query("users").withIndex("by_email", (q) => q.eq("email", verifiedEmail)).first();
-    }
-
+    // 1. The provider's stable subject id identifies an ALREADY LINKED account.
+    const existing = await findAccountForIdentity(ctx, args.provider, args.sub);
     if (existing) {
       if (existing.isActive === false) throw new Error("Account has been deactivated. Please contact support.");
+      const { sessionToken, sessionExpiresAt } = issueSession(now);
       const hasPhone = !!(
         (existing.phoneNumber && existing.phoneNumber.trim().length > 0) ||
         (existing.phone && existing.phone.trim().length > 0)
       );
+      // The provider just proved control of this very address: that is proof of ownership.
+      const proves = !!verifiedEmail && verifiedEmail === existing.email?.trim().toLowerCase();
       await ctx.db.patch(existing._id, {
         sessionToken,
         sessionExpiresAt,
         lastLoginAt: now,
         updatedAt: now,
-        authProvider: args.provider,
-        externalAuthId: args.sub,
         ...(args.avatarUrl && !existing.avatarUrl ? { avatarUrl: args.avatarUrl } : {}),
+        ...(proves && !existing.emailVerifiedAt ? { emailVerifiedAt: now } : {}),
         // Signing in within the 30-day window cancels a pending account deletion.
         deletionRequestedAt: undefined,
         deletionScheduledFor: undefined,
       });
+      // Accounts linked before auth_identities existed get their identity row on first use.
+      const hasRow = await ctx.db
+        .query("auth_identities")
+        .withIndex("by_provider_subject", (q) => q.eq("provider", args.provider).eq("subject", args.sub))
+        .first();
+      if (!hasRow) {
+        await ctx.db.insert("auth_identities", {
+          userId: existing._id, provider: args.provider, subject: args.sub, email: verifiedEmail, linkedAt: now,
+        });
+      }
+      await recordTokenUse(ctx, args.provider, args.tokenHash, args.tokenExpiresAt, now);
       return {
         userId: existing._id as string,
         hasPhone,
         sessionToken,
+        emailVerified: !!(existing.emailVerifiedAt || proves),
         user: {
           id: existing._id as string,
           name: existing.name,
@@ -1036,14 +1109,21 @@ export const completeSocialSignIn = internalMutation({
       };
     }
 
-    // 3. New account: always a CLIENT and never pre-verified (identity verification is separate KYC).
+    // 2. Not linked, but the verified email belongs to an existing account: REFUSE. No session, no
+    //    link, no change to that account. The token is NOT consumed (nothing was done with it).
+    if (verifiedEmail) {
+      const holder = await findUserByIdentifier(ctx, verifiedEmail);
+      if (holder) return { blocked: true as const, code: "ACCOUNT_LINK_REQUIRED", message: ACCOUNT_LINK_REQUIRED_MESSAGE };
+    }
+
+    // 3. New account: always a CLIENT and never KYC-verified (identity verification is separate).
+    const { sessionToken, sessionExpiresAt } = issueSession(now);
     const email = verifiedEmail ?? `${args.provider}_${args.sub}@users.vektolux.invalid`;
     const displayName = args.name && args.name.trim().length > 0 ? args.name.trim().slice(0, 80) : email.split("@")[0];
     const userId = await ctx.db.insert("users", {
       name: displayName,
       email,
       phone: "",
-      phoneNumber: undefined,
       role: "client",
       authProvider: args.provider,
       externalAuthId: args.sub,
@@ -1054,6 +1134,10 @@ export const completeSocialSignIn = internalMutation({
       avatarUrl: args.avatarUrl,
       lastLoginAt: now,
       updatedAt: now,
+      ...(verifiedEmail ? { emailVerifiedAt: now } : {}),
+    });
+    await ctx.db.insert("auth_identities", {
+      userId, provider: args.provider, subject: args.sub, email: verifiedEmail, linkedAt: now,
     });
     await ctx.db.insert("walletBalances", {
       userId,
@@ -1063,10 +1147,12 @@ export const completeSocialSignIn = internalMutation({
       currency: "SLE",
       updatedAt: now,
     });
+    await recordTokenUse(ctx, args.provider, args.tokenHash, args.tokenExpiresAt, now);
     return {
       userId: userId as string,
       hasPhone: false,
       sessionToken,
+      emailVerified: !!verifiedEmail,
       user: {
         id: userId as string,
         name: displayName,
@@ -1083,10 +1169,34 @@ export const completeSocialSignIn = internalMutation({
 });
 
 /**
- * Social sign-in (Google / Apple). `providerId` MUST be the provider's signed ID token; it is
- * verified server-side before any session is issued. The email/name sent by the client are
- * NOT used to choose the account.
+ * Verifies a provider ID token and, for Apple, that it carries the nonce this server issued.
+ *
+ * KNOWN LIMITATION (Google): there is NO per-attempt nonce for Google. The installed google_sign_in
+ * (6.3.0 / android 6.2.1 / ios 5.9.0) has no nonce parameter, so the server cannot bind a Google
+ * token to one sign-in attempt. What protects Google today is signature, issuer, audience, expiry
+ * and `sub` verification plus single-use token-hash replay protection (oauth_token_uses). A token
+ * obtained outside this app could still be presented once before it expires. Per-attempt binding
+ * needs a different supported Google flow (e.g. Credential Manager / Google Identity Services with
+ * a nonce) and is a separate, future change. Do not describe Google sign-in as nonce-protected.
  */
+async function verifyProviderToken(provider: string, idToken: string, rawNonce: string | undefined) {
+  const identity =
+    provider === "google"
+      ? await verifyGoogleIdToken(idToken)
+      : provider === "apple"
+        ? await verifyAppleIdToken(idToken)
+        : null;
+  if (!identity) throw new Error("Unsupported sign-in provider.");
+  if (provider === "apple") {
+    // Clients before the nonce rollout never send one. They cannot be accepted (that would
+    // re-open replay/injection), so tell them plainly to update rather than failing opaquely.
+    if (!rawNonce) throw new Error("Please update the Vektolux app to continue signing in with Apple.");
+    const expected = /^[0-9a-f]{64}$/.test(rawNonce) ? await sha256Hex(rawNonce) : undefined;
+    if (!expected || identity.nonce !== expected) throw unverifiable("apple");
+  }
+  return { identity, tokenHash: await sha256Hex(idToken) };
+}
+
 export const socialSignIn = action({
   args: {
     email: v.optional(v.string()), // ignored for identity
@@ -1094,32 +1204,12 @@ export const socialSignIn = action({
     avatarUrl: v.optional(v.string()),
     provider: v.string(),
     providerId: v.string(), // the provider ID token
+    nonce: v.optional(v.string()), // Apple: the raw nonce from users.createOAuthChallenge
   },
-  returns: v.object({
-    userId: v.string(),
-    hasPhone: v.boolean(),
-    sessionToken: v.string(),
-    user: v.object({
-      id: v.string(),
-      name: v.string(),
-      email: v.string(),
-      phone: v.string(),
-      phoneNumber: v.optional(v.string()),
-      role: v.string(),
-      isVerified: v.boolean(),
-      avatarUrl: v.optional(v.string()),
-      walletAddress: v.optional(v.string()),
-    }),
-  }),
+  returns: v.union(socialSuccess, socialBlocked),
   handler: async (ctx, args): Promise<any> => {
     const provider = args.provider.trim().toLowerCase();
-    const identity =
-      provider === "google"
-        ? await verifyGoogleIdToken(args.providerId)
-        : provider === "apple"
-          ? await verifyAppleIdToken(args.providerId)
-          : null;
-    if (!identity) throw new Error("Unsupported sign-in provider.");
+    const { identity, tokenHash } = await verifyProviderToken(provider, args.providerId, args.nonce);
     return await ctx.runMutation(internal.users.completeSocialSignIn, {
       provider: identity.provider,
       sub: identity.sub,
@@ -1127,6 +1217,147 @@ export const socialSignIn = action({
       emailVerified: identity.emailVerified,
       name: args.name ?? identity.name,
       avatarUrl: args.avatarUrl,
+      tokenHash,
+      tokenExpiresAt: identity.expiresAtMs,
+      nonce: args.nonce,
+    });
+  },
+});
+
+// ─── Linking a Google / Apple identity to the account you are signed in to ───────────────────────
+
+// INTERNAL: the signed-in owner attaches a verified provider identity. Needs the Account PIN when one is set.
+export const completeSocialLink = internalMutation({
+  args: {
+    sessionToken: v.string(),
+    provider: v.string(),
+    sub: v.string(),
+    email: v.optional(v.string()),
+    emailVerified: v.boolean(),
+    tokenHash: v.string(),
+    tokenExpiresAt: v.number(),
+    nonce: v.optional(v.string()),
+    currentPin: v.optional(v.string()),
+  },
+  returns: v.object({ success: v.boolean(), errorCode: v.optional(v.string()), message: v.optional(v.string()) }),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const { userId, user } = await requireSelf(ctx, args.sessionToken);
+    // Re-authentication: a stolen or left-open session alone must not be able to attach a sign-in
+    // method that would outlive it. The Account PIN is required when one is set; otherwise the
+    // account password. Accounts with neither (created through Google/Apple) rely on the session.
+    // A failed attempt is RETURNED so the attempt counter persists (and nothing below is consumed).
+    if (user.walletPinHash || user.passwordHash) {
+      const check = await verifyAndTrackPin(ctx, user, args.currentPin);
+      if (!check.ok) {
+        return {
+          success: false,
+          errorCode: check.code,
+          message:
+            check.code === "REQUIRED"
+              ? `Enter your ${user.walletPinHash ? "Account PIN" : "password"} to link a sign-in method.`
+              : check.message,
+        };
+      }
+    }
+    // The account's email must be PROVEN before it can carry an extra sign-in method (otherwise
+    // someone who merely typed a victim's email at registration could attach their own Google/Apple
+    // and keep access after the real owner recovers the account). The provider verifying this very
+    // address counts as proof.
+    const providerEmail = args.emailVerified && args.email ? args.email.trim().toLowerCase() : undefined;
+    const providerProvesEmail = !!providerEmail && providerEmail === user.email?.trim().toLowerCase();
+    if (!user.emailVerifiedAt && !providerProvesEmail) {
+      return {
+        success: false,
+        errorCode: "EMAIL_NOT_VERIFIED",
+        message: "Verify your email address first, then link Google or Apple.",
+      };
+    }
+    await passOAuthGates(ctx, { provider: args.provider, tokenHash: args.tokenHash, nonce: args.nonce }, now);
+
+    const owner = await findAccountForIdentity(ctx, args.provider, args.sub);
+    if (owner && owner._id !== userId) {
+      return {
+        success: false,
+        errorCode: "ALREADY_LINKED",
+        message: `This ${providerLabel(args.provider)} account is already linked to a different Vektolux account.`,
+      };
+    }
+    const mine = await ctx.db.query("auth_identities").withIndex("by_userId", (q) => q.eq("userId", userId)).take(10);
+    const sameProvider = mine.find((i) => i.provider === args.provider);
+    const legacyOther =
+      user.authProvider === args.provider && !!user.externalAuthId && user.externalAuthId !== args.sub;
+    if ((sameProvider && sameProvider.subject !== args.sub) || legacyOther) {
+      return {
+        success: false,
+        errorCode: "PROVIDER_ALREADY_LINKED",
+        message: `A different ${providerLabel(args.provider)} account is already linked to this Vektolux account.`,
+      };
+    }
+    const verifiedEmail = args.emailVerified && args.email ? args.email.trim().toLowerCase() : undefined;
+    if (!sameProvider) {
+      await ctx.db.insert("auth_identities", {
+        userId, provider: args.provider, subject: args.sub, email: verifiedEmail, linkedAt: now,
+      });
+    }
+    // Only the proven-ownership flag can change, and only when the provider verified THIS account's address.
+    if (verifiedEmail && verifiedEmail === user.email?.trim().toLowerCase() && !user.emailVerifiedAt) {
+      await ctx.db.patch(userId, { emailVerifiedAt: now, updatedAt: now });
+    }
+    await recordTokenUse(ctx, args.provider, args.tokenHash, args.tokenExpiresAt, now);
+    return { success: true };
+  },
+});
+
+/**
+ * Authoritative account-security status for the signed-in user: whether the email is proven,
+ * whether a re-authentication secret exists, and which Google/Apple identities are linked.
+ * Returns no token or subject ids.
+ */
+export const getAccountSecurityStatus = query({
+  args: { sessionToken: v.string() },
+  returns: v.object({
+    email: v.string(),
+    emailVerified: v.boolean(),
+    hasPin: v.boolean(),
+    hasPassword: v.boolean(),
+    linked: v.object({ google: v.boolean(), apple: v.boolean() }),
+  }),
+  handler: async (ctx, args) => {
+    const { userId, user } = await requireSelf(ctx, args.sessionToken);
+    const rows = await ctx.db.query("auth_identities").withIndex("by_userId", (q) => q.eq("userId", userId)).take(20);
+    const has = (p: string) => rows.some((r) => r.provider === p) || (user.authProvider === p && !!user.externalAuthId);
+    return {
+      email: user.email,
+      emailVerified: !!user.emailVerifiedAt,
+      hasPin: !!user.walletPinHash,
+      hasPassword: !!user.passwordHash,
+      linked: { google: has("google"), apple: has("apple") },
+    };
+  },
+});
+
+export const linkSocialIdentity = action({
+  args: {
+    sessionToken: v.string(),
+    provider: oauthProvider,
+    providerId: v.string(), // the provider ID token
+    nonce: v.optional(v.string()), // Apple: the raw nonce from users.createOAuthChallenge
+    currentPin: v.optional(v.string()),
+  },
+  returns: v.object({ success: v.boolean(), errorCode: v.optional(v.string()), message: v.optional(v.string()) }),
+  handler: async (ctx, args): Promise<any> => {
+    const { identity, tokenHash } = await verifyProviderToken(args.provider, args.providerId, args.nonce);
+    return await ctx.runMutation(internal.users.completeSocialLink, {
+      sessionToken: args.sessionToken,
+      provider: identity.provider,
+      sub: identity.sub,
+      email: identity.email,
+      emailVerified: identity.emailVerified,
+      tokenHash,
+      tokenExpiresAt: identity.expiresAtMs,
+      nonce: args.nonce,
+      currentPin: args.currentPin,
     });
   },
 });

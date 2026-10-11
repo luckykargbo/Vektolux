@@ -11,6 +11,7 @@ import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/services/image_upload_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
+import 'verify_email_screen.dart';
 import '../../domain/entities/user_entity.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
@@ -187,11 +188,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
               (user.verificationStatus == 'pending' ||
                   user.verificationStatus == 'rejected');
 
-          Navigator.of(context).pushReplacement(
+          final Widget destination = needsVerificationGate
+              ? PendingVerificationScreen(user: user)
+              : const MainNavigationShell();
+          final navigator = Navigator.of(context);
+          // A new account's email is unverified: offer the code step first. It can be skipped
+          // (access is unchanged) and is also reachable later from Account & Profile.
+          navigator.pushReplacement(
             MaterialPageRoute(
-              builder: (_) => needsVerificationGate
-                  ? PendingVerificationScreen(user: user)
-                  : const MainNavigationShell(),
+              builder: (_) => VerifyEmailScreen(
+                email: user.email,
+                onContinue: () => navigator.pushReplacement(MaterialPageRoute(builder: (_) => destination)),
+              ),
             ),
           );
         } else if (state.status == AuthStatus.error &&

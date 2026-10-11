@@ -396,6 +396,7 @@ class AuthRepositoryImpl implements AuthRepository {
     String? avatarUrl,
     required String provider,
     required String providerId,
+    String? nonce,
   }) async {
     // socialSignIn is an ACTION: the server verifies the Google/Apple ID token (sent as
     // providerId) with the provider before issuing a session.
@@ -405,6 +406,7 @@ class AuthRepositoryImpl implements AuthRepository {
         'email': email,
         'provider': provider,
         'providerId': providerId,
+        if (nonce != null && nonce.isNotEmpty) 'nonce': nonce,
         if (name != null && name.isNotEmpty) 'name': name,
         if (avatarUrl != null && avatarUrl.isNotEmpty) 'avatarUrl': avatarUrl,
       },
@@ -415,6 +417,15 @@ class AuthRepositoryImpl implements AuthRepository {
     }
 
     final data = result.value as Map<String, dynamic>;
+    // The identity is genuine but not linked to the Vektolux account that uses this email. No
+    // session was issued and the account was not touched: the user must sign in with their
+    // password first and link from account settings.
+    if (data['blocked'] == true) {
+      throw AuthException(
+        data['message'] as String? ??
+            'A Vektolux account already uses this email. Sign in with your password first, then link it from your account settings.',
+      );
+    }
     final hasPhone = data['hasPhone'] as bool? ?? false;
     final sessionToken = data['sessionToken'] as String?;
     final userData = data['user'] as Map<String, dynamic>;
@@ -437,6 +448,84 @@ class AuthRepositoryImpl implements AuthRepository {
     }
     _log.i('Social sign in OK: ${user.email} (hasPhone: $hasPhone)');
     return (user: user, hasPhone: hasPhone);
+  }
+
+  @override
+  Future<({String nonce, String nonceHash})> createOAuthChallenge({required String provider}) async {
+    final result = await _convexClient.mutation(
+      'users:createOAuthChallenge',
+      args: {'provider': provider},
+    );
+    if (!result.success || result.value is! Map) {
+      throw AuthException(result.errorMessage ?? 'Sign-in is unavailable right now. Please try again.');
+    }
+    final data = Map<String, dynamic>.from(result.value as Map);
+    return (nonce: data['nonce'] as String, nonceHash: data['nonceHash'] as String);
+  }
+
+  @override
+  Future<void> verifyEmail({required String code}) async {
+    final result = await _convexClient.mutation('auth:verifyEmail', args: {'code': code});
+    final data = result.value is Map ? Map<String, dynamic>.from(result.value as Map) : <String, dynamic>{};
+    if (!result.success || data['success'] != true) {
+      throw AuthException(
+        (data['message'] as String?) ?? result.errorMessage ?? 'Could not verify your email. Please try again.',
+      );
+    }
+  }
+
+  @override
+  Future<AccountSecurityStatus> getAccountSecurityStatus() async {
+    final result = await _convexClient.query('users:getAccountSecurityStatus', args: {});
+    if (!result.success || result.value is! Map) {
+      throw AuthException(result.errorMessage ?? 'Could not load your sign-in settings.');
+    }
+    final d = Map<String, dynamic>.from(result.value as Map);
+    final linked = d['linked'] is Map ? Map<String, dynamic>.from(d['linked'] as Map) : <String, dynamic>{};
+    return AccountSecurityStatus(
+      email: d['email'] as String? ?? '',
+      emailVerified: d['emailVerified'] == true,
+      hasPin: d['hasPin'] == true,
+      hasPassword: d['hasPassword'] == true,
+      googleLinked: linked['google'] == true,
+      appleLinked: linked['apple'] == true,
+    );
+  }
+
+  @override
+  Future<void> linkSocialIdentity({
+    required String provider,
+    required String providerId,
+    String? nonce,
+    String? secret,
+  }) async {
+    // The identity token and PIN are only ever passed to the server call; never logged.
+    final result = await _convexClient.action(
+      'users:linkSocialIdentity',
+      args: {
+        'provider': provider,
+        'providerId': providerId,
+        if (nonce != null && nonce.isNotEmpty) 'nonce': nonce,
+        if (secret != null && secret.isNotEmpty) 'currentPin': secret,
+      },
+    );
+    final data = result.value is Map ? Map<String, dynamic>.from(result.value as Map) : <String, dynamic>{};
+    if (!result.success || data['success'] != true) {
+      throw AuthException(
+        (data['message'] as String?) ?? result.errorMessage ?? 'Could not link this sign-in method. Please try again.',
+      );
+    }
+  }
+
+  @override
+  Future<void> resendEmailVerification() async {
+    final result = await _convexClient.mutation('auth:resendEmailVerification', args: {});
+    final data = result.value is Map ? Map<String, dynamic>.from(result.value as Map) : <String, dynamic>{};
+    if (!result.success || data['success'] != true) {
+      throw AuthException(
+        (data['message'] as String?) ?? result.errorMessage ?? 'Could not send a new code. Please try again.',
+      );
+    }
   }
 
   @override

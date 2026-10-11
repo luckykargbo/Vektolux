@@ -15,6 +15,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../navigation/presentation/views/main_navigation_shell.dart';
+import '../../domain/repositories/auth_repository.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
@@ -105,11 +106,16 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _onAppleSignIn() async {
     setState(() => _socialLoading = true);
     try {
+      // One-time server nonce per attempt: Apple signs its hash into the identity token and the
+      // server rejects any token that does not carry the nonce it issued (replay / injection).
+      final challenge = await context.read<AuthRepository>().createOAuthChallenge(provider: 'apple');
+      if (!mounted) return;
       final credential = await SignInWithApple.getAppleIDCredential(
         scopes: [
           AppleIDAuthorizationScopes.email,
           AppleIDAuthorizationScopes.fullName,
         ],
+        nonce: challenge.nonceHash,
       );
       final idToken = credential.identityToken;
       if (idToken == null || !mounted) {
@@ -127,6 +133,7 @@ class _LoginScreenState extends State<LoginScreen> {
       context.read<AuthBloc>().add(SocialAuthEvent(
             provider: 'apple',
             token: idToken,
+            nonce: challenge.nonce,
             email: email,
             name: name.isNotEmpty ? name : null,
           ));

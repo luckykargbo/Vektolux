@@ -24,18 +24,12 @@ export async function POST(request: Request) {
       );
     }
 
-    // Extract client IP for rate limiting: priority to CF-Connecting-IP (Cloudflare authenticated header),
-    // followed by sanitized x-forwarded-for, then x-real-ip
-    const cfConnectingIp = request.headers.get("cf-connecting-ip")?.trim();
-    const xForwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-    const xRealIp = request.headers.get("x-real-ip")?.trim();
-    const clientIp = cfConnectingIp || xForwardedFor || xRealIp || "unknown_ip";
-
+    // No client IP is sent: Convex derives it from the request itself (ctx.meta). Headers such as
+    // CF-Connecting-IP / X-Forwarded-For are caller-controlled unless the proxy topology guarantees them.
     const client = new ConvexHttpClient(CONVEX_URL);
     const result: any = await client.mutation("auth:loginWithPhoneOrEmail" as any, {
       identifier: email.trim(),
       password,
-      ip: clientIp,
       totpCode: totpCode ? totpCode.trim() : undefined,
     });
 
