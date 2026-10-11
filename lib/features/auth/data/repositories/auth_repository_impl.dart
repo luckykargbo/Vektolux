@@ -21,6 +21,9 @@ class AuthRepositoryImpl implements AuthRepository {
   static const String _keyUserId = 'vkt_user_id';
   static const String _keyUserData = 'vkt_user_data';
 
+  /// Upper bound for the server-side revocation call so logout never hangs on a bad network.
+  static const Duration _logoutTimeout = Duration(seconds: 5);
+
   AuthRepositoryImpl({
     required ConvexClientWrapper convexClient,
   }) : _convexClient = convexClient;
@@ -277,6 +280,36 @@ class AuthRepositoryImpl implements AuthRepository {
 
   @override
   Future<void> logout() async {
+    // 1. Revoke the session on the server FIRST, while the token is still known. This is best
+    //    effort: a failure, timeout or missing network must never keep the user signed in locally.
+    //    The token is never logged.
+    String? token;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      token = prefs.getString(_keySessionToken);
+    } catch (_) {}
+    token ??= _convexClient.hasAuthToken ? _convexClient.authToken : null;
+
+    var revokedOnServer = false;
+    if (token != null && token.trim().isNotEmpty) {
+      try {
+        final result = await _convexClient
+            .mutation(
+              'auth:logout',
+              args: {'sessionToken': token.trim()},
+              // One attempt only: nothing may keep retrying (or recycling the shared HTTP
+              // client) in the background after logout has returned.
+              maxAttempts: 1,
+              timeout: _logoutTimeout,
+            )
+            .timeout(_logoutTimeout + const Duration(seconds: 1));
+        revokedOnServer = result.success && result.value == true;
+      } catch (_) {
+        // Offline, timed out or rejected: fall through and sign out locally.
+      }
+    }
+
+    // 2. Always clear local credentials, whatever happened above.
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_keySessionToken);
@@ -285,7 +318,9 @@ class AuthRepositoryImpl implements AuthRepository {
     } catch (_) {}
 
     _convexClient.clearAuth();
-    _log.i('User session cleared');
+    _log.i(revokedOnServer
+        ? 'User session revoked on server and cleared locally'
+        : 'User session cleared locally (server revocation not confirmed)');
   }
 
   @override

@@ -199,6 +199,55 @@ describe("login", () => {
     expect(u?.sessionExpiresAt).toBeGreaterThan(Date.now());
   });
 
+  test("logout invalidates the session server-side: the same token cannot authenticate again", async () => {
+    const t = convexTest(schema, modules);
+    const a = await register(t, "out@test.vektolux", "+23276100041");
+    const b = await register(t, "stay@test.vektolux", "+23276100042");
+
+    // The token works before logout.
+    expect(await t.query(api.auth.getUserSession, { userId: a.userId, sessionToken: a.sessionToken })).not.toBeNull();
+    await expect(t.query(api.wallet.getUserBalance, { sessionToken: a.sessionToken })).resolves.toBeDefined();
+
+    expect(await t.mutation(api.auth.logout, { sessionToken: a.sessionToken })).toBe(true);
+
+    // Replaying the very same token no longer authenticates anywhere.
+    expect(await t.query(api.auth.getUserSession, { userId: a.userId, sessionToken: a.sessionToken })).toBeNull();
+    await expect(t.query(api.wallet.getUserBalance, { sessionToken: a.sessionToken })).rejects.toThrow(/Authentication required/i);
+    await expect(
+      t.mutation(api.users.updateUserProfile, { userId: a.userId, sessionToken: a.sessionToken, name: "Replay" })
+    ).rejects.toThrow(/Authentication required/i);
+    const u: any = await t.run(async (ctx) => ctx.db.get(a.userId as Id<"users">));
+    expect(u.sessionToken).toBeUndefined();
+    expect(u.sessionExpiresAt).toBeUndefined();
+
+    // Idempotent: logging out again (or with junk / a too-short token) is a quiet no-op.
+    expect(await t.mutation(api.auth.logout, { sessionToken: a.sessionToken })).toBe(false);
+    expect(await t.mutation(api.auth.logout, { sessionToken: "short" })).toBe(false);
+    expect(await t.mutation(api.auth.logout, { sessionToken: "x".repeat(64) })).toBe(false);
+
+    // Another account's session is untouched.
+    expect(await t.query(api.auth.getUserSession, { userId: b.userId, sessionToken: b.sessionToken })).not.toBeNull();
+
+    // Signing in again issues a fresh, working token that differs from the revoked one.
+    const again = await login(t, "out@test.vektolux", PASSWORD);
+    expect(again.success).toBe(true);
+    expect(again.sessionToken).not.toBe(a.sessionToken);
+    expect(await t.query(api.auth.getUserSession, { userId: a.userId, sessionToken: again.sessionToken })).not.toBeNull();
+    expect(await t.query(api.auth.getUserSession, { userId: a.userId, sessionToken: a.sessionToken })).toBeNull();
+  });
+
+  test("an administrator session is rejected by getAdminSession after logout", async () => {
+    const t = convexTest(schema, modules);
+    const r = await register(t, "adm-out@test.vektolux", "+23276100043");
+    await t.run(async (ctx) => ctx.db.patch(r.userId as Id<"users">, { role: "admin", activeRole: "admin" } as any));
+    const ok = await login(t, "adm-out@test.vektolux", PASSWORD);
+    expect(ok.success).toBe(true);
+    await expect(t.query(api.auth.getAdminSession, { sessionToken: ok.sessionToken })).resolves.toMatchObject({ role: "admin" });
+
+    expect(await t.mutation(api.auth.logout, { sessionToken: ok.sessionToken })).toBe(true);
+    await expect(t.query(api.auth.getAdminSession, { sessionToken: ok.sessionToken })).resolves.toBeNull();
+  });
+
   test("an expired session is rejected everywhere", async () => {
     const t = convexTest(schema, modules);
     const r = await register(t, "exp@test.vektolux", "+23276100005");

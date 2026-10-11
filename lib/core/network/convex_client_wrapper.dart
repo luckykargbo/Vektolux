@@ -155,11 +155,23 @@ class ConvexClientWrapper {
   }
 
   /// Execute a Convex mutation (transactional write).
+  ///
+  /// [maxAttempts] / [timeout] default to the normal retry policy (3 attempts, 25 s each). A caller
+  /// that must not leave retries running after it stops waiting (e.g. logout) passes
+  /// `maxAttempts: 1` and a short [timeout].
   Future<ConvexResult> mutation(
     String functionPath, {
     Map<String, dynamic> args = const {},
+    int maxAttempts = _defaultMaxAttempts,
+    Duration timeout = _defaultRequestTimeout,
   }) async {
-    return _callFunction('/api/mutation', functionPath, args);
+    return _callFunction(
+      '/api/mutation',
+      functionPath,
+      args,
+      maxAttempts: maxAttempts,
+      timeout: timeout,
+    );
   }
 
   /// Execute a Convex action (side effects allowed).
@@ -236,11 +248,16 @@ class ConvexClientWrapper {
   //                       INTERNAL
   // ═══════════════════════════════════════════════════════════════════
 
+  static const int _defaultMaxAttempts = 3;
+  static const Duration _defaultRequestTimeout = Duration(seconds: 25);
+
   Future<ConvexResult> _callFunction(
     String endpoint,
     String functionPath,
-    Map<String, dynamic> args,
-  ) async {
+    Map<String, dynamic> args, {
+    int maxAttempts = _defaultMaxAttempts,
+    Duration timeout = _defaultRequestTimeout,
+  }) async {
     final url = Uri.parse('$deploymentUrl$endpoint');
 
     final headers = <String, String>{
@@ -273,13 +290,12 @@ class ConvexClientWrapper {
     });
 
     int attempt = 0;
-    const maxAttempts = 3;
     while (true) {
       attempt++;
       try {
         final response = await _httpClient
             .post(url, headers: headers, body: body)
-            .timeout(const Duration(seconds: 25));
+            .timeout(timeout);
 
         return ConvexResult.fromResponse(response);
       } on TimeoutException {
@@ -343,6 +359,7 @@ class ConvexClientWrapper {
     'users:linkSocialIdentity',
     'users:getAccountSecurityStatus',
     'auth:verifyEmail',
+    'auth:logout',
     'auth:resendEmailVerification',
     'users:verifyTransactionPin',
     'payments:getWalletBalance',
