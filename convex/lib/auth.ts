@@ -6,6 +6,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import { Doc, Id } from "../_generated/dataModel";
+import { sessionInvalidReason } from "./session";
 
 export interface AuthenticatedUser {
   userId: Id<"users">;
@@ -78,12 +79,14 @@ export async function requireAuthenticatedUser(
       if (!user.isActive) {
         throw new Error("Account has been deactivated. Please contact support.");
       }
-      if (typeof user.sessionExpiresAt === "number" && user.sessionExpiresAt <= Date.now()) {
-        throw new Error("Authentication required: Your session has expired. Please log in again.");
-      }
-      // Strict 8-hour maximum lifetime for administrator sessions
-      if (user.role === "admin" && user.lastLoginAt && Date.now() - user.lastLoginAt > 8 * 60 * 60 * 1000) {
+      // Bounded lifetime: 30 days (users) / 8 hours (admins). A legacy session with no stored expiry is
+      // bounded from the last sign-in, so it can never be valid forever (see lib/session.ts).
+      const invalid = sessionInvalidReason(user);
+      if (invalid === "admin_limit") {
         throw new Error("Authentication required: Administrator session has reached its 8-hour lifetime limit. Please log in again.");
+      }
+      if (invalid) {
+        throw new Error("Authentication required: Your session has expired. Please log in again.");
       }
 
       // If an explicit userId was also passed, ensure it matches or caller is admin

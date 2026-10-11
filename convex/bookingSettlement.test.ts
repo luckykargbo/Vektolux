@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import type { Id } from "./_generated/dataModel";
+import { ADMIN_SESSION_TTL_MS, USER_SESSION_TTL_MS } from "./lib/session";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
 type T = ReturnType<typeof convexTest>;
@@ -33,6 +34,22 @@ async function makeUser(t: T, name: string, role = "client"): Promise<U> {
   );
   return { id, token };
 }
+/**
+ * What a genuine re-login does, for a user whose session has outlived its role's maximum lifetime
+ * because this test moved the clock: a fresh session anchored at the CURRENT (fake) clock, bounded by
+ * the real policy (users 30 days, administrators 8 hours). Nothing is extended beyond the policy.
+ */
+async function signInAgain(t: T, ...ids: Id<"users">[]) {
+  await t.run(async (ctx) => {
+    const now = Date.now();
+    for (const id of ids) {
+      const u: any = await ctx.db.get(id);
+      const ttl = u.role === "admin" ? ADMIN_SESSION_TTL_MS : USER_SESSION_TTL_MS;
+      await ctx.db.patch(id, { lastLoginAt: now, sessionExpiresAt: now + ttl } as any);
+    }
+  });
+}
+
 const fund = (t: T, userId: Id<"users">, amount: number) =>
   t.mutation(internal.walletCore.creditVerifiedDeposit, { userId, amount, provider: "TEST", providerReference: `f-${userId}-${seq++}` });
 const bal = (t: T, u: U) => t.query(api.wallet.getUserBalance, { sessionToken: u.token });
@@ -140,6 +157,7 @@ describe("disputes freeze the escrow until an admin decides", () => {
       t.mutation(api.bookings.cancelBooking, { sessionToken: buyer.token, bookingId, userId: buyer.id })
     ).rejects.toThrow(/disputed/i);
     at(end + 48 * HOUR);
+    await signInAgain(t, admin.id); // the administrator signs in again on the day they decide the dispute
     expect(await t.mutation(internal.bookings.releaseDueBookings, {})).toMatchObject({ released: 0 });
     expect((await bal(t, vendor)).availableBalance).toBe(0);
 

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import type { Id } from "./_generated/dataModel";
+import { ADMIN_SESSION_TTL_MS, USER_SESSION_TTL_MS } from "./lib/session";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
 type T = ReturnType<typeof convexTest>;
@@ -15,6 +16,22 @@ const DAY = 24 * 60 * 60 * 1000;
 let seq = 0;
 
 afterEach(() => vi.useRealTimers());
+
+/**
+ * What a genuine re-login does, for a user whose session has outlived its role's maximum lifetime
+ * because this test moved the clock: a fresh session anchored at the CURRENT (fake) clock, bounded by
+ * the real policy (users 30 days, administrators 8 hours). Nothing is extended beyond the policy.
+ */
+async function signInAgain(t: T, ...ids: Id<"users">[]) {
+  await t.run(async (ctx) => {
+    const now = Date.now();
+    for (const id of ids) {
+      const u: any = await ctx.db.get(id);
+      const ttl = u.role === "admin" ? ADMIN_SESSION_TTL_MS : USER_SESSION_TTL_MS;
+      await ctx.db.patch(id, { lastLoginAt: now, sessionExpiresAt: now + ttl } as any);
+    }
+  });
+}
 
 async function makeUser(t: T, name: string, role = "client") {
   seq += 1;
@@ -169,6 +186,7 @@ describe("admin rules: admin-only, validated, versioned, audited", () => {
     const future: any = await setRule(t, admin, "vehicle_sale", { ownerFeeBps: 1000, effectiveFrom: T0 + 2 * DAY });
     expect((await buy()).platformFeeAmount).toBe(500); // still the default 5%
     vi.setSystemTime(new Date(T0 + 2 * DAY));
+    await signInAgain(t, admin.id); // administrator signs in again two days later
     expect((await buy()).platformFeeAmount).toBe(1000); // now 10%
     await expect(
       t.mutation(api.feeRules.adminCancelScheduledFeeRule, { sessionToken: admin.token, ruleId: future.ruleId, reason: "too late now" })
@@ -177,6 +195,7 @@ describe("admin rules: admin-only, validated, versioned, audited", () => {
     const later: any = await setRule(t, admin, "vehicle_sale", { ownerFeeBps: 200, effectiveFrom: T0 + 5 * DAY });
     await t.mutation(api.feeRules.adminCancelScheduledFeeRule, { sessionToken: admin.token, ruleId: later.ruleId, reason: "changed our mind" });
     vi.setSystemTime(new Date(T0 + 6 * DAY));
+    await signInAgain(t, admin.id); // and again four days after that
     expect((await buy()).platformFeeAmount).toBe(1000); // the cancelled rule never applied
     const logs = await t.run(async (ctx) => ctx.db.query("audit_logs").collect());
     expect(logs.some((l) => l.action === "FEE_RULE_CANCELLED")).toBe(true);

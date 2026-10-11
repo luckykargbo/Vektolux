@@ -248,6 +248,170 @@ describe("login", () => {
     await expect(t.query(api.auth.getAdminSession, { sessionToken: ok.sessionToken })).resolves.toBeNull();
   });
 
+  // ── Bounded session lifetimes (users 30 days, administrators 8 hours, legacy bounded) ──────────
+  const H = 60 * 60 * 1000;
+  const DAY = 24 * H;
+  async function adminAccount(t: T, email: string, phone: string) {
+    const r = await register(t, email, phone);
+    await t.run(async (ctx) => ctx.db.patch(r.userId as Id<"users">, { role: "admin", activeRole: "admin" } as any));
+    return r;
+  }
+  /** Turns a session into a LEGACY one: no stored expiry, with the chosen last sign-in time. */
+  async function makeLegacy(t: T, userId: string, lastLoginAt: number | undefined) {
+    await t.run(async (ctx) =>
+      ctx.db.patch(userId as Id<"users">, { sessionExpiresAt: undefined, lastLoginAt } as any)
+    );
+  }
+
+  test("password login: users get a 30 day session and administrators an 8 hour one", async () => {
+    const t = convexTest(schema, modules);
+    const u = await register(t, "ttl-user@test.vektolux", "+23276100051");
+    await adminAccount(t, "ttl-admin@test.vektolux", "+23276100052");
+    const lu = await login(t, "ttl-user@test.vektolux", PASSWORD);
+    const la = await login(t, "ttl-admin@test.vektolux", PASSWORD);
+    expect(lu.success && la.success).toBe(true);
+    const userRow: any = await t.run(async (ctx) => ctx.db.get(u.userId as Id<"users">));
+    expect(userRow.sessionExpiresAt - userRow.lastLoginAt).toBe(30 * DAY);
+    const adminRow: any = await t.run(async (ctx) => ctx.db.query("users").withIndex("by_email", (q) => q.eq("email", "ttl-admin@test.vektolux")).first());
+    expect(adminRow.sessionExpiresAt - adminRow.lastLoginAt).toBe(8 * H);
+  });
+
+  test("password reset: a user keeps 30 days, an administrator gets 8 hours, and lastLoginAt is updated", async () => {
+    const t = convexTest(schema, modules);
+    const u = await register(t, "reset-user@test.vektolux", "+23276100053");
+    const a = await adminAccount(t, "reset-admin@test.vektolux", "+23276100054");
+    // pretend both last signed in long ago, so only the reset can explain a fresh timestamp
+    for (const id of [u.userId, a.userId]) {
+      await t.run(async (ctx) => ctx.db.patch(id as Id<"users">, { lastLoginAt: Date.now() - 5 * DAY } as any));
+    }
+    await plantResetCode(t, "reset-user@test.vektolux", "246810");
+    await plantResetCode(t, "reset-admin@test.vektolux", "135790");
+    const before = Date.now();
+    const r1: any = await t.mutation(api.auth.verifyResetOtpAndSetPassword, { identifier: "reset-user@test.vektolux", otpCode: "246810", newPassword: "Brand-New-Pass1" });
+    const r2: any = await t.mutation(api.auth.verifyResetOtpAndSetPassword, { identifier: "reset-admin@test.vektolux", otpCode: "135790", newPassword: "Brand-New-Pass2" });
+    expect(r1.success && r2.success).toBe(true);
+    const user: any = await t.run(async (ctx) => ctx.db.get(u.userId as Id<"users">));
+    const admin: any = await t.run(async (ctx) => ctx.db.get(a.userId as Id<"users">));
+    expect(user.lastLoginAt).toBeGreaterThanOrEqual(before);
+    expect(admin.lastLoginAt).toBeGreaterThanOrEqual(before);
+    expect(user.sessionExpiresAt - user.lastLoginAt).toBe(30 * DAY);
+    expect(admin.sessionExpiresAt - admin.lastLoginAt).toBe(8 * H);
+  });
+
+  test("linked social sign-in: an administrator gets 8 hours, an ordinary user 30 days", async () => {
+    const t = convexTest(schema, modules);
+    const admin = await adminAccount(t, "soc-admin@test.vektolux", "+23276100055");
+    const user = await register(t, "soc-user@test.vektolux", "+23276100056");
+    await t.run(async (ctx) => {
+      await ctx.db.insert("auth_identities", { userId: admin.userId as Id<"users">, provider: "google", subject: "g-adm", linkedAt: Date.now() });
+      await ctx.db.insert("auth_identities", { userId: user.userId as Id<"users">, provider: "google", subject: "g-usr", linkedAt: Date.now() });
+    });
+    const exp = Date.now() + 600_000;
+    await t.mutation(internal.users.completeSocialSignIn, { provider: "google", sub: "g-adm", emailVerified: false, tokenHash: "adm-hash-1", tokenExpiresAt: exp });
+    await t.mutation(internal.users.completeSocialSignIn, { provider: "google", sub: "g-usr", emailVerified: false, tokenHash: "usr-hash-1", tokenExpiresAt: exp });
+    const a: any = await t.run(async (ctx) => ctx.db.get(admin.userId as Id<"users">));
+    const u: any = await t.run(async (ctx) => ctx.db.get(user.userId as Id<"users">));
+    expect(a.sessionExpiresAt - a.lastLoginAt).toBe(8 * H);
+    expect(u.sessionExpiresAt - u.lastLoginAt).toBe(30 * DAY);
+  });
+
+  test("a legacy administrator session (no expiry, no lastLoginAt) cannot be used past 8 hours", async () => {
+    const t = convexTest(schema, modules);
+    const a = await adminAccount(t, "legacy-admin@test.vektolux", "+23276100057");
+    await makeLegacy(t, a.userId, undefined);
+    // fresh account: still inside the bound, so existing sessions keep working
+    await expect(t.query(api.auth.getAdminSession, { sessionToken: a.sessionToken })).resolves.toMatchObject({ role: "admin" });
+    // the same account, but created long ago: the 8 hour bound is measured from creation
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 9 * H);
+      await expect(t.query(api.auth.getAdminSession, { sessionToken: a.sessionToken })).resolves.toBeNull();
+      await expect(t.query(api.wallet.getUserBalance, { sessionToken: a.sessionToken })).rejects.toThrow(/Authentication required/i);
+      expect(await t.query(api.auth.getUserSession, { userId: a.userId, sessionToken: a.sessionToken })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a legacy admin session with a 30 day expiry is still capped at 8 hours after the last login", async () => {
+    const t = convexTest(schema, modules);
+    const a = await adminAccount(t, "cap-admin@test.vektolux", "+23276100058");
+    await t.run(async (ctx) =>
+      ctx.db.patch(a.userId as Id<"users">, { sessionExpiresAt: Date.now() + 30 * DAY, lastLoginAt: Date.now() - 9 * H } as any)
+    );
+    await expect(t.query(api.wallet.getUserBalance, { sessionToken: a.sessionToken })).rejects.toThrow(/8-hour lifetime limit/i);
+    expect(await t.query(api.auth.getUserSession, { userId: a.userId, sessionToken: a.sessionToken })).toBeNull();
+  });
+
+  test("a legacy user session: 29 days after the last sign-in works and is NOT extended; 31 days is rejected", async () => {
+    const t = convexTest(schema, modules);
+    const recent = await register(t, "leg-recent@test.vektolux", "+23276100059");
+    const stale = await register(t, "leg-stale@test.vektolux", "+23276100060");
+    await makeLegacy(t, recent.userId, Date.now() - 29 * DAY);
+    await makeLegacy(t, stale.userId, Date.now() - 31 * DAY);
+
+    await expect(t.query(api.wallet.getUserBalance, { sessionToken: recent.sessionToken })).resolves.toBeDefined();
+    expect(await t.query(api.auth.getUserSession, { userId: recent.userId, sessionToken: recent.sessionToken })).not.toBeNull();
+    // validating did not hand the legacy session a new lifetime
+    const after: any = await t.run(async (ctx) => ctx.db.get(recent.userId as Id<"users">));
+    expect(after.sessionExpiresAt).toBeUndefined();
+    expect(after.lastLoginAt).toBeLessThan(Date.now() - 28 * DAY);
+
+    await expect(t.query(api.wallet.getUserBalance, { sessionToken: stale.sessionToken })).rejects.toThrow(/expired/i);
+    expect(await t.query(api.auth.getUserSession, { userId: stale.userId, sessionToken: stale.sessionToken })).toBeNull();
+    // signing in again issues a proper, explicit session
+    const again = await login(t, "leg-stale@test.vektolux", PASSWORD);
+    expect(again.success).toBe(true);
+    const row: any = await t.run(async (ctx) => ctx.db.get(stale.userId as Id<"users">));
+    expect(row.sessionExpiresAt).toBeGreaterThan(Date.now());
+  });
+
+  test("a legacy user session with no lastLoginAt is bounded by the account creation time", async () => {
+    const t = convexTest(schema, modules);
+    const u = await register(t, "leg-new@test.vektolux", "+23276100061");
+    await makeLegacy(t, u.userId, undefined);
+    await expect(t.query(api.wallet.getUserBalance, { sessionToken: u.sessionToken })).resolves.toBeDefined();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 31 * DAY);
+      await expect(t.query(api.wallet.getUserBalance, { sessionToken: u.sessionToken })).rejects.toThrow(/expired/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("seedDemoUsers creates the production administrator WITHOUT a standing session token", async () => {
+    const t = convexTest(schema, modules);
+    const out: any = await t.mutation(internal.auth.seedDemoUsers, { initialPassword: "A-Long-Admin-Pass-12" });
+    expect(out.seeded.length).toBe(1);
+    const admin: any = await t.run(async (ctx) =>
+      ctx.db.query("users").withIndex("by_email", (q) => q.eq("email", "alfred.kargbo@vektolux.com")).first()
+    );
+    expect(admin.role).toBe("admin");
+    expect(admin.sessionToken).toBeUndefined();
+    expect(admin.sessionExpiresAt).toBeUndefined();
+    // signing in is what creates a (role-bounded) session
+    const ok = await login(t, "alfred.kargbo@vektolux.com", "A-Long-Admin-Pass-12");
+    expect(ok.success).toBe(true);
+    const row: any = await t.run(async (ctx) => ctx.db.get(admin._id));
+    expect(row.sessionExpiresAt - row.lastLoginAt).toBe(8 * H);
+  });
+
+  test("suspending an administrator clears BOTH the session token and its expiry", async () => {
+    const t = convexTest(schema, modules);
+    const boss = await adminAccount(t, "boss@test.vektolux", "+23276100062");
+    const target = await adminAccount(t, "target-admin@test.vektolux", "+23276100063");
+    const out: any = await t.mutation(api.admin.setUserStatus, {
+      adminId: boss.userId, sessionToken: boss.sessionToken, userId: target.userId, status: "SUSPENDED",
+    });
+    expect(out.success).toBe(true);
+    const row: any = await t.run(async (ctx) => ctx.db.get(target.userId as Id<"users">));
+    expect(row.isActive).toBe(false);
+    expect(row.sessionToken).toBeUndefined();
+    expect(row.sessionExpiresAt).toBeUndefined();
+    expect(await t.query(api.auth.getUserSession, { userId: target.userId, sessionToken: target.sessionToken })).toBeNull();
+  });
+
   test("an expired session is rejected everywhere", async () => {
     const t = convexTest(schema, modules);
     const r = await register(t, "exp@test.vektolux", "+23276100005");

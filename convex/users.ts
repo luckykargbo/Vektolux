@@ -1061,7 +1061,8 @@ export const completeSocialSignIn = internalMutation({
     const existing = await findAccountForIdentity(ctx, args.provider, args.sub);
     if (existing) {
       if (existing.isActive === false) throw new Error("Account has been deactivated. Please contact support.");
-      const { sessionToken, sessionExpiresAt } = issueSession(now);
+      // Role-based lifetime: a linked administrator gets the 8 hour admin session, never 30 days.
+      const { sessionToken, sessionExpiresAt } = issueSession(now, existing.role === "admin");
       const hasPhone = !!(
         (existing.phoneNumber && existing.phoneNumber.trim().length > 0) ||
         (existing.phone && existing.phone.trim().length > 0)

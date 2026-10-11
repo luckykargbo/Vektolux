@@ -10,7 +10,7 @@ import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { userRole } from "./schema";
 import { clearLimit, consume, lockRemainingMs, minutes, recordFailure } from "./lib/rateLimit";
-import { issueSession } from "./lib/session";
+import { issueSession, isSessionValid } from "./lib/session";
 import { restoreLegacyAgentRole } from "./lib/legacyRoles";
 import { requireSelf } from "./lib/auth";
 import type { MutationCtx } from "./_generated/server";
@@ -208,15 +208,6 @@ export async function verifyPassword(
     .join("");
 
   return safeEqual(computedHashHex, hashHex);
-}
-
-// ─── Generate session token ─────────────────────────────────────────
-function generateSessionToken(): string {
-  const array = new Uint8Array(32);
-  crypto.getRandomValues(array);
-  return Array.from(array)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 // ─── Multi-Format Phone Candidates Generator ────────────────────────
@@ -936,7 +927,7 @@ export const getUserSession = query({
       if (!user.sessionToken || !safeEqual(user.sessionToken, args.sessionToken)) {
         return null;
       }
-      if (typeof user.sessionExpiresAt === "number" && user.sessionExpiresAt <= Date.now()) {
+      if (!isSessionValid(user)) {
         return null;
       }
 
@@ -1091,7 +1082,8 @@ export const seedDemoUsers = internalMutation({
       });
       existing.push(`${prodAccount.email} (synced)`);
     } else {
-      const sessionToken = generateSessionToken();
+      // No session token is created here: the administrator signs in normally, which issues a
+      // role-bounded (8 hour) session. A standing token with no expiry must never exist.
       await ctx.db.insert("users", {
         email: prodAccount.email,
         phone: prodAccount.phone,
@@ -1099,7 +1091,6 @@ export const seedDemoUsers = internalMutation({
         role: "admin",
         activeRole: "admin",
         passwordHash,
-        sessionToken,
         isVerified: true,
         isVerifiedAgent: true,
         isVerifiedMerchant: true,
@@ -1279,7 +1270,10 @@ export const verifyResetOtpAndSetPassword = mutation({
       // controls that mailbox.
       await ctx.db.patch(user._id, {
         passwordHash,
-        ...issueSession(now),
+        // Role-based lifetime (an administrator gets 8 hours, not 30 days). The reset signs the
+        // owner in, so it also counts as the last sign-in.
+        ...issueSession(now, user.role === "admin"),
+        lastLoginAt: now,
         updatedAt: now,
         ...(user.emailVerifiedAt ? {} : { emailVerifiedAt: now }),
       });

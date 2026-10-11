@@ -922,6 +922,7 @@ export const setUserStatus = mutation({
       await ctx.db.patch(targetDocId, {
         isActive: false,
         sessionToken: undefined,
+        sessionExpiresAt: undefined,
         kycStatus,
         verificationStatus,
         updatedAt: Date.now(),

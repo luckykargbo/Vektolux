@@ -12,11 +12,28 @@ import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { hashWalletPin } from "./lib/pin";
 import type { Id } from "./_generated/dataModel";
+import { ADMIN_SESSION_TTL_MS, USER_SESSION_TTL_MS } from "./lib/session";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
 type T = ReturnType<typeof convexTest>;
 type U = { id: Id<"users">; token: string };
 const HOUR = 3600_000;
+/**
+ * What a genuine re-login does, for a user whose session has outlived its role's maximum lifetime
+ * because this test moved the clock: a fresh session anchored at the CURRENT (fake) clock, bounded by
+ * the real policy (users 30 days, administrators 8 hours). Nothing is extended beyond the policy.
+ */
+async function signInAgain(t: T, ...ids: Id<"users">[]) {
+  await t.run(async (ctx) => {
+    const now = Date.now();
+    for (const id of ids) {
+      const u: any = await ctx.db.get(id);
+      const ttl = u.role === "admin" ? ADMIN_SESSION_TTL_MS : USER_SESSION_TTL_MS;
+      await ctx.db.patch(id, { lastLoginAt: now, sessionExpiresAt: now + ttl } as any);
+    }
+  });
+}
+
 const PIN = "1234";
 const r2 = (n: number) => Math.round(n * 100) / 100;
 let seq = 0;
@@ -120,6 +137,7 @@ describe("wallet ⇄ ledger invariants after a mixed history", () => {
     const b1 = await book(1);
     await checkInvariants(t, { deposits, completedWithdrawals: 0 });
     vi.setSystemTime(new Date(b1.start + HOUR));
+    await signInAgain(t, admin.id); // the booking starts later than the admin's 8 hour session: they sign in again
     await t.mutation(api.bookings.confirmBookingCompletion, { sessionToken: buyer.token, bookingId: b1.id });
     await checkInvariants(t, { deposits, completedWithdrawals: 0 });
 
@@ -137,6 +155,7 @@ describe("wallet ⇄ ledger invariants after a mixed history", () => {
     // booking 4: auto-released 24h after the end
     const b4 = await book(4);
     vi.setSystemTime(new Date(b4.start + 4 * HOUR + 24 * HOUR + 1000));
+    await signInAgain(t, admin.id); // a day later the administrator has signed in again
     await t.mutation(internal.bookings.releaseDueBookings, {});
     await checkInvariants(t, { deposits, completedWithdrawals: 0 });
 

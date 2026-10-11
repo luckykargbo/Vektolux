@@ -16,6 +16,7 @@ import {
   legacyAgentGrace,
 } from "./lib/permissions";
 import type { Id } from "./_generated/dataModel";
+import { ADMIN_SESSION_TTL_MS, USER_SESSION_TTL_MS } from "./lib/session";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
 type T = ReturnType<typeof convexTest>;
@@ -55,6 +56,22 @@ async function makeUser(t: T, name: string, fields: Record<string, unknown>) {
   await t.run(async (ctx) => ctx.db.patch(id, { walletPinHash: await hashWalletPin(id, PIN) }));
   return { id, token };
 }
+/**
+ * What a genuine re-login does, for a user whose session has outlived its role's maximum lifetime
+ * because this test moved the clock: a fresh session anchored at the CURRENT (fake) clock, bounded by
+ * the real policy (users 30 days, administrators 8 hours). Nothing is extended beyond the policy.
+ */
+async function signInAgain(t: T, ...ids: Id<"users">[]) {
+  await t.run(async (ctx) => {
+    const now = Date.now();
+    for (const id of ids) {
+      const u: any = await ctx.db.get(id);
+      const ttl = u.role === "admin" ? ADMIN_SESSION_TTL_MS : USER_SESSION_TTL_MS;
+      await ctx.db.patch(id, { lastLoginAt: now, sessionExpiresAt: now + ttl } as any);
+    }
+  });
+}
+
 const legacyA = (t: T, name = "legacyA") => makeUser(t, name, { role: "agent", isVerifiedAgent: true }); // old flow, no roleApprovedAt
 const legacyB = (t: T, name = "legacyB") => makeUser(t, name, { role: "agent", roleApprovedAt: LAUNCH - 30 * DAY });
 const newAgent = (t: T, name = "newAgent") => makeUser(t, name, { role: "agent", roleApprovedAt: LAUNCH + 2 * 60 * 60 * 1000 });
@@ -240,6 +257,7 @@ describe("publishing (server-side authorization)", () => {
     const u = await legacyB(t);
     await subscribe(t, u);
     setNow(LAUNCH + 60 * DAY); // subscription (30 d) and grace (14 d) both over
+    await signInAgain(t, u.id); // the agent's 30 day session has ended, so they sign in again
     const s = await status(t, u);
     expect(s.hasActiveSubscription).toBe(false);
     expect(s.isInGracePeriod).toBe(false);
