@@ -11,7 +11,11 @@ import { ADMIN_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from "@/lib/adminSession";
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { email, password } = body as { email?: string; password?: string };
+    const { email, password, totpCode } = body as {
+      email?: string;
+      password?: string;
+      totpCode?: string;
+    };
 
     if (!email || !password) {
       return NextResponse.json(
@@ -20,32 +24,50 @@ export async function POST(request: Request) {
       );
     }
 
-    // Extract client IP for rate limiting
-    const clientIp =
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      request.headers.get("x-real-ip")?.trim() ||
-      "unknown_ip";
+    // Extract client IP for rate limiting: priority to CF-Connecting-IP (Cloudflare authenticated header),
+    // followed by sanitized x-forwarded-for, then x-real-ip
+    const cfConnectingIp = request.headers.get("cf-connecting-ip")?.trim();
+    const xForwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+    const xRealIp = request.headers.get("x-real-ip")?.trim();
+    const clientIp = cfConnectingIp || xForwardedFor || xRealIp || "unknown_ip";
 
     const client = new ConvexHttpClient(CONVEX_URL);
     const result: any = await client.mutation("auth:loginWithPhoneOrEmail" as any, {
       identifier: email.trim(),
       password,
       ip: clientIp,
+      totpCode: totpCode ? totpCode.trim() : undefined,
     });
 
     // Unified generic message for wrong credentials or non-admin roles
     const GENERIC_ERROR = "Invalid email or password.";
 
     if (!result || !result.success) {
+      if (result?.mfaRequired) {
+        return NextResponse.json(
+          {
+            success: false,
+            mfaRequired: true,
+            error: "Two-factor authentication code required.",
+            code: "MFA_REQUIRED",
+          },
+          { status: 200 }
+        );
+      }
+
       const errorMsg = String(result?.errorMessage ?? "");
       const isRateLimited = errorMsg.toLowerCase().includes("too many failed attempts");
+      const is2faError = errorMsg.toLowerCase().includes("two-factor") || errorMsg.toLowerCase().includes("2fa");
+
       return NextResponse.json(
         {
           success: false,
           error: isRateLimited
             ? "Too many failed login attempts. Please try again in 15 minutes."
+            : is2faError
+            ? errorMsg
             : GENERIC_ERROR,
-          code: isRateLimited ? "RATE_LIMITED" : "INVALID_CREDENTIALS",
+          code: isRateLimited ? "RATE_LIMITED" : is2faError ? "INVALID_MFA" : "INVALID_CREDENTIALS",
         },
         { status: isRateLimited ? 429 : 401 }
       );

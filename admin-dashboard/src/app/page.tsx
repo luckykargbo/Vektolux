@@ -7,7 +7,8 @@ import styles from "./login.module.css";
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -20,10 +21,16 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, totpCode: mfaRequired ? totpCode : undefined }),
       });
 
       const data = await res.json();
+
+      if (data.mfaRequired) {
+        setMfaRequired(true);
+        setLoading(false);
+        return;
+      }
 
       if (!res.ok || !data.success) {
         setError(data.error ?? "Invalid email or password.");
@@ -47,6 +54,11 @@ export default function LoginPage() {
     }
   }
 
+  function handleBackToCredentials() {
+    setMfaRequired(false);
+    setTotpCode("");
+    setError("");
+  }
 
   return (
     <main className={styles.main}>
@@ -76,33 +88,55 @@ export default function LoginPage() {
 
         {/* Form */}
         <form onSubmit={handleSubmit} className={styles.form}>
-          <div className={styles.field}>
-            <label htmlFor="email" className={styles.label}>Admin Email</label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className={styles.input}
-              placeholder="admin@vektolux.sl"
-              required
-              autoComplete="username"
-            />
-          </div>
+          {!mfaRequired ? (
+            <>
+              <div className={styles.field}>
+                <label htmlFor="email" className={styles.label}>Admin Email</label>
+                <input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={styles.input}
+                  placeholder="admin@vektolux.sl"
+                  required
+                  autoComplete="username"
+                />
+              </div>
 
-          <div className={styles.field}>
-            <label htmlFor="password" className={styles.label}>Password</label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className={styles.input}
-              placeholder="Enter admin password"
-              required
-              autoComplete="current-password"
-            />
-          </div>
+              <div className={styles.field}>
+                <label htmlFor="password" className={styles.label}>Password</label>
+                <input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className={styles.input}
+                  placeholder="Enter admin password"
+                  required
+                  autoComplete="current-password"
+                />
+              </div>
+            </>
+          ) : (
+            <div className={styles.field}>
+              <label htmlFor="totpCode" className={styles.label}>Two-Factor Authentication Code</label>
+              <input
+                id="totpCode"
+                type="text"
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value)}
+                className={styles.input}
+                placeholder="6-digit code or backup code"
+                required
+                autoFocus
+                autoComplete="one-time-code"
+              />
+              <p style={{ fontSize: "12px", color: "rgba(255,255,255,0.6)", marginTop: "6px" }}>
+                Enter the 6-digit verification code from your authenticator app or an 8-character emergency backup code.
+              </p>
+            </div>
+          )}
 
           {error && (
             <div className={styles.error}>
@@ -111,8 +145,27 @@ export default function LoginPage() {
           )}
 
           <button type="submit" className={styles.btn} disabled={loading}>
-            {loading ? "Authenticating…" : "Sign In to Dashboard"}
+            {loading ? "Authenticating…" : mfaRequired ? "Verify & Sign In" : "Sign In to Dashboard"}
           </button>
+
+          {mfaRequired && (
+            <button
+              type="button"
+              onClick={handleBackToCredentials}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "rgba(255,255,255,0.7)",
+                cursor: "pointer",
+                fontSize: "13px",
+                marginTop: "10px",
+                textAlign: "center",
+                width: "100%",
+              }}
+            >
+              ← Back to credentials
+            </button>
+          )}
         </form>
 
         <p className={styles.hint}>

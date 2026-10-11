@@ -2,10 +2,9 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const ADMIN_COOKIE_NAME = "vx_admin_session";
-const SESSION_HEADER = "x-vektolux-session";
 
 export function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+  const { pathname, searchParams } = request.nextUrl;
 
   // 1. Allow public auth endpoints and static assets
   if (
@@ -18,10 +17,9 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 2. Extract session token from cookie (primary) or header (fallback)
+  // 2. Extract session token strictly from HttpOnly cookie (no header fallback)
   const cookieToken = request.cookies.get(ADMIN_COOKIE_NAME)?.value?.trim();
-  const headerToken = request.headers.get(SESSION_HEADER)?.trim();
-  const hasSession = Boolean(cookieToken || headerToken);
+  const hasSession = Boolean(cookieToken);
 
   // 3. API route protection: return 401 JSON if unauthenticated
   if (pathname.startsWith("/api/")) {
@@ -48,9 +46,12 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 5. If already authenticated and accessing /login or /, redirect to /dashboard
+  // 5. If already authenticated and accessing /login or /, redirect to /dashboard ONLY if not
+  // arriving from an unauthenticated redirect (?from=) or carrying an error query.
+  // This guarantees that an expired or invalid cookie will NEVER cause an infinite redirect loop.
   if (pathname === "/login" || pathname === "/") {
-    if (hasSession) {
+    const isRedirectedFromProtected = searchParams.has("from") || searchParams.has("error");
+    if (hasSession && !isRedirectedFromProtected) {
       return NextResponse.redirect(new URL("/dashboard", request.url));
     }
   }

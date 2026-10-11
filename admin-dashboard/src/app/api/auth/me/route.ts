@@ -3,17 +3,33 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { CONVEX_URL } from "@/lib/convex";
-import { sessionFromRequest } from "@/lib/adminSession";
+import { ADMIN_COOKIE_NAME, sessionFromRequest } from "@/lib/adminSession";
 
 export const dynamic = "force-dynamic";
+
+function unauthorizedResponse(errorMsg: string) {
+  const res = NextResponse.json(
+    { success: false, error: errorMsg, code: "UNAUTHORIZED" },
+    { status: 401 }
+  );
+  // Actively wipe the invalid or expired cookie to prevent client redirect loops
+  res.cookies.set({
+    name: ADMIN_COOKIE_NAME,
+    value: "",
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    path: "/",
+    maxAge: 0,
+    expires: new Date(0),
+  });
+  return res;
+}
 
 export async function GET(request: Request) {
   const sessionToken = sessionFromRequest(request);
   if (!sessionToken) {
-    return NextResponse.json(
-      { success: false, error: "Not signed in.", code: "UNAUTHORIZED" },
-      { status: 401 }
-    );
+    return unauthorizedResponse("Not signed in.");
   }
 
   try {
@@ -21,10 +37,7 @@ export async function GET(request: Request) {
     const admin: any = await client.query("auth:getAdminSession" as any, { sessionToken });
 
     if (!admin || admin.role !== "admin") {
-      return NextResponse.json(
-        { success: false, error: "Administrator session required.", code: "UNAUTHORIZED" },
-        { status: 401 }
-      );
+      return unauthorizedResponse("Administrator session required.");
     }
 
     return NextResponse.json({
@@ -37,9 +50,6 @@ export async function GET(request: Request) {
       },
     });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: "Session validation failed.", code: "UNAUTHORIZED" },
-      { status: 401 }
-    );
+    return unauthorizedResponse("Session validation failed.");
   }
 }
