@@ -21,11 +21,11 @@ Every credit path is keyed on the provider transaction id (`transactions.by_tran
 `by_gateway_ref`, `telco_webhook_logs.by_ext_id`). A replay returns `ALREADY_PROCESSED`.
 
 ## 2. Switching money paths off safely
-- Background reconcilers/auto-release: `convex/crons.ts` `BACKGROUND_JOBS_ENABLED = false` (leave false
+- Background reconcilers/auto-release: `convex/crons.ts` `JOB_SWITCHES.*` (all false) (leave false
   until the owner enables jobs one at a time on a rehearsal deployment).
 - To stop an inbound provider: unset its webhook secret on the deployment (`ORANGE_MONEY_WEBHOOK_SECRET`,
   Monime webhook secret): every delivery is then rejected with 401. Re-enable by setting it again.
-- To stop bank transfers: leave/unset `ESCROW_BANK_*` — the app shows "not available yet".
+- To stop bank transfers: unset `ESCROW_BANK_*` and disable the admin `bank_transfer` payment setting — the app shows "not available yet". Details come from env or that admin setting (see docs/payments-audit.md); `internal.payments.setEscrowBankAccount` is the owner-run, confirmation-gated way to record the confirmed account (no details live in source).
 - Manual payment methods start disabled; administrators enable them in the dashboard.
 
 ## 3. Environment separation (not yet done; owner decision)

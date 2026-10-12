@@ -2,9 +2,20 @@
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Monime webhook request authentication.
 //
-// SCHEME (header name is from Monime's published "Standard headers" page; the field layout and the
-// signed string are from the community TypeScript SDK that cites Monime's HMAC guide — Monime's own
-// HMAC page is still an unpublished stub, so this MUST be confirmed against the first real delivery):
+// WHAT MONIME DOCUMENTS (checked against docs.monime.io, apis/…/webhook/create-webhook & object,
+// developer-resources/api-basics/standard-headers):
+//   • The header is `Monime-Signature`: "a cryptographic signature that includes a timestamp", usable to
+//     confirm origin, integrity and freshness (replay).
+//   • A webhook's `verificationMethod.type` is EITHER "HS256" (shared `secret`, 32–256 chars) OR "ES256"
+//     (ECDSA, PEM P-256 `publicKey`). This module implements HS256 ONLY. A webhook created with ES256
+//     would be rejected here (fail closed) — check which one the Vektolux webhook uses.
+//   • `event.id` is stable across Monime's retries.
+// WHAT IS NOT DOCUMENTED ANYWHERE WE COULD REACH (the "HMAC Verification" guide page did not render, and
+// the official TypeScript SDK contains no verification code): the header's internal layout, the exact
+// signed string, the encoding and the tolerance. The layout below is an ASSUMPTION carried from the
+// original implementation. Do not "fix" it without a real delivery or Monime's page to compare against.
+//
+// SCHEME AS IMPLEMENTED (assumed layout):
 //
 //   Header   : Monime-Signature: t=<unix-seconds>,v1=<base64 of the 32-byte HMAC>
 //              exactly two components, no others

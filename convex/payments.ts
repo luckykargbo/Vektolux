@@ -5,6 +5,7 @@
 //          deposits and verification, payouts, atomic ledger updates (via walletCore)
 // ═══════════════════════════════════════════════════════════════════════
 
+import { consume } from "./lib/rateLimit";
 import { hashPin } from "./lib/pinHash";
 import { v } from "convex/values";
 import {
@@ -448,6 +449,11 @@ export const verifyTransactionPin = query({
 //        DYNAMIC PAYMENT SETTINGS (Admin-Configurable Methods)
 // ═══════════════════════════════════════════════════════════════════════
 
+/** The old payment-method seed wrote this made-up bank account number into an ENABLED row. */
+function hasSeededPlaceholderAccount(row: { accountNumber?: string }): boolean {
+  return (row.accountNumber ?? "").trim() === "0012345678";
+}
+
 /**
  * Get all enabled payment methods for the mobile checkout.
  * Returns only providers where isEnabled === true.
@@ -460,7 +466,8 @@ export const getActivePaymentMethods = query({
       .withIndex("by_isEnabled", (q) => q.eq("isEnabled", true))
       .collect();
     // Aggregator checkouts (the removed Moneroo integration) are never offered, even if a stale row exists.
-    return methods.filter((m) => m.type !== "AGGREGATOR_AUTO");
+    // A bank row still carrying the old seed's made-up account number is not a real destination.
+    return methods.filter((m) => m.type !== "AGGREGATOR_AUTO" && !hasSeededPlaceholderAccount(m));
   },
 });
 
@@ -713,7 +720,7 @@ export const submitManualPaymentClaim = mutation({
     if (!provider.isEnabled) throw new Error("Payment provider is currently disabled");
     // Aggregator checkouts are no longer supported (Moneroo was removed). A typed reference can never
     // create an automated claim.
-    if (provider.type === "AGGREGATOR_AUTO") {
+    if (provider.type === "AGGREGATOR_AUTO" || hasSeededPlaceholderAccount(provider)) {
       throw new Error("This payment method is no longer available.");
     }
     const paymentType = "MANUAL_CLAIM" as const;
@@ -2025,6 +2032,15 @@ export const getPendingTransactionForVerification = internalQuery({
  *   Monime-Space-Id: <MONIME_SPACE_ID>
  *   Content-Type: application/json
  */
+/** INTERNAL: per-account budget for creating Monime checkouts (10 per 10 minutes). */
+export const consumeCheckoutBudget = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const ok = await consume(ctx, `monime-checkout:${args.userId}`, { max: 10, windowMs: 10 * 60 * 1000 });
+    return { allowed: ok };
+  },
+});
+
 export const initiateMoniMePayment = action({
   args: {
     amount: v.number(),
@@ -2050,6 +2066,17 @@ export const initiateMoniMePayment = action({
   handler: async (ctx, args) => {
     const caller: any = await ctx.runQuery(internal.payments.getSessionCaller, { sessionToken: args.sessionToken });
     const callerUserId: string = caller.userId;
+    // The wallet and every Monime checkout we create are SLE. A different client-chosen currency would
+    // record a pending deposit in that currency, Monime would then report SLE, and the (real) payment
+    // would be rejected as a currency mismatch after the customer had already paid.
+    if (args.currency !== undefined && args.currency.trim().toUpperCase() !== "SLE") {
+      return { success: false, code: "UNSUPPORTED_CURRENCY", message: "Only SLE payments are supported." };
+    }
+    // Each call creates a Monime checkout (an outbound, billable API call): bound it per account.
+    const budget: any = await ctx.runMutation(internal.payments.consumeCheckoutBudget, { userId: callerUserId });
+    if (!budget?.allowed) {
+      return { success: false, code: "TOO_MANY_ATTEMPTS", message: "Too many payment attempts. Please wait a few minutes and try again." };
+    }
     let amount: number = args.amount;
     let purposeDescription: string | undefined;
     if (args.subscriptionTierCode) {
@@ -2089,11 +2116,17 @@ export const initiateMoniMePayment = action({
     } else if (!cleanPhone.startsWith("232") && cleanPhone.length === 8) {
       cleanPhone = "232" + cleanPhone;
     }
-    const sanitizedPhone = cleanPhone || "23276000000";
+    // Never invent a phone number: a made-up default could be a real person's number. Without a phone
+    // the hosted checkout (customer enters it there) is still possible; the USSD fallback is not.
+    const sanitizedPhone = cleanPhone;
     const dynamicEmail = (args.email || args.customerEmail)?.trim();
-    const currency = args.currency ?? "SLE";
+    const currency = "SLE";
     const reference = `vktlx_monime_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    const returnUrl = args.returnUrl ?? "vektolux://payment/success";
+    // Only the app's own deep-link scheme is accepted as a return target (no client-chosen web URL).
+    const returnUrl =
+      typeof args.returnUrl === "string" && /^vektolux:\/\/[A-Za-z0-9/_\-.?=&%]{1,200}$/.test(args.returnUrl)
+        ? args.returnUrl
+        : "vektolux://payment/success";
 
     // ── Carrier resolution: explicit client override takes priority ──
     const explicitId = args.providerId || args.provider || "";
@@ -2192,8 +2225,9 @@ export const initiateMoniMePayment = action({
       }
 
       if (!response.ok) {
-        // Fallback to direct mobile payment-codes on MoniMe
-        console.log(`[MoniMe Fallback] Checkout session returned ${responseStatus}. Trying direct mobile payment-codes endpoint...`);
+        // Fallback to direct mobile payment-codes on MoniMe (needs a real phone number to authorise)
+        console.log(`[MoniMe Fallback] Checkout session returned ${responseStatus}.${sanitizedPhone ? " Trying direct mobile payment-codes endpoint..." : " No phone number: skipping the USSD fallback."}`);
+        if (sanitizedPhone) {
           const formattedPhone = sanitizedPhone.startsWith("+") ? sanitizedPhone : `+${sanitizedPhone}`;
           const paymentCodePayload = {
             name: description,
@@ -2262,6 +2296,7 @@ export const initiateMoniMePayment = action({
           } catch (pcErr: any) {
             console.warn("[MoniMe Payment Code Fallback Error]:", (pcErr as any)?.message ?? "unknown");
           }
+        }
 
         console.error(`[MoniMe Error] Gateway rejected payment (HTTP ${responseStatus}):`, resJson);
         logGatewayError(responseStatus, resJson, checkoutPayload);
@@ -2475,6 +2510,59 @@ export const listPendingMoniMeDeposits = internalQuery({
   },
 });
 
+/** INTERNAL: the caller's own recent pending Monime deposits (bounded). */
+export const listMyPendingMoniMeDeposits = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = ctx.db.normalizeId("users", args.userId);
+    if (!userId) return [];
+    const since = Date.now() - 48 * 3600 * 1000;
+    const rows = await ctx.db.query("transactions").withIndex("by_user", (q) => q.eq("userId", userId)).order("desc").take(50);
+    return rows
+      .filter(
+        (t) =>
+          t.type === "top_up" &&
+          t.status === "pending" &&
+          (t.gatewayProvider ?? "").startsWith("MONIME") &&
+          (t.createdAt ?? t._creationTime) >= since &&
+          isMonimeObjectId(t.gatewayReference)
+      )
+      .slice(0, 5)
+      .map((t) => t.gatewayReference as string);
+  },
+});
+
+/**
+ * Settles the caller's OWN pending Monime deposits. Monime's checkout-session webhook events are
+ * documented as "coming soon", so a hosted-checkout payment made after the app was closed has no
+ * webhook to settle it; the app calls this when the wallet / history opens. Each reference is checked
+ * against Monime's own API by settleMoniMeReference (credit only if Monime says completed, only to the
+ * owner of OUR pending transaction, idempotent). Budgeted per account.
+ */
+export const settleMyPendingDeposits = action({
+  args: { sessionToken: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<{ checked: number; settled: number }> => {
+    const caller: any = await ctx.runQuery(internal.payments.getSessionCaller, { sessionToken: args.sessionToken });
+    const budget: any = await ctx.runMutation(internal.payments.consumeSettleBudget, { userId: caller.userId });
+    if (!budget?.allowed) return { checked: 0, settled: 0 };
+    const refs: string[] = await ctx.runQuery(internal.payments.listMyPendingMoniMeDeposits, { userId: caller.userId });
+    let settled = 0;
+    for (const reference of refs) {
+      const r: any = await ctx.runAction(internal.payments.settleMoniMeReference, { reference });
+      if (r?.settled) settled++;
+    }
+    return { checked: refs.length, settled };
+  },
+});
+
+export const consumeSettleBudget = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const ok = await consume(ctx, `settle-mine:${args.userId}`, { max: 6, windowMs: 60 * 1000 });
+    return { allowed: ok };
+  },
+});
+
 /** Safety net so a deposit is credited even if the webhook was missed and the app was closed. */
 export const reconcilePendingDeposits = internalAction({
   args: {},
@@ -2536,8 +2624,10 @@ export const settleMoniMeReference = internalAction({
       if (!obj) return { success: true, settled: false, status: "pending" };
       const status = String(obj.status ?? "").toLowerCase();
 
-      // Payment codes: "completed"/"processed". Checkout sessions: "completed" (docs.monime.io).
-      const paid = isPaymentCode ? status === "completed" || status === "processed" : status === "completed";
+      // Paid ONLY when Monime says "completed". Monime's documented payment-code statuses are pending,
+      // processing ("currently in use": a payment is in flight, NOT final), completed, expired and
+      // cancelled; "processed" is not a status value. Checkout sessions: "completed" as well.
+      const paid = status === "completed";
       if (!paid) {
         if (status === "cancelled" || status === "expired") {
           await ctx.runMutation(internal.payments.failMoniMeDeposit, { txDocId: txDetails._id, reason: `Provider reported ${status}` });
@@ -3195,16 +3285,7 @@ export const verifyUssdOtp = internalAction({
 // OFFICIAL COMMERCIAL BANK ESCROW RAILS (High-Value Deals & Clearing)
 // ═══════════════════════════════════════════════════════════════════════
 
-/**
- * The bank account customers are told to wire escrow funds to. It is read from deployment environment
- * variables that ONLY the owner sets once the account is confirmed with the bank, never from source
- * code: a number baked into the repository could be stale, wrong or belong to nobody, and customers
- * would send real money to it.
- *   ESCROW_BANK_NAME, ESCROW_BANK_ACCOUNT_NAME, ESCROW_BANK_ACCOUNT_NUMBER   (required)
- *   ESCROW_BANK_BRANCH, ESCROW_BANK_SWIFT, ESCROW_BANK_NOTICE                  (optional)
- * Returns null when the required ones are not all set: bank transfer is then "not available yet".
- */
-export function getEscrowBankAccount(): {
+type EscrowBankAccount = {
   bankName: string;
   accountName: string;
   accountNumber: string;
@@ -3212,20 +3293,51 @@ export function getEscrowBankAccount(): {
   swiftCode?: string;
   currency: string;
   escrowNotice?: string;
-} | null {
+};
+
+// Values the old payment-method seed put in `payment_settings`. They were never real details; a row that
+// still carries one of them is "not configured".
+const PLACEHOLDER_ACCOUNT_NUMBERS = new Set(["0012345678", "001"]);
+
+/**
+ * The bank account customers are told to wire escrow funds to. It is never baked into the app: it comes
+ * from, in order,
+ *   1. deployment env  ESCROW_BANK_NAME / ESCROW_BANK_ACCOUNT_NAME / ESCROW_BANK_ACCOUNT_NUMBER
+ *      (+ optional ESCROW_BANK_BRANCH, ESCROW_BANK_SWIFT, ESCROW_BANK_NOTICE), or
+ *   2. the ENABLED `bank_transfer` row of the admin-managed payment settings (dashboard > Payments),
+ *      which needs a bank name in its display name/instructions, an account name and a real number.
+ * Returns null when neither is complete: bank transfer is then "not available yet".
+ */
+export async function getEscrowBankAccount(ctx: { db: any }): Promise<EscrowBankAccount | null> {
   const env = (k: string) => (process.env[k] ?? "").trim();
-  const bankName = env("ESCROW_BANK_NAME");
-  const accountName = env("ESCROW_BANK_ACCOUNT_NAME");
-  const accountNumber = env("ESCROW_BANK_ACCOUNT_NUMBER");
-  if (!bankName || !accountName || !accountNumber) return null;
+  const eName = env("ESCROW_BANK_NAME");
+  const eAccName = env("ESCROW_BANK_ACCOUNT_NAME");
+  const eAccNo = env("ESCROW_BANK_ACCOUNT_NUMBER");
+  if (eName && eAccName && eAccNo) {
+    return {
+      bankName: eName,
+      accountName: eAccName,
+      accountNumber: eAccNo,
+      ...(env("ESCROW_BANK_BRANCH") ? { branch: env("ESCROW_BANK_BRANCH") } : {}),
+      ...(env("ESCROW_BANK_SWIFT") ? { swiftCode: env("ESCROW_BANK_SWIFT") } : {}),
+      currency: "SLE",
+      ...(env("ESCROW_BANK_NOTICE") ? { escrowNotice: env("ESCROW_BANK_NOTICE") } : {}),
+    };
+  }
+  const row = await ctx.db
+    .query("payment_settings")
+    .withIndex("by_providerId", (q: any) => q.eq("providerId", "bank_transfer"))
+    .first();
+  if (!row || row.isEnabled !== true) return null;
+  const number = (row.accountNumber ?? "").trim();
+  const accountName = (row.accountName ?? "").trim();
+  if (!number || !accountName || PLACEHOLDER_ACCOUNT_NUMBERS.has(number)) return null;
   return {
-    bankName,
+    bankName: (row.displayName ?? "").trim() || "Bank",
     accountName,
-    accountNumber,
-    ...(env("ESCROW_BANK_BRANCH") ? { branch: env("ESCROW_BANK_BRANCH") } : {}),
-    ...(env("ESCROW_BANK_SWIFT") ? { swiftCode: env("ESCROW_BANK_SWIFT") } : {}),
+    accountNumber: number,
     currency: "SLE",
-    ...(env("ESCROW_BANK_NOTICE") ? { escrowNotice: env("ESCROW_BANK_NOTICE") } : {}),
+    ...(row.instructions && !/^Not configured yet/.test(row.instructions) ? { escrowNotice: String(row.instructions) } : {}),
   };
 }
 
@@ -3240,14 +3352,63 @@ export const getEscrowBankClearingDetails = query({
   args: {
     reference: v.optional(v.string()),
   },
-  handler: async (_ctx, args) => {
-    const account = getEscrowBankAccount();
+  handler: async (ctx, args) => {
+    const account = await getEscrowBankAccount(ctx);
     if (!account) return { available: false as const, message: BANK_TRANSFER_UNAVAILABLE };
     return {
       available: true as const,
       ...account,
       paymentReference: args.reference ?? "VKTLX-ESCROW",
     };
+  },
+});
+
+/**
+ * OWNER-RUN (Convex dashboard > Functions > run, or CLI): records the escrow bank account in the
+ * admin-managed payment settings. The details are passed IN by the owner and are never stored in source
+ * code. (Older builds hard-coded an account; it is still visible in git history of this file if the owner
+ * wants to check it against the bank's records before re-using it.)
+ *
+ * It does nothing unless `confirm` is exactly true, validates the shape of the number, refuses the old
+ * seed's placeholders, and refuses to overwrite a bank_transfer row that already has real details.
+ * Effects: the bank-details query and the bank reference generator start giving customers this account;
+ * the admin payment-methods list shows the same row. Run it ONLY with details the bank has confirmed.
+ */
+export const setEscrowBankAccount = internalMutation({
+  args: {
+    confirm: v.boolean(),
+    bankName: v.string(),
+    accountName: v.string(),
+    accountNumber: v.string(),
+    notice: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.confirm !== true) return { saved: false, reason: "confirmation_required" };
+    const bankName = args.bankName.trim();
+    const accountName = args.accountName.trim();
+    const accountNumber = args.accountNumber.replace(/\s+/g, "");
+    if (!bankName || !accountName) return { saved: false, reason: "missing_name" };
+    if (!/^[0-9A-Za-z-]{6,34}$/.test(accountNumber) || PLACEHOLDER_ACCOUNT_NUMBERS.has(accountNumber)) {
+      return { saved: false, reason: "invalid_account_number" };
+    }
+    const row = await ctx.db.query("payment_settings").withIndex("by_providerId", (q) => q.eq("providerId", "bank_transfer")).first();
+    const patch = {
+      displayName: bankName,
+      type: "BANK_TRANSFER" as const,
+      isEnabled: true,
+      accountName,
+      accountNumber,
+      instructions: args.notice?.trim() || undefined,
+      updatedAt: Date.now(),
+    };
+    if (row) {
+      const existing = (row.accountNumber ?? "").trim();
+      if (existing && !PLACEHOLDER_ACCOUNT_NUMBERS.has(existing)) return { saved: false, reason: "already_configured" };
+      await ctx.db.patch(row._id, patch);
+    } else {
+      await ctx.db.insert("payment_settings", { providerId: "bank_transfer", ...patch });
+    }
+    return { saved: true, accountEndsWith: accountNumber.slice(-4) };
   },
 });
 
@@ -3267,7 +3428,7 @@ export const generateBankEscrowReference = mutation({
   handler: async (ctx, args) => {
     const { userId: callerId } = await requireSelf(ctx, args.sessionToken, args.userId);
     // No reference is created (and no order is touched) for an account customers cannot be told about.
-    const bankAccount = getEscrowBankAccount();
+    const bankAccount = await getEscrowBankAccount(ctx);
     if (!bankAccount) throw new Error("BANK_TRANSFER_UNAVAILABLE: " + BANK_TRANSFER_UNAVAILABLE);
     // Unguessable, unique reference.
     const rnd = new Uint8Array(6);

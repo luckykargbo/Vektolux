@@ -401,6 +401,7 @@ class ConvexClientWrapper {
     'bookings:confirmBookingCompletion',
     'bookings:raiseBookingDispute',
     'payments:verifyAndSettleMoniMePayment',
+    'payments:settleMyPendingDeposits',
     'payments:verifyMoniMeStatus',
     'payments:confirmBankEscrowTransfer',
     'payments:resolveManualPaymentClaim',

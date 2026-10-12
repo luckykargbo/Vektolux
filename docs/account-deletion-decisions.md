@@ -1,7 +1,7 @@
 # Account deletion: behaviour, retained data, and decisions needed
 
 Code: `convex/accountDeletion.ts` (`internal.accountDeletion.processDueDeletions`). It is **not scheduled**:
-its cron entry lives inside the disabled `BACKGROUND_JOBS_ENABLED` block of `convex/crons.ts`.
+its cron entry lives behind the disabled `JOB_SWITCHES.DELETION_JOBS_ENABLED` switch of `convex/crons.ts`.
 The 30-day request window is created by `users.requestAccountDeletion`; signing in cancels it.
 
 ## When an account is erased

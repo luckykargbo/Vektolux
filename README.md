@@ -34,7 +34,7 @@ payment webhooks all talk to it.
 
 - Deployed code: commit `4c3ae01` (everything up to and including the legacy-agent role fix, the
   professional-capability status and the CLI-only admin recovery command).
-- **Background jobs are PAUSED**: `BACKGROUND_JOBS_ENABLED = false` in `convex/crons.ts`
+- **Background jobs are PAUSED**: every group switch in `JOB_SWITCHES` is `false` in `convex/crons.ts`
   (owner's decision for the first deploy). Not running: withdrawal reconciliation, Monime deposit
   reconciliation, subscription expiry/reminders, booking escrow auto-release, webhook-log purge.
   Turning them on = set it to `true` and deploy — **owner's decision only**.
@@ -213,7 +213,7 @@ exhaust process spawning). Expected on 2026-10-05: 388 backend tests, 565 Flutte
 | `npx convex run <function> …` | Runs a function against live data. |
 | `npx convex env set/remove …` | Changes live secrets. |
 | `npx convex import …` | Overwrites live data. |
-| Setting `BACKGROUND_JOBS_ENABLED = true` + deploy | Starts the money/subscription jobs. |
+| Setting a `JOB_SWITCHES` group to `true` + deploy | Starts that group of money/subscription jobs. |
 | Pushing to `main` without `[skip ci]` | Starts a CI build + updates the GitHub release (not a backend deploy). |
 
 **Never:** `npx convex deploy` (wrong deployment), `npx convex run --prod`, creating new Convex
