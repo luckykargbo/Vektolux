@@ -795,11 +795,11 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
                     // Fixed tile height (not an aspect ratio) so narrow phones keep room for both lines.
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 2,
                       mainAxisSpacing: 10,
                       crossAxisSpacing: 10,
-                      mainAxisExtent: 60,
+                      mainAxisExtent: 60 * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.8), // grows with text size
                     ),
                     children: [
                       _buildSpecTile(Icons.calendar_today_rounded, 'Year', '${widget.year}'),
@@ -997,20 +997,26 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
               )
             : Row(
                 children: [
-                  Column(
+                  Flexible(
+                    child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text('Price', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
-                      Text(
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
                         _priceFormatted,
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w800,
                           color: AppColors.obsidian,
                         ),
+                        ),
                       ),
                     ],
+                  ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
@@ -1443,7 +1449,7 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(label, style: const TextStyle(fontSize: 10, color: AppColors.gray500)),
+                Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, color: AppColors.gray500)),
                 Text(
                   value,
                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.obsidian),
@@ -1476,14 +1482,14 @@ class _FeatureChip extends StatelessWidget {
         children: [
           const Icon(Icons.check_circle_rounded, size: 14, color: AppColors.emeraldDark),
           const SizedBox(width: 6),
-          Text(
+          Flexible(child: Text(
             label,
             style: const TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
               color: AppColors.obsidian,
             ),
-          ),
+          )),
         ],
       ),
     );

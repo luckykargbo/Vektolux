@@ -254,7 +254,7 @@ describe("Account PIN", () => {
     const u = await makeUser(t, "u");
     await setPin(t, u, "4821");
     const doc: any = await t.run((ctx) => ctx.db.get(u.id));
-    expect(doc.walletPinHash).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(doc.walletPinHash).toMatch(/^pin2\$\d+\$[0-9a-f]{32}\$[0-9a-f]{64}$/); // salted PBKDF2, never the PIN
     expect(JSON.stringify(doc)).not.toContain('"4821"');
     const status: any = await t.query(api.payments.getUserSecurityPinStatus, { sessionToken: u.token });
     expect(status).toEqual({ hasPin: true, hasPassword: false });

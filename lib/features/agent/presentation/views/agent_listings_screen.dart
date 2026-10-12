@@ -356,7 +356,7 @@ class AgentListingRow extends StatelessWidget {
             children: [
               Icon(icon, size: 19, color: color ?? AppColors.obsidian),
               const SizedBox(width: 10),
-              Text(label, style: TextStyle(color: color ?? AppColors.obsidian, fontWeight: FontWeight.w600)),
+              Flexible(child: Text(label, style: TextStyle(color: color ?? AppColors.obsidian, fontWeight: FontWeight.w600))),
             ],
           ),
         );

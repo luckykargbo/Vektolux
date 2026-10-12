@@ -521,12 +521,16 @@ List<ListingFilter> visibleFilters(List<AgentListing> listings, {ListingFilter s
   ];
 }
 
-/// Newest first (creation time, then last update).
+/// Newest first (creation time, then last update, then id). The id tie-break makes the order fully
+/// deterministic: `List.sort` is not stable, so listings with identical timestamps used to appear in an
+/// arbitrary order that could change between rebuilds.
 List<AgentListing> newestFirst(Iterable<AgentListing> listings) {
   final list = listings.toList();
   list.sort((a, b) {
     final c = b.createdAt.compareTo(a.createdAt);
-    return c != 0 ? c : b.updatedAt.compareTo(a.updatedAt);
+    if (c != 0) return c;
+    final u = b.updatedAt.compareTo(a.updatedAt);
+    return u != 0 ? u : a.id.compareTo(b.id);
   });
   return list;
 }

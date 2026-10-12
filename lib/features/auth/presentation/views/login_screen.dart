@@ -22,6 +22,7 @@ import '../bloc/auth_state.dart';
 import 'register_screen.dart';
 import 'forgot_password_screen.dart';
 import 'complete_profile_phone_screen.dart';
+import 'mfa_code_dialog.dart';
 
 // ── Google Sign-In singleton (Vektolux Google Cloud Project) ───────────────
 final _googleSignIn = GoogleSignIn(
@@ -45,6 +46,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _socialLoading = false;
+  bool _mfaDialogOpen = false;
 
   @override
   void dispose() {
@@ -55,14 +57,57 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ── Email / Password login ─────────────────────────────────────────
 
-  void _onLogin() {
+  void _onLogin({String? totpCode}) {
     if (_formKey.currentState?.validate() != true) return;
     final raw = _identifierController.text.trim();
     final identifier = raw.contains('@') ? raw.toLowerCase() : raw;
     context.read<AuthBloc>().add(LoginSubmittedEvent(
           identifier: identifier,
           password: _passwordController.text,
+          totpCode: totpCode,
         ));
+  }
+
+  // ── Two-factor code entry ──────────────────────────────────────────
+
+  /// Opens the code dialog (once) while the BLoC is in [AuthStatus.mfaRequired]. The dialog stays
+  /// up through a verification in flight and closes only when the flow ends one way or the other.
+  Future<void> _openMfaDialog() async {
+    if (_mfaDialogOpen) return;
+    _mfaDialogOpen = true;
+    final bloc = context.read<AuthBloc>();
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => BlocBuilder<AuthBloc, AuthState>(
+        bloc: bloc,
+        builder: (_, state) => MfaCodeDialog(
+          errorMessage: state.errorMessage,
+          verifying: state.mfaVerifying || state.status == AuthStatus.loggingIn,
+          onSubmit: (code) {
+            if (state.mfaChallengeToken != null) {
+              bloc.add(SocialMfaSubmittedEvent(code));
+            } else {
+              _onLogin(totpCode: code); // password login: same credentials, plus the code
+            }
+          },
+          onCancel: () {
+            if (state.mfaChallengeToken != null) {
+              bloc.add(const SocialMfaCancelledEvent());
+            } else {
+              Navigator.of(dialogContext).pop(); // password flow: nothing server-side to burn
+            }
+          },
+        ),
+      ),
+    );
+    _mfaDialogOpen = false;
+  }
+
+  void _closeMfaDialogIfOpen() {
+    if (_mfaDialogOpen && mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
   }
 
   // ── Google Sign-In ─────────────────────────────────────────────────
@@ -178,6 +223,12 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return BlocListener<AuthBloc, AuthState>(
       listener: (context, state) {
+        if (state.status == AuthStatus.mfaRequired) {
+          _openMfaDialog();
+          return;
+        }
+        // The flow moved on (signed in, cancelled, failed): the code dialog must not linger.
+        if (state.status != AuthStatus.loggingIn) _closeMfaDialogIfOpen();
         if (state.status == AuthStatus.needsPhoneSetup && state.user != null) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
@@ -288,13 +339,18 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: Row(
                       children: [
                         const Expanded(child: Divider()),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Text(
-                            'or sign in with password',
-                            style: TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 12,
+                        Flexible(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: Text(
+                              'or sign in with password',
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 12,
+                              ),
                             ),
                           ),
                         ),
@@ -498,12 +554,16 @@ class _SocialAuthButton extends StatelessWidget {
                 children: [
                   logo,
                   const SizedBox(width: 12),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      color: textColor,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ],

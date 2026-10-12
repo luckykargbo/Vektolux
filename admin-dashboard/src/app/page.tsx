@@ -7,6 +7,7 @@ import styles from "./login.module.css";
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [mfaRequired, setMfaRequired] = useState(false);
   const [error, setError] = useState("");
@@ -56,6 +57,7 @@ export default function LoginPage() {
 
   function handleBackToCredentials() {
     setMfaRequired(false);
+    setPassword("");
     setTotpCode("");
     setError("");
   }

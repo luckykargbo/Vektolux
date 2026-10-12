@@ -106,6 +106,7 @@ class AuthRepositoryImpl implements AuthRepository {
   Future<UserEntity> login({
     required String identifier,
     required String password,
+    String? totpCode,
   }) async {
     final sanitizedIdentifier = identifier.trim().contains('@')
         ? identifier.trim().toLowerCase()
@@ -116,6 +117,7 @@ class AuthRepositoryImpl implements AuthRepository {
       args: {
         'identifier': sanitizedIdentifier,
         'password': password,
+        if (totpCode != null && totpCode.trim().isNotEmpty) 'totpCode': totpCode.trim(),
       },
     );
 
@@ -128,6 +130,12 @@ class AuthRepositoryImpl implements AuthRepository {
     }
 
     final data = result.value as Map<String, dynamic>;
+    // Correct password, but the account needs its second factor: no session was issued.
+    if (data['mfaRequired'] == true) {
+      throw MfaRequiredException(
+        data['errorMessage']?.toString() ?? 'Enter the 6-digit code from your authenticator app.',
+      );
+    }
     if (data['success'] == false || data['userId'] == null || data['sessionToken'] == null) {
       final msg = data['errorMessage']?.toString() ?? result.errorMessage ?? 'No account found with that email or phone number.';
       throw AuthException(msg, isCredentialFailure: true);
@@ -452,23 +460,44 @@ class AuthRepositoryImpl implements AuthRepository {
     }
 
     final data = result.value as Map<String, dynamic>;
-    // The identity is genuine but not linked to the Vektolux account that uses this email. No
-    // session was issued and the account was not touched: the user must sign in with their
-    // password first and link from account settings.
+    // The identity is genuine but no session was issued (not linked to a Vektolux account, or a
+    // second factor is required first).
     if (data['blocked'] == true) {
+      if (data['code'] == 'MFA_REQUIRED') {
+        final challenge = data['mfaChallengeToken'];
+        if (challenge is String && challenge.isNotEmpty) {
+          final expires = data['mfaExpiresAt'];
+          throw MfaRequiredException(
+            data['message']?.toString() ?? 'Two-factor authentication code required.',
+            challengeToken: challenge,
+            expiresAt: expires is num ? DateTime.fromMillisecondsSinceEpoch(expires.toInt()) : null,
+          );
+        }
+        throw const AuthException('Two-factor authentication is required for this account. Please try again.');
+      }
       throw AuthException(
         data['message'] as String? ??
             'A Vektolux account already uses this email. Sign in with your password first, then link it from your account settings.',
       );
     }
+    return await _acceptSocialSession(data, email: email, name: name, avatarUrl: avatarUrl);
+  }
+
+  /// Builds, caches and activates the session from a successful social sign-in payload.
+  Future<({UserEntity user, bool hasPhone})> _acceptSocialSession(
+    Map<String, dynamic> data, {
+    String? email,
+    String? name,
+    String? avatarUrl,
+  }) async {
     final hasPhone = data['hasPhone'] as bool? ?? false;
     final sessionToken = data['sessionToken'] as String?;
     final userData = data['user'] as Map<String, dynamic>;
 
     final user = UserEntity(
       id: (data['userId'] ?? userData['id']) as String,
-      name: userData['name'] as String? ?? (name ?? email.split('@').first),
-      email: userData['email'] as String? ?? email,
+      name: userData['name'] as String? ?? (name ?? (email ?? '').split('@').first),
+      email: userData['email'] as String? ?? (email ?? ''),
       phone: (userData['phoneNumber'] ?? userData['phone']) as String? ?? '',
       role: UserRoleX.fromConvex(userData['role'] as String? ?? 'client'),
       isVerified: userData['isVerified'] == true,
@@ -483,6 +512,45 @@ class AuthRepositoryImpl implements AuthRepository {
     }
     _log.i('Social sign in OK: ${user.email} (hasPhone: $hasPhone)');
     return (user: user, hasPhone: hasPhone);
+  }
+
+  @override
+  Future<({UserEntity user, bool hasPhone})> completeSocialMfa({
+    required String challengeToken,
+    required String totpCode,
+  }) async {
+    final result = await _convexClient.mutation(
+      'users:completeSocialMfa',
+      args: {'challengeToken': challengeToken, 'totpCode': totpCode.trim()},
+    );
+    if (!result.success || result.value is! Map) {
+      // Transport failure: the challenge is untouched, so the same code can be retried.
+      throw MfaChallengeException(
+        result.errorMessage ?? 'Could not reach Vektolux. Check your connection and try again.',
+        retryable: true,
+      );
+    }
+    final data = Map<String, dynamic>.from(result.value as Map);
+    if (data['blocked'] == true) {
+      final code = data['code']?.toString();
+      throw MfaChallengeException(
+        data['message']?.toString() ?? 'Invalid two-factor authentication code.',
+        retryable: code == 'MFA_INVALID',
+      );
+    }
+    if (data['sessionToken'] is! String || data['user'] is! Map) {
+      throw const MfaChallengeException('Sign-in could not be completed. Please start again.', retryable: false);
+    }
+    return await _acceptSocialSession(data);
+  }
+
+  @override
+  Future<void> cancelSocialMfa(String challengeToken) async {
+    try {
+      await _convexClient.mutation('users:cancelSocialMfa', args: {'challengeToken': challengeToken});
+    } catch (_) {
+      // Best effort: an unused challenge expires on its own after five minutes.
+    }
   }
 
   @override

@@ -62,7 +62,7 @@ function corsHeaders(): Record<string, string> {
 // ═══════════════════════════════════════════════════════════════════════
 
 // No default secret: a committed default is a public secret. Unset => every request is rejected.
-const EIDV_WEBHOOK_SECRET = process.env.EIDV_WEBHOOK_SECRET || "";
+const eidvSecret = () => process.env.EIDV_WEBHOOK_SECRET || ""; // read per request (never cached at import)
 
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -107,6 +107,73 @@ async function verifyEidvSignature(
   }
 }
 
+const EIDV_FACE_MATCH_MIN = 0.85;
+
+function jsonError(status: number, error: string): Response {
+  return new Response(JSON.stringify({ error }), { status, headers: corsHeaders() });
+}
+
+type EidvResult = {
+  referenceId: string;
+  provider: string;
+  isSuccess: boolean;
+  livenessPassed?: boolean;
+  faceMatchScore?: number;
+  livenessScore?: number;
+  mrzValid?: boolean;
+  tamperCheckPassed?: boolean;
+  failureReason?: string;
+  resultCode?: string;
+};
+
+const isScore = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= 1;
+
+/**
+ * Strict shape check of a (signature-verified) eIDV result. Returns a reason for the logs only.
+ *  • `referenceId` and a boolean `isSuccess` are always required.
+ *  • Optional scores must be numbers in [0, 1]; optional flags must be booleans — present-but-wrong
+ *    is malformed, not "false".
+ *  • A SUCCESS claim must carry every signal (liveness, face-match score, tamper check); otherwise the
+ *    delivery is inconsistent and is refused rather than approved or silently downgraded.
+ */
+function parseEidvResult(payload: unknown): { ok: true; value: EidvResult } | { ok: false; reason: string } {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return { ok: false, reason: "not an object" };
+  const p = payload as Record<string, unknown>;
+  if (typeof p.referenceId !== "string" || p.referenceId.length < 1 || p.referenceId.length > 128) {
+    return { ok: false, reason: "referenceId" };
+  }
+  if (typeof p.isSuccess !== "boolean") return { ok: false, reason: "isSuccess" };
+  for (const k of ["livenessPassed", "mrzValid", "tamperCheckPassed"] as const) {
+    if (p[k] !== undefined && typeof p[k] !== "boolean") return { ok: false, reason: k };
+  }
+  for (const k of ["faceMatchScore", "livenessScore"] as const) {
+    if (p[k] !== undefined && !isScore(p[k])) return { ok: false, reason: k };
+  }
+  for (const k of ["failureReason", "resultCode", "provider"] as const) {
+    if (p[k] !== undefined && (typeof p[k] !== "string" || (p[k] as string).length > 200)) return { ok: false, reason: k };
+  }
+  if (p.isSuccess === true) {
+    if (p.livenessPassed === undefined || p.faceMatchScore === undefined || p.tamperCheckPassed === undefined) {
+      return { ok: false, reason: "success without required signals" };
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      referenceId: p.referenceId,
+      provider: typeof p.provider === "string" && p.provider ? p.provider : "smile_id",
+      isSuccess: p.isSuccess,
+      livenessPassed: p.livenessPassed as boolean | undefined,
+      faceMatchScore: p.faceMatchScore as number | undefined,
+      livenessScore: p.livenessScore as number | undefined,
+      mrzValid: p.mrzValid as boolean | undefined,
+      tamperCheckPassed: p.tamperCheckPassed as boolean | undefined,
+      failureReason: p.failureReason as string | undefined,
+      resultCode: p.resultCode as string | undefined,
+    },
+  };
+}
+
 http.route({
   path: "/api/v1/verifications/webhook",
   method: "POST",
@@ -124,7 +191,7 @@ http.route({
         );
       }
 
-      const isValid = await verifyEidvSignature(rawBody, signature, EIDV_WEBHOOK_SECRET);
+      const isValid = await verifyEidvSignature(rawBody, signature, eidvSecret());
       if (!isValid) {
         return new Response(
           JSON.stringify({ error: "Invalid HMAC-SHA256 signature" }),
@@ -132,78 +199,73 @@ http.route({
         );
       }
 
-      // 2. Parse Payload
-      const payload = JSON.parse(rawBody);
-      const {
-        referenceId,
-        provider = "smile_id",
-        resultCode,
-        isSuccess,
-        livenessPassed,
-        faceMatchScore,
-        livenessScore,
-        mrzValid,
-        tamperCheckPassed,
-        failureReason,
-      } = payload;
-
-      if (!referenceId) {
-        return new Response(
-          JSON.stringify({ error: "referenceId is required in payload" }),
-          { status: 400, headers: corsHeaders() }
-        );
+      // 2. Parse and VALIDATE the payload. Nothing below is defaulted into a success: an absent or
+      //    malformed result field is a malformed delivery, never a pass.
+      let payload: unknown;
+      try {
+        payload = JSON.parse(rawBody);
+      } catch {
+        return jsonError(400, "Malformed JSON payload");
       }
+      const parsed = parseEidvResult(payload);
+      if (!parsed.ok) {
+        console.error("[eIDV webhook] rejected delivery:", parsed.reason);
+        return jsonError(422, "Invalid verification result");
+      }
+      const r = parsed.value;
 
-      const idempotencyKey = eventId ?? `sig_${signature.substring(0, 32)}_${referenceId}`;
+      const idempotencyKey = eventId ?? `sig_${signature.substring(0, 32)}_${r.referenceId}`;
 
-      // 3. Pass Criteria Evaluation:
-      // Must pass 3D liveness, face match (>85%), and anti-tamper check
+      // 3. Pass criteria. Approval needs EVERY signal present and passing: explicit success, passed
+      //    liveness, a numeric face-match score >= 0.85 and an explicit tamper check pass.
       const isApproved =
-        isSuccess === true &&
-        livenessPassed === true &&
-        (faceMatchScore ?? 1.0) >= 0.85 &&
-        tamperCheckPassed !== false;
+        r.isSuccess === true &&
+        r.livenessPassed === true &&
+        typeof r.faceMatchScore === "number" &&
+        r.faceMatchScore >= EIDV_FACE_MATCH_MIN &&
+        r.tamperCheckPassed === true;
 
-      // 4. Trigger Internal Atomic Transition
-      const transitionResult = await ctx.runMutation(
-        internal.verification.applyWebhookTransition,
-        {
-          referenceId,
-          idempotencyKey,
-          provider,
-          isApproved,
-          livenessScore: livenessScore ?? (livenessPassed ? 0.99 : 0.0),
-          faceMatchScore: faceMatchScore ?? (isSuccess ? 0.95 : 0.0),
-          mrzValidated: mrzValid ?? true,
-          tamperingPassed: tamperCheckPassed ?? true,
-          rejectionReason: isApproved ? undefined : (failureReason ?? "Verification criteria not met."),
-          rawResultCode: resultCode ?? "PROCESSED",
-          diagnosticPayload: JSON.stringify({
-            resultCode,
-            livenessScore,
-            faceMatchScore,
-            timestamp: Date.now(),
-          }),
-        }
-      );
+      // 4. Atomic transition (only a still-pending check can change; see applyWebhookTransition).
+      const transitionResult = await ctx.runMutation(internal.verification.applyWebhookTransition, {
+        referenceId: r.referenceId,
+        idempotencyKey,
+        provider: r.provider,
+        isApproved,
+        livenessScore: r.livenessScore,
+        faceMatchScore: r.faceMatchScore,
+        mrzValidated: r.mrzValid,
+        tamperingPassed: r.tamperCheckPassed,
+        rejectionReason: isApproved ? undefined : r.failureReason ?? "Verification criteria not met.",
+        rawResultCode: r.resultCode ?? "PROCESSED",
+        // Redacted, bounded diagnostics: scores and flags only, never the raw provider body.
+        diagnosticPayload: JSON.stringify({
+          resultCode: r.resultCode,
+          livenessScore: r.livenessScore,
+          faceMatchScore: r.faceMatchScore,
+          receivedAt: Date.now(),
+        }),
+      });
+
+      if (transitionResult.notFound) {
+        // Unknown reference: acknowledge generically (no oracle for which references exist).
+        return new Response(JSON.stringify({ received: true, status: "IGNORED" }), { status: 200, headers: corsHeaders() });
+      }
 
       return new Response(
         JSON.stringify({
           received: true,
-          status: isApproved ? "VERIFIED" : "REJECTED",
+          status: transitionResult.ignored ? "IGNORED" : isApproved ? "VERIFIED" : "REJECTED",
           alreadyHandled: transitionResult.alreadyHandled,
         }),
         { status: 200, headers: corsHeaders() }
       );
     } catch (err: any) {
-      return new Response(
-        JSON.stringify({ error: "Internal processing error", message: err.message }),
-        { status: 500, headers: corsHeaders() }
-      );
+      // Server-side diagnostics are redacted to the message; the public body never carries it.
+      console.error("[eIDV webhook] processing error:", err instanceof Error ? err.message : "unknown");
+      return jsonError(500, "Internal processing error");
     }
   }),
 });
-
 
 // ═══════════════════════════════════════════════════════════════════════
 //   POST /webhooks/orange-money — Orange Money Sierra Leone Webhook
@@ -228,65 +290,45 @@ function timingSafeEqualStr(a: string, b: string): boolean {
 }
 
 /**
- * Validates incoming carrier webhook signature against configured secret.
- * Supports:
- * 1. Direct shared token matching in x-orange-signature or Authorization header (timing-safe)
- * 2. HMAC-SHA256 signature calculation over raw payload (timing-safe)
+ * Validates an incoming carrier webhook against the configured secret.
+ *
+ * The ONLY accepted proof is an HMAC-SHA256 (hex) of the RAW request body keyed with
+ * ORANGE_MONEY_WEBHOOK_SECRET, sent in `x-orange-signature` (optionally prefixed "sha256="),
+ * compared in constant time.
+ *
+ * Deliberately NOT accepted: the secret itself (in the signature header or as a Bearer token). A
+ * static token is not a signature: it proves nothing about the body, can be replayed with any body
+ * once seen once, and leaks the signing key to anyone who relays it.
+ *
+ * PROVIDER CONTRACT: the signature header name and algorithm above are what this repository has
+ * always assumed. They are NOT confirmed from Orange Money documentation (docs/IOS_TEST_BUILD.md:
+ * "Orange Money stays disabled until Orange provides its webhook documentation"). If Orange's real
+ * scheme differs, every delivery is rejected (fail closed). Do not add another accepted scheme
+ * without the provider's written specification.
  */
 async function verifyCarrierSignature(
   rawBody: string,
   signatureHeader: string | null,
-  authHeader: string | null,
   configuredSecret: string
 ): Promise<boolean> {
   const secret = (configuredSecret || "").trim();
-  if (!secret) return false;
+  if (!secret || !signatureHeader) return false;
 
-  // Check 1: Signature header token / HMAC
-  if (signatureHeader) {
-    const sig = signatureHeader.replace(/^sha256=/i, "").trim();
+  const sig = signatureHeader.replace(/^sha256=/i, "").trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(sig)) return false;
 
-    // 1A: Direct shared secret token check (timing-safe)
-    if (timingSafeEqualStr(sig, secret)) {
-      return true;
-    }
-
-    // 1B: HMAC-SHA256 of raw request payload (timing-safe)
-    try {
-      const enc = new TextEncoder();
-      const key = await crypto.subtle.importKey(
-        "raw",
-        enc.encode(secret),
-        { name: "HMAC", hash: "SHA-256" },
-        false,
-        ["sign"]
-      );
-      const signatureBuffer = await crypto.subtle.sign(
-        "HMAC",
-        key,
-        enc.encode(rawBody)
-      );
-      const computedHex = Array.from(new Uint8Array(signatureBuffer))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-
-      if (timingSafeEqualStr(sig.toLowerCase(), computedHex.toLowerCase())) {
-        return true;
-      }
-    } catch (e) {
-      console.error("HMAC verification error:", e);
-    }
+  try {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const signatureBuffer = await crypto.subtle.sign("HMAC", key, enc.encode(rawBody));
+    const computedHex = Array.from(new Uint8Array(signatureBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    return timingSafeEqualStr(sig, computedHex);
+  } catch (e) {
+    console.error("HMAC verification error:", e instanceof Error ? e.message : "unknown");
+    return false;
   }
-
-  // Check 2: Bearer token in Authorization header
-  if (authHeader) {
-    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (timingSafeEqualStr(token, secret)) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
@@ -309,19 +351,10 @@ const handleOrangeMoneyWebhook = httpAction(async (ctx, request) => {
     const signature =
       request.headers.get("x-orange-signature") ||
       request.headers.get("X-Orange-Signature");
-    const authHeader =
-      request.headers.get("authorization") ||
-      request.headers.get("Authorization");
-
     const configuredSecret =
       process.env.ORANGE_MONEY_WEBHOOK_SECRET || ""; // no default: unset => rejected
 
-    const isAuthorized = await verifyCarrierSignature(
-      rawPayload,
-      signature,
-      authHeader,
-      configuredSecret
-    );
+    const isAuthorized = await verifyCarrierSignature(rawPayload, signature, configuredSecret);
 
     if (!isAuthorized) {
       return new Response(

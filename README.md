@@ -96,6 +96,46 @@ cp admin-dashboard/.env.example admin-dashboard/.env.local
 It contains only the public Convex URL. Firebase push variables are optional (see
 `admin-dashboard/README.md`).
 
+### Flutter app: Convex backend URL (release builds)
+
+Debug and profile builds default to the development deployment. **Release builds have no default**:
+they must be given the backend explicitly, and the app refuses to start if the value is missing or is
+not an `https://<deployment>.convex.cloud` origin.
+
+```bash
+flutter build appbundle --release --dart-define=CONVEX_URL=https://<deployment>.convex.cloud
+flutter build ipa       --release --dart-define=CONVEX_URL=https://<deployment>.convex.cloud
+```
+
+`<deployment>` must be the deployment the owner has approved for that release; the URL is public and
+is not a secret. Never put keys or tokens in `--dart-define`.
+
+### Convex env: `TOTP_ENCRYPTION_KEY` (required for admin 2FA)
+
+Admin two-factor secrets are encrypted at rest with `TOTP_ENCRYPTION_KEY` (a unique secret of at least
+32 characters, e.g. `openssl rand -base64 48`). There is **no fallback**: if it is unset or invalid,
+2FA enrolment, verification and 2FA login fail closed. Set it with `npx convex env set` on the
+approved deployment before enabling 2FA. Do not change it once admins have enrolled, or their stored
+secrets can no longer be decrypted.
+
+### CI and release configuration
+
+- `.github/workflows/ci.yml` runs on every pull request: Convex + dashboard tests (`npx vitest run`),
+  both TypeScript checks, the dashboard production build, `tool/test_build_release.sh`, and
+  `flutter analyze` / `flutter test`. It never deploys or contacts a live backend.
+- `.github/workflows/build_apps.yml` builds distributable artifacts and **fails until configured**:
+  repository variable `CONVEX_URL` (the approved deployment) and secrets `ANDROID_KEYSTORE_BASE64`,
+  `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. A release is never signed
+  with the debug key; locally, `-PvektoluxAllowDebugSigning=true` is an explicit, non-distributable opt-in.
+- Build locally with `CONVEX_URL=https://<deployment>.convex.cloud tool/build_release.sh appbundle`.
+- More: `docs/operations-runbook.md`, `docs/security-open-items.md`.
+
+### More Convex env names (names only)
+
+`LOGIN_PROXY_SECRET` (shared with the dashboard, throttling), `EIDV_WEBHOOK_SECRET`,
+`ORANGE_MONEY_WEBHOOK_SECRET`, and `ESCROW_BANK_NAME` / `ESCROW_BANK_ACCOUNT_NAME` /
+`ESCROW_BANK_ACCOUNT_NUMBER` (bank-transfer details: unset => "not available yet"). See `.env.example`.
+
 ### Android release signing (optional, local builds only)
 
 `android/key.properties` and the keystore `android/app/vektolux-release.jks` are **secrets and are

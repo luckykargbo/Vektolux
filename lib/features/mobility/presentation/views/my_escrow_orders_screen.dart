@@ -597,14 +597,14 @@ class _MyEscrowOrdersScreenState extends State<MyEscrowOrdersScreen>
                           ),
                         ),
                         const SizedBox(width: 6),
-                        Text(
+                        Flexible(child: Text(
                           _formatStatusLabel(status),
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
                             color: statusColor,
                           ),
-                        ),
+                        )),
                       ],
                     ),
                   ),

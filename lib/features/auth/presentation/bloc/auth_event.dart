@@ -79,13 +79,31 @@ class LoginSubmittedEvent extends AuthEvent {
   final String identifier; // email or phone
   final String password;
 
+  /// Authenticator / backup code, supplied on the second attempt for accounts with 2FA.
+  final String? totpCode;
+
   const LoginSubmittedEvent({
     required this.identifier,
     required this.password,
+    this.totpCode,
   });
 
   @override
-  List<Object?> get props => [identifier, password];
+  List<Object?> get props => [identifier, password, totpCode];
+}
+
+/// The user entered the second-factor code for a pending social sign-in challenge.
+class SocialMfaSubmittedEvent extends AuthEvent {
+  final String code;
+  const SocialMfaSubmittedEvent(this.code);
+
+  @override
+  List<Object?> get props => [code];
+}
+
+/// The user backed out of the second-factor step: the challenge is burned and nothing is signed in.
+class SocialMfaCancelledEvent extends AuthEvent {
+  const SocialMfaCancelledEvent();
 }
 
 /// User requests logout.

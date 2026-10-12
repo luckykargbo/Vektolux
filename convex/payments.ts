@@ -5,6 +5,7 @@
 //          deposits and verification, payouts, atomic ledger updates (via walletCore)
 // ═══════════════════════════════════════════════════════════════════════
 
+import { hashPin } from "./lib/pinHash";
 import { v } from "convex/values";
 import {
   mutation,
@@ -243,14 +244,6 @@ export const getUserWalletAddress = internalQuery({
 //               ESCROW PAYMENT & SPLIT REVENUE LEDGER
 // ═══════════════════════════════════════════════════════════════════════
 
-async function generateDeterministicHash(payload: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(payload);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return "0x" + hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 /**
  * Pays a booking from the buyer's wallet into escrow. The amount and the vendor/platform split are
  * decided by the SERVER from the booking (fee snapshot, default 85/15); a client split is ignored.
@@ -365,7 +358,7 @@ export const setWalletPin = mutation({
       const check = await verifyAndTrackPin(ctx, user, args.currentPin);
       if (!check.ok) return { success: false, errorCode: check.code, message: check.message };
     }
-    const pinHash = await generateDeterministicHash(`wallet_pin_${userId}_${args.pin}`);
+    const pinHash = await hashPin(userId, args.pin);
     await ctx.db.patch(userId, {
       walletPinHash: pinHash,
       pinFailedAttempts: 0,
@@ -378,16 +371,17 @@ export const setWalletPin = mutation({
 
 
 /**
- * Verify 4-digit Wallet Security PIN before checkout or release.
+ * Pre-check before checkout or release. It deliberately does NOT say whether a PIN is right: a read
+ * that answers "is this PIN correct?" has no attempt counter, so a session holder could simply try all
+ * 10,000 PINs. The PIN is verified, with lockout, by the money mutation that spends it. `valid` here
+ * only reports that a PIN exists to be checked (kept for older app builds that read it).
  */
 export const verifyWalletPin = query({
   args: { userId: v.optional(v.string()), sessionToken: v.optional(v.string()), pin: v.string() },
   handler: async (ctx, args) => {
-    // Session required (was an unauthenticated PIN oracle). Lockout is enforced by money mutations.
-    const { userId, user } = await requireSelf(ctx, args.sessionToken, args.userId);
-    if (!user.walletPinHash) return { valid: false, hasPin: false };
-    const testHash = await generateDeterministicHash(`wallet_pin_${userId}_${args.pin}`);
-    return { valid: testHash === user.walletPinHash, hasPin: true };
+    const { user } = await requireSelf(ctx, args.sessionToken, args.userId);
+    void args.pin;
+    return { valid: Boolean(user.walletPinHash), hasPin: Boolean(user.walletPinHash), deferred: true };
   },
 });
 
@@ -423,23 +417,16 @@ export const verifyTransactionPin = query({
     // mutations themselves; this read-only check is a convenience pre-validation only.
     const { userId, user } = await requireSelf(ctx, args.sessionToken, args.userId);
 
+    // Not an oracle (see verifyWalletPin): validity is decided, with lockout, by the spending mutation.
     const pinStr = args.pin.trim();
     if (!pinStr) return { valid: false, message: "PIN / Password cannot be empty", hasPin: Boolean(user.walletPinHash) };
-
-    // 1. Check wallet security PIN
-    if (user.walletPinHash) {
-      const testPinHash = await generateDeterministicHash(`wallet_pin_${userId}_${pinStr}`);
-      if (testPinHash === user.walletPinHash) {
-        return { valid: true, hasPin: true };
-      }
-    }
-
-    // 2. Check account password as authorization fallback
-    if (user.passwordHash) {
-      const isPasswordValid = await verifyPassword(pinStr, user.passwordHash);
-      if (isPasswordValid) {
-        return { valid: true, hasPin: Boolean(user.walletPinHash) };
-      }
+    if (user.walletPinHash || user.passwordHash) {
+      return {
+        valid: true,
+        hasPin: Boolean(user.walletPinHash),
+        deferred: true,
+        message: "Your PIN is checked when the payment is submitted.",
+      };
     }
 
     // 3. No PIN or password configured: NEVER treat as authorized.
@@ -534,35 +521,34 @@ export const seedDefaultPaymentMethods = mutation({
     }
 
     const now = Date.now();
+    // Starter rows ONLY. They are created DISABLED and without account details on purpose: the merchant
+    // codes / bank account customers pay into must be entered and enabled by an administrator once
+    // they are real. (This used to seed enabled methods with made-up codes such as "001" and
+    // "0012345678", which customers could have been told to pay.)
+    const NOT_CONFIGURED = "Not configured yet. An administrator must enter the real payment details here before this method is enabled.";
     const defaults = [
       {
         providerId: "qmoney_manual",
         displayName: "QCell QMoney",
         type: "MANUAL_MERCHANT" as const,
-        isEnabled: true,
-        instructions: "Dial *345#, select 'Pay Merchant', enter Merchant Code 001, enter the exact amount, then paste your SMS Transaction ID below.",
-        accountNumber: "001",
-        accountName: "Vektolux Escrow Services",
+        isEnabled: false,
+        instructions: NOT_CONFIGURED,
         updatedAt: now,
       },
       {
         providerId: "afrimoney_manual",
         displayName: "Africell Afrimoney",
         type: "MANUAL_MERCHANT" as const,
-        isEnabled: true,
-        instructions: "Dial *161#, select 'Merchant Payment', enter Merchant Code 001, enter the exact amount, then paste your SMS Transaction ID below.",
-        accountNumber: "001",
-        accountName: "Vektolux Escrow Services",
+        isEnabled: false,
+        instructions: NOT_CONFIGURED,
         updatedAt: now,
       },
       {
         providerId: "bank_transfer",
-        displayName: "Bank Transfer (SLCB / Rokel)",
+        displayName: "Bank Transfer",
         type: "BANK_TRANSFER" as const,
-        isEnabled: true,
-        instructions: "Transfer the exact amount to:\nBank: Sierra Leone Commercial Bank (SLCB)\nAccount Name: Vektolux Escrow Services\nAccount Number: 0012345678\nPaste the bank reference number below.",
-        accountNumber: "0012345678",
-        accountName: "Vektolux Escrow Services",
+        isEnabled: false,
+        instructions: NOT_CONFIGURED,
         updatedAt: now,
       },
     ];
@@ -1346,38 +1332,57 @@ async function executeCarrierDeposit(
       });
     }
 
-    // 2. Identify target user in 'users'
+    // 2. Identify target user. The account is resolved ONLY through a VERIFIED phone number: `phone` on
+    //    a user is an unverified claim (anyone can register any number), so matching it would let a
+    //    squatter receive the real owner's deposits. `userId` is accepted only from trusted internal
+    //    callers (the public webhook never forwards one).
     let user: Doc<"users"> | null = null;
     if (args.userId) {
       const userNorm = ctx.db.normalizeId("users", args.userId);
       if (userNorm) user = await ctx.db.get(userNorm);
     }
 
+    let heldReason: "NO_ACCOUNT_FOR_PHONE" | "PHONE_NOT_VERIFIED" | null = null;
     if (!user && args.phoneNumber) {
       const candidates = getSierraLeonePhoneCandidates(args.phoneNumber);
+      let sawUnverified = false;
       for (const candidate of candidates) {
-        user = await ctx.db
-          .query("users")
-          .withIndex("by_phone", (q) => q.eq("phone", candidate))
-          .first();
+        const rows = await ctx.db.query("users").withIndex("by_phone", (q) => q.eq("phone", candidate)).take(5);
+        for (const row of rows) {
+          const verified =
+            row.phoneVerifiedAt !== undefined &&
+            row.phoneVerifiedNumber !== undefined &&
+            getSierraLeonePhoneCandidates(row.phoneVerifiedNumber).includes(candidate) &&
+            row.isActive !== false;
+          if (verified) {
+            user = row;
+            break;
+          }
+          sawUnverified = true;
+        }
         if (user) break;
       }
-
+      if (!user) heldReason = sawUnverified ? "PHONE_NOT_VERIFIED" : "NO_ACCOUNT_FOR_PHONE";
     }
 
-    // If no user matches the phone number, log as ORPHANED_USER and exit cleanly
+    // Identity cannot be established safely: HOLD. Nothing is credited. The log row stays unprocessed,
+    // so a later (re)delivery or an owner-approved reprocess can still credit it exactly once.
     if (!user) {
+      const status = heldReason === "PHONE_NOT_VERIFIED" ? "HELD_UNVERIFIED_PHONE" : "ORPHANED_USER";
       if (logId) {
         await ctx.db.patch(logId, {
-          status: "ORPHANED_USER",
-          errorMessage: "No user matches the paying phone number",
+          status,
+          errorMessage:
+            heldReason === "PHONE_NOT_VERIFIED"
+              ? "An account claims the paying phone number but has not verified it; held, not credited."
+              : "No account matches the paying phone number",
           processedAt: now,
         });
       }
       return {
         success: false,
-        status: "ORPHANED_USER",
-        message: "No user found for the paying phone number. Transaction held for manual resolution.",
+        status,
+        message: "Deposit held: the paying phone number is not tied to a verified account. Not credited.",
         carrierTransactionId: args.txnId,
         txnId: args.txnId,
       };
@@ -1834,17 +1839,8 @@ export const recordPendingMoniMeTransaction = internalMutation({
       }
     }
 
-    if (!userDoc && args.customerPhone) {
-      const candidates = getSierraLeonePhoneCandidates(args.customerPhone);
-      for (const cand of candidates) {
-        userDoc = await ctx.db
-          .query("users")
-          .withIndex("by_phone", (q) => q.eq("phone", cand))
-          .first();
-        if (userDoc) break;
-      }
-    }
-
+    // The paying account is the AUTHENTICATED caller (userId). There is deliberately no fallback that
+    // resolves an account from `customerPhone`: an unverified phone number is a claim, not identity.
     if (!userDoc) {
       console.log(`[MoniMe Pending] No user doc resolved for pending tx ${args.reference}`);
       return { success: false, reason: "USER_NOT_RESOLVED" };
@@ -2869,6 +2865,10 @@ export const completeOtpSession = internalMutation({
         .withIndex("by_phone", (q) => q.eq("phone", args.phoneNumber))
         .first();
 
+      // This phone-OTP path has no second-factor step and issues no expiry: it must never mint a
+      // session for an administrator or any account that has 2FA enabled.
+      if (user && (user.role === "admin" || user.totpEnabled)) return null;
+
       const sessionToken = generateSessionToken();
       if (user) {
         await ctx.db.patch(user._id, {
@@ -3195,27 +3195,57 @@ export const verifyUssdOtp = internalAction({
 // OFFICIAL COMMERCIAL BANK ESCROW RAILS (High-Value Deals & Clearing)
 // ═══════════════════════════════════════════════════════════════════════
 
-export const VEKTOLUX_ESCROW_BANK_ACCOUNT = {
-  bankName: "Sierra Leone Commercial Bank (SLCB)",
-  accountName: "Vektolux Technologies (SL) Ltd — Escrow Clearing Account",
-  accountNumber: "003001014892010184",
-  branch: "Siaka Stevens Street Head Office, Freetown",
-  swiftCode: "SLCBSLFR",
-  currency: "SLE",
-  escrowNotice: "Official High-Value Escrow Clearing for Vehicles & Real Estate. Funds remain strictly locked until physical inspection approval.",
-};
+/**
+ * The bank account customers are told to wire escrow funds to. It is read from deployment environment
+ * variables that ONLY the owner sets once the account is confirmed with the bank, never from source
+ * code: a number baked into the repository could be stale, wrong or belong to nobody, and customers
+ * would send real money to it.
+ *   ESCROW_BANK_NAME, ESCROW_BANK_ACCOUNT_NAME, ESCROW_BANK_ACCOUNT_NUMBER   (required)
+ *   ESCROW_BANK_BRANCH, ESCROW_BANK_SWIFT, ESCROW_BANK_NOTICE                  (optional)
+ * Returns null when the required ones are not all set: bank transfer is then "not available yet".
+ */
+export function getEscrowBankAccount(): {
+  bankName: string;
+  accountName: string;
+  accountNumber: string;
+  branch?: string;
+  swiftCode?: string;
+  currency: string;
+  escrowNotice?: string;
+} | null {
+  const env = (k: string) => (process.env[k] ?? "").trim();
+  const bankName = env("ESCROW_BANK_NAME");
+  const accountName = env("ESCROW_BANK_ACCOUNT_NAME");
+  const accountNumber = env("ESCROW_BANK_ACCOUNT_NUMBER");
+  if (!bankName || !accountName || !accountNumber) return null;
+  return {
+    bankName,
+    accountName,
+    accountNumber,
+    ...(env("ESCROW_BANK_BRANCH") ? { branch: env("ESCROW_BANK_BRANCH") } : {}),
+    ...(env("ESCROW_BANK_SWIFT") ? { swiftCode: env("ESCROW_BANK_SWIFT") } : {}),
+    currency: "SLE",
+    ...(env("ESCROW_BANK_NOTICE") ? { escrowNotice: env("ESCROW_BANK_NOTICE") } : {}),
+  };
+}
+
+const BANK_TRANSFER_UNAVAILABLE =
+  "Bank transfer details are not available yet. Please pay with mobile money or your Vektolux wallet.";
 
 /**
- * Query official Sierra Leone Commercial Bank clearing account details
- * for direct wire / transfer deposits.
+ * Official clearing-account details for direct bank transfers. `available: false` (and no account
+ * fields) until the owner has configured and confirmed them.
  */
 export const getEscrowBankClearingDetails = query({
   args: {
     reference: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
+    const account = getEscrowBankAccount();
+    if (!account) return { available: false as const, message: BANK_TRANSFER_UNAVAILABLE };
     return {
-      ...VEKTOLUX_ESCROW_BANK_ACCOUNT,
+      available: true as const,
+      ...account,
       paymentReference: args.reference ?? "VKTLX-ESCROW",
     };
   },
@@ -3236,6 +3266,9 @@ export const generateBankEscrowReference = mutation({
   },
   handler: async (ctx, args) => {
     const { userId: callerId } = await requireSelf(ctx, args.sessionToken, args.userId);
+    // No reference is created (and no order is touched) for an account customers cannot be told about.
+    const bankAccount = getEscrowBankAccount();
+    if (!bankAccount) throw new Error("BANK_TRANSFER_UNAVAILABLE: " + BANK_TRANSFER_UNAVAILABLE);
     // Unguessable, unique reference.
     const rnd = new Uint8Array(6);
     crypto.getRandomValues(rnd);
@@ -3265,7 +3298,7 @@ export const generateBankEscrowReference = mutation({
       success: true,
       bankReference,
       bankDetails: {
-        ...VEKTOLUX_ESCROW_BANK_ACCOUNT,
+        ...bankAccount,
         paymentReference: bankReference,
         amount,
       },

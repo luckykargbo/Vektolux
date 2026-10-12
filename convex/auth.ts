@@ -16,6 +16,7 @@ import { requireSelf } from "./lib/auth";
 import type { MutationCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { requireAdmin } from "./lib/auth";
+import { verifySecondFactor } from "./lib/totpFactor";
 import {
   generateTotpSecret,
   generateOtpauthUrl,
@@ -33,6 +34,14 @@ const LOGIN_POLICY = { max: 5, windowMs: 15 * 60 * 1000, lockMs: 15 * 60 * 1000 
 // admin account policy because several customers can share one address (mobile carrier NAT); it
 // only ever blocks the address the failures came from, never an account.
 const LOGIN_IP_POLICY = { max: 20, windowMs: 15 * 60 * 1000, lockMs: 15 * 60 * 1000 };
+// Ordinary (non-admin) accounts are never locked out account-wide by strangers. Failures are counted per
+// (identifier, client address) so an attacker only ever locks THEIR OWN address for that account; when
+// no trustworthy address exists, a looser per-identifier bucket applies instead of no limit at all.
+const LOGIN_PAIR_POLICY = { max: 10, windowMs: 15 * 60 * 1000, lockMs: 15 * 60 * 1000 };
+const LOGIN_NOIP_POLICY = { max: 25, windowMs: 15 * 60 * 1000, lockMs: 15 * 60 * 1000 };
+// Sign-ups: per client address, and per address a verification email may be sent to.
+const REGISTER_IP_POLICY = { max: 10, windowMs: 60 * 60 * 1000 };
+const EMAIL_ADDRESS_SEND_POLICY = { max: 6, windowMs: 60 * 60 * 1000 };
 // Reset requests: at most 3 codes per 15 min per account (stops inbox flooding).
 const RESET_REQUEST_POLICY = { max: 3, windowMs: 15 * 60 * 1000 };
 // Reset code guesses: a code is burned after 5 wrong guesses.
@@ -71,6 +80,9 @@ async function issueEmailVerification(ctx: MutationCtx, user: Doc<"users">, now:
     .filter((q) => q.eq(q.field("isUsed"), false))
     .take(20);
   for (const old of open) await ctx.db.patch(old._id, { isUsed: true });
+  // Budget per DESTINATION address: this endpoint must not be usable to flood someone's inbox, whoever
+  // asked. Exhausted => silently no new challenge/email (the caller's answer never depends on it).
+  if (!(await consume(ctx, `email-verify:addr:${email}`, EMAIL_ADDRESS_SEND_POLICY, now))) return;
   const code = secureSixDigitCode();
   await ctx.db.insert("email_verifications", {
     userId: user._id,
@@ -90,10 +102,13 @@ async function issueEmailVerification(ctx: MutationCtx, user: Doc<"users">, now:
 
 /**
  * The client address to rate-limit a login by. Never taken from a caller-supplied argument alone:
- *  - the platform-observed request IP (`ctx.meta`), which a client cannot choose; or
- *  - the address forwarded by the admin-dashboard server, accepted ONLY when the call carries the
- *    shared LOGIN_PROXY_SECRET (the dashboard server sees the real browser; Convex sees the server).
- * Returns undefined when neither is available (then only account-level limits apply).
+ *  - when the call proves it comes from the admin-dashboard server (shared LOGIN_PROXY_SECRET), the
+ *    address that server forwarded, if it is a well-formed IP; if it forwarded none, there is NO
+ *    address (undefined). It never falls back to the platform-observed IP in that case, because that
+ *    IP is the dashboard server's own, shared by every dashboard visitor: keying a lockout on it would
+ *    let one attacker lock every administrator out;
+ *  - otherwise the platform-observed request IP (`ctx.meta`), which a client cannot choose.
+ * Returns undefined when no trustworthy address exists (account-level limits then apply instead).
  */
 async function resolveLoginClientIp(
   ctx: MutationCtx,
@@ -101,12 +116,9 @@ async function resolveLoginClientIp(
   proxySecret: string | undefined
 ): Promise<string | undefined> {
   const configured = process.env.LOGIN_PROXY_SECRET;
-  const forwarded = forwardedIp?.trim();
-  if (
-    configured && configured.length >= 16 && proxySecret && safeEqual(proxySecret, configured) &&
-    forwarded && /^[0-9a-fA-F:.]{3,45}$/.test(forwarded)
-  ) {
-    return forwarded.toLowerCase();
+  if (configured && configured.length >= 16 && proxySecret && safeEqual(proxySecret, configured)) {
+    const forwarded = forwardedIp?.trim();
+    return forwarded && /^[0-9a-fA-F:.]{3,45}$/.test(forwarded) ? forwarded.toLowerCase() : undefined;
   }
   const observed = (await ctx.meta.getRequestMetadata()).ip;
   return observed ? observed.toLowerCase() : undefined;
@@ -355,6 +367,13 @@ export const registerUser = mutation({
         return { success: false, errorMessage: `Password must be at least ${MIN_PASSWORD_LENGTH} characters long.` };
       }
 
+      // Per-address sign-up budget (platform-observed IP). Counted for every attempt, so it cannot be
+      // used to probe which emails exist any faster.
+      const observedIp = (await ctx.meta.getRequestMetadata()).ip;
+      if (observedIp && !(await consume(ctx, `register:ip:${observedIp.toLowerCase()}`, REGISTER_IP_POLICY, Date.now()))) {
+        return { success: false, errorMessage: "Too many sign-up attempts from this device. Please try again later." };
+      }
+
       // 1+2. Duplicate email / phone: ONE answer for both, so the response never says which
       // address or number is already registered (no account enumeration).
       const existingByEmail = await findUserByIdentifier(ctx, normalizedEmail);
@@ -558,11 +577,26 @@ export const loginWithPhoneOrEmail = mutation({
         }
       }
 
+      // Ordinary accounts: per-(identifier, address) lock, or a per-identifier bucket when no address.
+      const pairKey = isAdminAccount
+        ? undefined
+        : clientIp
+          ? `login:pair:${sanitizedId.toLowerCase()}:${clientIp}`
+          : `login:noip:${sanitizedId.toLowerCase()}`;
+      const pairPolicy = clientIp ? LOGIN_PAIR_POLICY : LOGIN_NOIP_POLICY;
+      if (pairKey) {
+        const pairLock = await lockRemainingMs(ctx, pairKey, now);
+        if (pairLock > 0) {
+          return { success: false, errorMessage: `Too many failed attempts. Please try again in ${minutes(pairLock)} minute(s) or reset your password.` };
+        }
+      }
+
       // One generic answer for "no such account", "no password set" and "wrong password", so the
       // response never reveals which emails/phones are registered. Every failure is counted.
       const ok = !!user && !!user.passwordHash && (await verifyPassword(args.password, user.passwordHash));
       if (!ok || !user) {
         if (ipKey) await recordFailure(ctx, ipKey, LOGIN_IP_POLICY, now);
+        if (pairKey) await recordFailure(ctx, pairKey, pairPolicy, now);
         if (isAdminAccount) {
           await recordFailure(ctx, idKey, LOGIN_POLICY, now);
           const userKey = user ? `login:user:${user._id}` : undefined;
@@ -638,6 +672,7 @@ export const loginWithPhoneOrEmail = mutation({
       }
 
       await clearLimit(ctx, idKey);
+      if (pairKey) await clearLimit(ctx, pairKey);
       const userKey = user ? `login:user:${user._id}` : undefined;
       if (userKey) await clearLimit(ctx, userKey);
       // The IP counter is deliberately NOT cleared on success: otherwise an attacker holding one valid
@@ -756,16 +791,45 @@ export const getAdminSession = query({
   },
 });
 
+// Managing 2FA is a high-value action: a session token alone is never enough. Every path below
+// needs fresh proof (password, plus the current factor when one already exists), and is attempt-limited.
+const TOTP_MANAGE_POLICY = { max: 5, windowMs: 15 * 60 * 1000, lockMs: 15 * 60 * 1000 };
+
+/** Fresh password proof for a 2FA management action. Failures are counted per account. */
+async function checkManagePassword(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+  password: string,
+  now: number
+): Promise<string | null> {
+  const key = `totp:manage:${user._id}`;
+  const lock = await lockRemainingMs(ctx, key, now);
+  if (lock > 0) return `Too many failed attempts. Please try again in ${minutes(lock)} minute(s).`;
+  if (!user.passwordHash || !(await verifyPassword(password, user.passwordHash))) {
+    await recordFailure(ctx, key, TOTP_MANAGE_POLICY, now);
+    return "Invalid administrator password.";
+  }
+  await clearLimit(ctx, key);
+  return null;
+}
+
 /**
  * Initiates TOTP 2FA enrollment for an authenticated administrator.
- * Generates secret, otpauth URI, and emergency backup codes, and stores
- * the encrypted secret in totpPendingSecretEncrypted until verified.
+ *
+ * Requires the current password. When 2FA is ALREADY enabled it also requires a valid current
+ * authenticator code (or backup code), so a stolen session token can never swap the factor.
+ * The server generates the secret AND the emergency backup codes; only hashes of the codes are
+ * stored (staged with the pending secret). The plaintext codes are returned exactly once.
  */
 export const setupTotp = mutation({
-  args: { sessionToken: v.string() },
+  args: {
+    sessionToken: v.string(),
+    password: v.string(),
+    code: v.optional(v.string()), // required when 2FA is already enabled
+  },
   returns: v.union(
     v.object({
-      success: v.boolean(),
+      success: v.literal(true),
       secret: v.string(),
       otpauthUrl: v.string(),
       backupCodes: v.array(v.string()),
@@ -777,35 +841,52 @@ export const setupTotp = mutation({
   ),
   handler: async (ctx, args) => {
     const { user } = await requireAdmin(ctx, { sessionToken: args.sessionToken });
+    const now = Date.now();
+
+    const passwordError = await checkManagePassword(ctx, user, args.password, now);
+    if (passwordError) return { success: false as const, errorMessage: passwordError };
+
+    if (user.totpEnabled) {
+      if (!args.code || !args.code.trim()) {
+        return { success: false as const, errorMessage: "Enter your current 2FA code to replace your authenticator." };
+      }
+      const factor = await verifySecondFactor(ctx, user, args.code, now);
+      if (!factor.ok) {
+        return {
+          success: false as const,
+          errorMessage: factor.lockedMs > 0
+            ? `Too many failed 2FA attempts. Please try again in ${minutes(factor.lockedMs)} minute(s).`
+            : "Invalid 2FA code.",
+        };
+      }
+    }
+
     const secret = generateTotpSecret();
     const otpauthUrl = generateOtpauthUrl(user.email, secret, "Vektolux Admin");
     const backupCodes = generateBackupCodes();
-    const encryptedSecret = await encryptTotpSecret(secret);
+    const encryptedSecret = await encryptTotpSecret(secret); // throws (fails closed) without TOTP_ENCRYPTION_KEY
+    const hashedBackupCodes = await Promise.all(backupCodes.map((c) => hashBackupCode(c)));
 
     await ctx.db.patch(user._id, {
       totpPendingSecretEncrypted: encryptedSecret,
-      updatedAt: Date.now(),
+      totpPendingBackupCodesHashed: hashedBackupCodes,
+      updatedAt: now,
     });
 
-    return {
-      success: true,
-      secret,
-      otpauthUrl,
-      backupCodes,
-    };
+    return { success: true as const, secret, otpauthUrl, backupCodes };
   },
 });
 
 /**
- * Confirms and activates TOTP 2FA using a valid code from the authenticator app.
- * Promotes totpPendingSecretEncrypted to totpSecretEncrypted, hashes backup codes,
- * and sets totpEnabled: true.
+ * Confirms and activates the pending TOTP secret using a valid code from the authenticator app.
+ * Promotes the pending secret and the SERVER-generated backup-code hashes staged by setupTotp.
+ * `backupCodes` is accepted only for older clients and is IGNORED: client-supplied codes are never trusted.
  */
 export const enableTotp = mutation({
   args: {
     sessionToken: v.string(),
     code: v.string(),
-    backupCodes: v.array(v.string()),
+    backupCodes: v.optional(v.array(v.string())), // deprecated, ignored
   },
   returns: v.object({
     success: v.boolean(),
@@ -813,24 +894,37 @@ export const enableTotp = mutation({
   }),
   handler: async (ctx, args) => {
     const { user } = await requireAdmin(ctx, { sessionToken: args.sessionToken });
-    if (!user.totpPendingSecretEncrypted) {
+    const now = Date.now();
+    if (!user.totpPendingSecretEncrypted || !user.totpPendingBackupCodesHashed?.length) {
       return { success: false, errorMessage: "No pending 2FA setup found. Please generate a new QR code." };
     }
 
-    const plainSecret = await decryptTotpSecret(user.totpPendingSecretEncrypted);
-    const valid = await verifyTotpCode(plainSecret, args.code);
-    if (!valid) {
-      return { success: false, errorMessage: "Invalid verification code. Please check your authenticator app and try again." };
+    const key = `totp:enable:${user._id}`;
+    const lock = await lockRemainingMs(ctx, key, now);
+    if (lock > 0) {
+      return { success: false, errorMessage: `Too many failed attempts. Please try again in ${minutes(lock)} minute(s).` };
     }
 
-    const hashedBackupCodes = await Promise.all(args.backupCodes.map((c) => hashBackupCode(c)));
+    let valid = false;
+    try {
+      const plainSecret = await decryptTotpSecret(user.totpPendingSecretEncrypted);
+      valid = await verifyTotpCode(plainSecret, args.code, now);
+    } catch (e) {
+      console.error("[TOTP] Pending secret decryption failed:", e instanceof Error ? e.message : String(e));
+    }
+    if (!valid) {
+      await recordFailure(ctx, key, TOTP_MANAGE_POLICY, now);
+      return { success: false, errorMessage: "Invalid verification code. Please check your authenticator app and try again." };
+    }
+    await clearLimit(ctx, key);
 
     await ctx.db.patch(user._id, {
       totpEnabled: true,
       totpSecretEncrypted: user.totpPendingSecretEncrypted,
       totpPendingSecretEncrypted: undefined,
-      totpBackupCodesHashed: hashedBackupCodes,
-      updatedAt: Date.now(),
+      totpBackupCodesHashed: user.totpPendingBackupCodesHashed,
+      totpPendingBackupCodesHashed: undefined,
+      updatedAt: now,
     });
 
     return { success: true };
@@ -838,7 +932,8 @@ export const enableTotp = mutation({
 });
 
 /**
- * Disables TOTP 2FA. Requires both current admin password and valid TOTP code.
+ * Disables TOTP 2FA. Requires the current password AND a valid authenticator or backup code.
+ * Fails closed: if 2FA is on but no factor can be verified, it is NOT disabled.
  */
 export const disableTotp = mutation({
   args: {
@@ -852,15 +947,20 @@ export const disableTotp = mutation({
   }),
   handler: async (ctx, args) => {
     const { user } = await requireAdmin(ctx, { sessionToken: args.sessionToken });
-    if (!user.passwordHash || !(await verifyPassword(args.password, user.passwordHash))) {
-      return { success: false, errorMessage: "Invalid administrator password." };
-    }
+    const now = Date.now();
 
-    if (user.totpSecretEncrypted) {
-      const plainSecret = await decryptTotpSecret(user.totpSecretEncrypted);
-      const valid = await verifyTotpCode(plainSecret, args.code);
-      if (!valid) {
-        return { success: false, errorMessage: "Invalid 2FA code." };
+    const passwordError = await checkManagePassword(ctx, user, args.password, now);
+    if (passwordError) return { success: false, errorMessage: passwordError };
+
+    if (user.totpEnabled || user.totpSecretEncrypted) {
+      const factor = await verifySecondFactor(ctx, user, args.code, now);
+      if (!factor.ok) {
+        return {
+          success: false,
+          errorMessage: factor.lockedMs > 0
+            ? `Too many failed 2FA attempts. Please try again in ${minutes(factor.lockedMs)} minute(s).`
+            : "Invalid 2FA code.",
+        };
       }
     }
 
@@ -869,14 +969,13 @@ export const disableTotp = mutation({
       totpSecretEncrypted: undefined,
       totpPendingSecretEncrypted: undefined,
       totpBackupCodesHashed: undefined,
-      updatedAt: Date.now(),
+      totpPendingBackupCodesHashed: undefined,
+      updatedAt: now,
     });
 
     return { success: true };
   },
 });
-
-
 
 // ═══════════════════════════════════════════════════════════════════════
 //                      GET USER SESSION

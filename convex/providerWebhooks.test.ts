@@ -29,11 +29,13 @@ afterEach(() => {
   delete process.env.ORANGE_MONEY_WEBHOOK_SECRET;
 });
 
-async function makeUser(t: T, name: string, phone: string, role = "client"): Promise<U> {
+// `phoneVerified` models an account whose owner has proven control of its number (the only kind of
+// account a carrier deposit may be matched to). Tests for the exploit paths pass `false`.
+async function makeUser(t: T, name: string, phone: string, role = "client", phoneVerified = true): Promise<U> {
   seq += 1;
   const token = `sess_${name}_${seq}_0123456789abcdef`;
   const id: Id<"users"> = await t.run(async (ctx) =>
-    ctx.db.insert("users", { email: `${name}${seq}@t.vx`, phone, name, role: role as any, isVerified: false, isActive: true, sessionToken: token, updatedAt: Date.now() } as any)
+    ctx.db.insert("users", { email: `${name}${seq}@t.vx`, phone, name, role: role as any, isVerified: false, isActive: true, sessionToken: token, updatedAt: Date.now(), ...(phoneVerified ? { phoneVerifiedAt: Date.now(), phoneVerifiedNumber: phone } : {}) } as any)
   );
   return { id, token };
 }
@@ -103,6 +105,118 @@ describe("Orange Money webhook — authentication", () => {
     expect((await orangePost(t, body, {}, path)).status).toBe(401);
     expect((await orangePost(t, body, { "x-orange-signature": await orangeSig(body) }, path)).status).toBe(200);
     expect(await balance(t, u.id)).toBe(250);
+  });
+});
+
+describe("Orange Money webhook — shared secret is not a signature", () => {
+  test("the raw secret as the signature header or as a Bearer token is rejected and credits nothing", async () => {
+    const t = convexTest(schema, modules);
+    const u = await makeUser(t, "payer", "+23276123456");
+    const body = orangeBody({ carrierTransactionId: "OM-SECRET-1" });
+    expect((await orangePost(t, body, { "x-orange-signature": ORANGE_SECRET })).status).toBe(401);
+    expect((await orangePost(t, body, { "x-orange-signature": `sha256=${ORANGE_SECRET}` })).status).toBe(401);
+    expect((await orangePost(t, body, { authorization: `Bearer ${ORANGE_SECRET}` })).status).toBe(401);
+    expect((await orangePost(t, body, { authorization: ORANGE_SECRET })).status).toBe(401);
+    // a valid-looking but unrelated 64-hex value is no better
+    expect((await orangePost(t, body, { "x-orange-signature": "a".repeat(64) })).status).toBe(401);
+    expect(await balance(t, u.id)).toBe(0);
+    expect(await topUps(t)).toHaveLength(0);
+  });
+
+  test("a correct body HMAC alongside a wrong Bearer token is accepted (header is ignored), a wrong HMAC alongside the right secret is not", async () => {
+    const t = convexTest(schema, modules);
+    await makeUser(t, "payer", "+23276123456");
+    const body = orangeBody({ carrierTransactionId: "OM-SECRET-2" });
+    expect((await orangePost(t, body, { "x-orange-signature": "b".repeat(64), authorization: `Bearer ${ORANGE_SECRET}` })).status).toBe(401);
+    expect((await orangePost(t, body, { "x-orange-signature": await orangeSig(body), authorization: "Bearer nope" })).status).toBe(200);
+  });
+
+  test("an uppercase / sha256=-prefixed HMAC of the right body is accepted (format only), still keyed on the body", async () => {
+    const t = convexTest(schema, modules);
+    await makeUser(t, "payer", "+23276123456");
+    const body = orangeBody({ carrierTransactionId: "OM-SECRET-3" });
+    const sig = (await orangeSig(body)).toUpperCase();
+    expect((await orangePost(t, body, { "x-orange-signature": `sha256=${sig}` })).status).toBe(200);
+  });
+});
+
+describe("Orange Money webhook — an unverified phone number is never a reason to credit", () => {
+  const sign = async (b: string) => ({ "x-orange-signature": await orangeSig(b) });
+
+  test("a squatter holding the paying number (unverified) is NOT credited; the deposit is held", async () => {
+    const t = convexTest(schema, modules);
+    const squatter = await makeUser(t, "squatter", "+23276123456", "client", false);
+    const body = orangeBody({ carrierTransactionId: "OM-SQ-1" });
+    const res = await orangePost(t, body, await sign(body));
+    expect(res.status).toBe(200);
+    expect(await balance(t, squatter.id)).toBe(0);
+    expect(await topUps(t)).toHaveLength(0);
+    const log: any = await t.run(async (ctx) => ctx.db.query("telco_webhook_logs").first());
+    expect(log.status).toBe("HELD_UNVERIFIED_PHONE");
+    expect(log.isProcessed).toBe(false);
+  });
+
+  test("when the real owner has verified the number, only the owner is credited, even if a squatter holds the same number", async () => {
+    const t = convexTest(schema, modules);
+    const squatter = await makeUser(t, "squatter", "+23276123456", "client", false);
+    const owner = await makeUser(t, "owner", "+23276123456", "client", true);
+    const body = orangeBody({ carrierTransactionId: "OM-SQ-2" });
+    expect((await orangePost(t, body, await sign(body))).status).toBe(200);
+    expect(await balance(t, owner.id)).toBe(250);
+    expect(await balance(t, squatter.id)).toBe(0);
+  });
+
+  test("a verified number that the user later changed away from no longer receives credits", async () => {
+    const t = convexTest(schema, modules);
+    const u = await makeUser(t, "mover", "+23276123456");
+    await t.run(async (ctx) => ctx.db.patch(u.id, { phone: "+23279000000" }));
+    const body = orangeBody({ carrierTransactionId: "OM-MOVE-1" });
+    await orangePost(t, body, await sign(body));
+    expect(await balance(t, u.id)).toBe(0);
+  });
+
+  test("held deposit is credited exactly once after the owner verifies the number and the provider redelivers", async () => {
+    const t = convexTest(schema, modules);
+    const u = await makeUser(t, "late", "+23276123456", "client", false);
+    const body = orangeBody({ carrierTransactionId: "OM-LATE-1" });
+    await orangePost(t, body, await sign(body));
+    expect(await balance(t, u.id)).toBe(0);
+    const v: any = await t.mutation(internal.users.markPhoneVerified, { userId: u.id, phone: "+23276123456", method: "test" });
+    expect(v.success).toBe(true);
+    await orangePost(t, body, await sign(body));
+    await orangePost(t, body, await sign(body));
+    expect(await balance(t, u.id)).toBe(250);
+    expect(await topUps(t)).toHaveLength(1);
+  });
+
+  test("one number cannot be verified for two accounts", async () => {
+    const t = convexTest(schema, modules);
+    const a = await makeUser(t, "a", "+23276123456", "client", false);
+    const b = await makeUser(t, "b", "+23276123456", "client", false);
+    expect(((await t.mutation(internal.users.markPhoneVerified, { userId: a.id, phone: "+23276123456", method: "t" })) as any).success).toBe(true);
+    const second: any = await t.mutation(internal.users.markPhoneVerified, { userId: b.id, phone: "+23276123456", method: "t" });
+    expect(second.success).toBe(false);
+    expect(second.reason).toBe("PHONE_ALREADY_VERIFIED_ELSEWHERE");
+  });
+
+  test("an inactive account is never credited through its verified number", async () => {
+    const t = convexTest(schema, modules);
+    const u = await makeUser(t, "gone", "+23276123456");
+    await t.run(async (ctx) => ctx.db.patch(u.id, { isActive: false }));
+    const body = orangeBody({ carrierTransactionId: "OM-GONE-1" });
+    await orangePost(t, body, await sign(body));
+    expect(await balance(t, u.id)).toBe(0);
+  });
+
+  test("malformed amounts, currencies and bodies never credit even with a valid signature", async () => {
+    const t = convexTest(schema, modules);
+    const u = await makeUser(t, "payer", "+23276123456");
+    for (const o of [{ amount: -5 }, { amount: 0 }, { amount: "abc" }, { currency: "USD" }, { carrierTransactionId: "" }]) {
+      const b = orangeBody({ carrierTransactionId: "OM-MAL-1", ...o });
+      const r = await orangePost(t, b, await sign(b));
+      expect([400]).toContain(r.status);
+    }
+    expect(await balance(t, u.id)).toBe(0);
   });
 });
 

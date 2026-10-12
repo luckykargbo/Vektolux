@@ -1,13 +1,12 @@
 // src/app/api/admin/send-notification/route.ts
 // ═══════════════════════════════════════════════════════════════════════
 // VEKTOLUX — Admin Notification Dispatch API
-// Inserts into Convex database, triggers FCM push notification,
-// and packages deep-link data for Android, iOS, & Web.
+// Inserts an in-app notification record into Convex (shown in the app's Notifications screen).
+// There is NO device push: the app has no push provider, so none is claimed or simulated.
 // ═══════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
-import { sendPushNotification } from "@/lib/firebase-admin";
 
 import { isAuthError, sessionFromRequest } from "@/lib/apiAuth";
 import { CONVEX_URL } from "@/lib/convex";
@@ -70,48 +69,12 @@ export async function POST(request: Request) {
       }),
     });
 
-    // 2. Fetch device tokens if targeting a specific user
-    let recipientTokens: string[] = [];
-    if (targetType === "single_user") {
-      try {
-        const tokens: any[] = await convex.query("notifications:getUserTokens" as any, {
-          userId,
-          sessionToken,
-        });
-        recipientTokens = (tokens || []).map((t) => t.fcmToken);
-      } catch (err) {
-        console.warn("[send-notification] Failed to query user tokens:", err);
-      }
-    }
-
-    // 3. Dispatch Push via Firebase Admin SDK
-    const pushResult = await sendPushNotification({
-      target:
-        targetType === "single_user"
-          ? {
-              type: "tokens",
-              tokens: recipientTokens,
-            }
-          : {
-              type: "topic",
-              topic: "all_users",
-            },
-      title: title.trim(),
-      body: message.trim(),
-      deepLinkScreen: deepLinkScreen || "notifications",
-      deepLinkId: deepLinkId || "",
-      extraData: {
-        notificationId: dbRecord?.id || "",
-      },
-    });
-
     return NextResponse.json({
       success: true,
       data: {
         notificationId: dbRecord?.id,
         createdAt: dbRecord?.createdAt,
-        pushResult,
-        tokensCount: recipientTokens.length,
+        delivery: "in_app",
       },
     });
   } catch (err: any) {

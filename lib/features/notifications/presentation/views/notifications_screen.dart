@@ -216,7 +216,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       appBar: AppBar(
         title: Row(
           children: [
-            const Text(
+            Flexible(child: const Text(
               'Notifications',
               style: TextStyle(
                 fontFamily: 'Poppins',
@@ -224,7 +224,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 fontSize: 18,
                 color: AppColors.obsidian,
               ),
-            ),
+            )),
             if (unreadTotal > 0) ...[
               const SizedBox(width: 8),
               Container(
@@ -464,25 +464,28 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
+                      Flexible(child: Text(
                         _formatDate(notif['createdAt']),
                         style: const TextStyle(
                           fontSize: 11.5,
                           color: AppColors.gray500,
                           fontWeight: FontWeight.w500,
                         ),
-                      ),
+                      )),
                       if (hasDeepLink)
-                        Row(
+                        Flexible(child: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(
+                            Flexible(child: Text(
                               'Open ${_formatScreenName(notif['deepLinkScreen'])}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontSize: 11.5,
                                 fontWeight: FontWeight.w700,
                                 color: AppColors.emeraldDark,
                               ),
-                            ),
+                            )),
                             const SizedBox(width: 3),
                             const Icon(
                               Icons.arrow_forward_rounded,
@@ -490,7 +493,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                               color: AppColors.emeraldDark,
                             ),
                           ],
-                        ),
+                        )),
                     ],
                   ),
                 ],

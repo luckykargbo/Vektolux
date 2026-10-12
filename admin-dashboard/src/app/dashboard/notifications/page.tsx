@@ -118,9 +118,7 @@ export default function NotificationsPage() {
       if (json.success) {
         setAlert({
           type: "success",
-          text: `Notification dispatched successfully via ${
-            json.data?.pushResult?.mode === "live_fcm" ? "Firebase Cloud Messaging (FCM)" : "Local Cloud Simulation"
-          }!`,
+          text: "Announcement saved. It appears in the Notifications screen of the app (in-app only: no device push is sent).",
         });
 
         // Reset inputs
@@ -157,9 +155,9 @@ export default function NotificationsPage() {
       {/* Header */}
       <div className={styles.header}>
         <div>
-          <h1 className={styles.title}>Push & In-App Notification Center</h1>
+          <h1 className={styles.title}>In-App Notification Center</h1>
           <p className={styles.subtitle}>
-            Dispatch heads-up push alerts and in-app announcements to Android, iOS, & Web clients via FCM.
+            Publish in-app announcements. They appear in the app's Notifications screen; device push alerts are not sent.
           </p>
         </div>
         <div className={styles.badge}>
@@ -208,8 +206,8 @@ export default function NotificationsPage() {
               </div>
               <p className={styles.hint}>
                 {targetType === "all_users"
-                  ? "Subscribes to standard FCM topic 'all_users' for high-throughput broadcast."
-                  : "Targeted push alert delivered directly to registered user device tokens."}
+                  ? "Shown to every user in the app's Notifications screen."
+                  : "Shown only to the selected user in the app's Notifications screen."}
               </p>
             </div>
 
@@ -303,7 +301,7 @@ export default function NotificationsPage() {
               <label className={styles.label}>Message Body</label>
               <textarea
                 className={styles.textarea}
-                placeholder="Write your push notification message here..."
+                placeholder="Write your announcement here..."
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 maxLength={240}

@@ -578,8 +578,9 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                           ],
                         ),
                       ),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
                         children: [
                           if (isDeliveryVan) ...[
                             InkWell(
@@ -667,10 +668,10 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
         children: [
           Icon(icon, size: 12, color: AppColors.gray600),
           const SizedBox(width: 4),
-          Text(
+          Flexible(child: Text(
             text,
             style: const TextStyle(fontSize: 11, color: AppColors.gray700),
-          ),
+          )),
         ],
       ),
     );

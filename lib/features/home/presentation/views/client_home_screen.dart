@@ -1202,38 +1202,46 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       ),
                     ),
                     const SizedBox(width: 6),
-                    InkWell(
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => BlocProvider(
-                              create: (_) => WalletCubit(convexClient: widget.convexClient),
-                              child: TransactionHistoryScreen(convexClient: widget.convexClient),
-                            ),
-                          ),
-                        );
-                      },
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF047857).withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'History',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF047857),
+                    // On a narrow card the pill keeps only its chevron so the wallet title keeps a
+                    // readable width (the control is still announced as "Transaction history").
+                    Semantics(
+                      button: true,
+                      label: 'Transaction history',
+                      child: InkWell(
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => BlocProvider(
+                                create: (_) => WalletCubit(convexClient: widget.convexClient),
+                                child: TransactionHistoryScreen(convexClient: widget.convexClient),
                               ),
                             ),
-                            SizedBox(width: 2),
-                            Icon(Icons.chevron_right, size: 14, color: Color(0xFF047857)),
-                          ],
+                          );
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth < 360 ? 6 : 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF047857).withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (constraints.maxWidth >= 360) ...const [
+                                Text(
+                                  'History',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF047857),
+                                  ),
+                                ),
+                                SizedBox(width: 2),
+                              ],
+                              const Icon(Icons.chevron_right, size: 14, color: Color(0xFF047857)),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -2331,7 +2339,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           _buildPropertiesEmptyState()
         else
           SizedBox(
-            height: 250,
+            // Cards hold text lines, so the strip grows with the user's text size instead of clipping.
+            height: 264 + ((MediaQuery.textScalerOf(context).scale(100) - 100) * 0.9).clamp(0.0, 60.0),
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
@@ -2479,16 +2488,24 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     children: [
                       const Icon(Icons.bed_outlined, size: 14, color: AppColors.textSecondary),
                       const SizedBox(width: 4),
-                      Text(
-                        '$bedrooms Beds',
-                        style: const TextStyle(fontSize: 10, color: AppColors.textSecondary),
+                      Flexible(
+                        child: Text(
+                          '$bedrooms Beds',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 10, color: AppColors.textSecondary),
+                        ),
                       ),
                       const SizedBox(width: 12),
                       const Icon(Icons.bathtub_outlined, size: 14, color: AppColors.textSecondary),
                       const SizedBox(width: 4),
-                      Text(
-                        '$bathrooms Baths',
-                        style: const TextStyle(fontSize: 10, color: AppColors.textSecondary),
+                      Flexible(
+                        child: Text(
+                          '$bathrooms Baths',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 10, color: AppColors.textSecondary),
+                        ),
                       ),
                     ],
                   ),

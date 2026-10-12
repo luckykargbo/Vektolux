@@ -1242,55 +1242,66 @@ class _RealEstateMarketplaceScreenState
                   // Bottom Row: Type Badge + View Details
                   Row(
                     children: [
-                      // Property Type Badge
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: AppColors.emeraldSurface,
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color:
-                                AppColors.emerald.withValues(alpha: 0.25),
+                      // Property Type Badge (shrinks and ellipsizes instead of pushing the button off-card)
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppColors.emeraldSurface,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color:
+                                  AppColors.emerald.withValues(alpha: 0.25),
+                            ),
                           ),
-                        ),
-                        child: Text(
-                          propertyTypeLabel,
-                          style: const TextStyle(
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.emeraldDark,
+                          child: Text(
+                            propertyTypeLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.emeraldDark,
+                            ),
                           ),
                         ),
                       ),
-                      const Spacer(),
-                      // View Details Button
-                      GestureDetector(
-                        onTap: () => _navigateToPropertyDetail(item),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                                color: AppColors.emerald, width: 1),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: const [
-                              Icon(Icons.visibility_outlined,
-                                  size: 12, color: AppColors.emerald),
-                              SizedBox(width: 3),
-                              Text(
-                                'View Details',
-                                style: TextStyle(
-                                  fontSize: 9.5,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.emerald,
-                                ),
+                      const SizedBox(width: 8),
+                      // View Details Button (scales down instead of overflowing a narrow card)
+                      Expanded(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: GestureDetector(
+                            onTap: () => _navigateToPropertyDetail(item),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                    color: AppColors.emerald, width: 1),
                               ),
-                            ],
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.visibility_outlined,
+                                      size: 12, color: AppColors.emerald),
+                                  SizedBox(width: 3),
+                                  Text(
+                                    'View Details',
+                                    maxLines: 1,
+                                    style: TextStyle(
+                                      fontSize: 9.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.emerald,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         ),
                       ),

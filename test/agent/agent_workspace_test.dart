@@ -1491,8 +1491,10 @@ void main() {
       expect(find.text('Photos do not show the property.'), findsOneWidget);
       await _reveal(tester, find.byKey(const Key('agent-listing-reason-x1')));
       expect(find.text('Reported as a duplicate listing.'), findsOneWidget);
-      // an active listing carries no reason; its real statistics come from the server record (all zero here)
-      await _scrollTop(tester);
+      // an active listing carries no reason; its real statistics come from the server record (all zero here).
+      // The list is lazy and its order depends on the fixture's creation times (derived from String.hashCode,
+      // which differs between Dart versions), so build the card explicitly instead of assuming it is on top.
+      await _reveal(tester, find.byKey(const Key('agent-listing-a1')));
       expect(find.byKey(const Key('agent-listing-a1')), findsOneWidget);
       expect(find.byKey(const Key('agent-listing-reason-a1')), findsNothing);
       expect(find.byKey(const Key('agent-listing-stats-a1')), findsOneWidget);

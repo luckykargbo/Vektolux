@@ -269,7 +269,16 @@ export const applyWebhookTransition = internalMutation({
       .first();
 
     if (!check) {
-      throw new Error(`Identity check not found for referenceId: ${args.referenceId}`);
+      // Unknown reference: nothing to transition. Returned (not thrown) so the HTTP layer can answer
+      // generically instead of echoing an internal error.
+      return { processed: false, alreadyHandled: false, notFound: true as const };
+    }
+
+    // Only a check that is still awaiting its result may transition. A second, differently-keyed
+    // delivery can never flip a finished check (verified -> rejected, or rejected -> verified).
+    const OPEN = new Set(["pending", "PENDING_REVIEW", "unverified", "UNVERIFIED"]);
+    if (!OPEN.has(check.status as string)) {
+      return { processed: true, alreadyHandled: true, ignored: true as const };
     }
 
     const newStatus = args.isApproved ? "verified" : "rejected";

@@ -24,13 +24,23 @@ export async function POST(request: Request) {
       );
     }
 
-    // No client IP is sent: Convex derives it from the request itself (ctx.meta). Headers such as
-    // CF-Connecting-IP / X-Forwarded-For are caller-controlled unless the proxy topology guarantees them.
+    // Client address handling. From Convex's point of view every dashboard visitor arrives from THIS
+    // server, so the platform-observed IP is shared and must not drive a lockout. When LOGIN_PROXY_SECRET
+    // is configured (same value as on the Convex deployment) the call proves it is the dashboard server
+    // and Convex then ignores the shared IP. A real browser address is forwarded ONLY if the operator
+    // names the one header their proxy sets and guarantees (TRUSTED_CLIENT_IP_HEADER, e.g.
+    // "cf-connecting-ip"). Without that, no address is sent: caller-controlled headers are never trusted.
+    const proxySecret = (process.env.LOGIN_PROXY_SECRET ?? "").trim();
+    const trustedHeader = (process.env.TRUSTED_CLIENT_IP_HEADER ?? "").trim().toLowerCase();
+    const forwarded = trustedHeader ? request.headers.get(trustedHeader)?.split(",")[0]?.trim() : undefined;
     const client = new ConvexHttpClient(CONVEX_URL);
     const result: any = await client.mutation("auth:loginWithPhoneOrEmail" as any, {
       identifier: email.trim(),
       password,
       totpCode: totpCode ? totpCode.trim() : undefined,
+      ...(proxySecret.length >= 16
+        ? { proxySecret, ...(forwarded && /^[0-9a-fA-F:.]{3,45}$/.test(forwarded) ? { ip: forwarded } : {}) }
+        : {}),
     });
 
     // Unified generic message for wrong credentials or non-admin roles

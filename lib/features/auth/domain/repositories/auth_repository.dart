@@ -25,9 +25,13 @@ abstract class AuthRepository {
   });
 
   /// Login with email or phone + password.
+  ///
+  /// Throws [MfaRequiredException] when the account has two-factor authentication enabled and no
+  /// (valid) [totpCode] was supplied: no session exists until the second factor is verified.
   Future<UserEntity> login({
     required String identifier,
     required String password,
+    String? totpCode,
   });
 
   /// Get the locally cached active session.
@@ -65,6 +69,17 @@ abstract class AuthRepository {
     required String providerId,
     String? nonce,
   });
+
+  /// Social sign-in step 2 for an account with two-factor authentication: trades the single-use
+  /// challenge from [MfaRequiredException.challengeToken] plus an authenticator / backup code for the
+  /// session. Throws [MfaChallengeException] (with [MfaChallengeException.retryable]) when refused.
+  Future<({UserEntity user, bool hasPhone})> completeSocialMfa({
+    required String challengeToken,
+    required String totpCode,
+  });
+
+  /// Burns a pending social MFA challenge (user backed out). Best effort; never throws.
+  Future<void> cancelSocialMfa(String challengeToken);
 
   /// Apple sign-in step 1: a one-time server nonce. Give Apple only `nonceHash`; send the raw
   /// `nonce` back with the identity token.
@@ -120,6 +135,32 @@ class AccountSecurityStatus {
   /// Linking re-authenticates with the PIN, or the password when there is no PIN.
   bool get needsSecret => hasPin || hasPassword;
   bool isLinked(String provider) => provider == 'apple' ? appleLinked : googleLinked;
+}
+
+/// The server accepted the credentials / provider identity but requires a second factor first.
+/// [challengeToken] is set for Google/Apple sign-in (use completeSocialMfa); it is null for password
+/// login (call login again with a totpCode).
+class MfaRequiredException implements Exception {
+  final String message;
+  final String? challengeToken;
+  final DateTime? expiresAt;
+  const MfaRequiredException(this.message, {this.challengeToken, this.expiresAt});
+
+  bool get isSocial => challengeToken != null;
+
+  @override
+  String toString() => message;
+}
+
+/// A social MFA code was refused. [retryable] is true when the same challenge may be tried again
+/// (wrong code); false when it is spent (expired, locked, too many attempts) and sign-in must restart.
+class MfaChallengeException implements Exception {
+  final String message;
+  final bool retryable;
+  const MfaChallengeException(this.message, {required this.retryable});
+
+  @override
+  String toString() => message;
 }
 
 class AuthException implements Exception {

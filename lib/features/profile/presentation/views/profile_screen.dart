@@ -5,6 +5,7 @@
 // KYC verification status, vendor tools, and secure session logout.
 // ═══════════════════════════════════════════════════════════════════════
 
+import '../../../../core/constants/app_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -2380,22 +2381,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       _buildSettingsTile(
                         icon: Icons.privacy_tip_outlined,
                         title: 'Privacy Policy',
-                        subtitle: 'Local-first zero telemetry standards',
+                        subtitle: 'How Vektolux handles your information',
                         onTap: () => _showInfoSheet(
                           context,
                           'Privacy Policy',
-                          'Vektolux values user data sovereignty in Sierra Leone. All sensitive sessions are encrypted locally in SQLite, and payments follow ECOWAS & Central Bank standards with end-to-end cryptographic integrity.',
+                          'The full Vektolux Privacy Policy is being finalised and has not been published yet. It will describe what we collect (account details, verification documents, listings, wallet and payment records, messages), why, who processes it, how long it is kept, and how you can ask us to correct or delete it. Until then, contact Customer Support with any privacy question.',
                         ),
                       ),
                       const Divider(height: 1, indent: 56),
                       _buildSettingsTile(
                         icon: Icons.description_outlined,
                         title: 'Terms of Service',
-                        subtitle: 'Escrow dispute & marketplace guidelines',
+                        subtitle: 'Marketplace and escrow rules',
                         onTap: () => _showInfoSheet(
                           context,
                           'Terms of Service',
-                          'All marketplace transactions, property bookings, and vehicle inspections operate under Vektolux escrow protocols. Funds remain locked until physical inspection is approved or trip completion.',
+                          'The full Vektolux Terms of Service are being finalised and have not been published yet. Escrow payments are held by Vektolux until the conditions of the specific booking or purchase are met, as shown at checkout. Contact Customer Support for questions about a payment or dispute.',
                         ),
                       ),
                       const Divider(height: 1, indent: 56),
@@ -2414,15 +2415,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       _buildSettingsTile(
                         icon: Icons.info_outline,
                         title: 'App Version',
-                        subtitle: 'Vektolux v1.0.13 (Build 14)',
-                        trailing: const Text(
-                          'Latest',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.emeraldDark,
-                          ),
-                        ),
+                        // Shows the real build; it never claims to be "latest" (nothing checks for updates).
+                        subtitle: 'Vektolux ${AppInfo.versionLabel}',
                         onTap: () {},
                       ),
                     ],
@@ -2849,14 +2843,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
+                      Flexible(child: Text(
                         isEnrolled ? 'Manage Portal' : actionLabel,
                         style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                           color: AppColors.emeraldDark,
                         ),
-                      ),
+                      )),
                       const SizedBox(width: 4),
                       const Icon(Icons.arrow_forward_ios_rounded,
                           size: 10, color: AppColors.emeraldDark),
@@ -4898,7 +4892,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         children: [
           Icon(icon, size: 12, color: textColor),
           const SizedBox(width: 3),
-          Text(
+          Flexible(child: Text(
             label,
             style: TextStyle(
               fontSize: 9,
@@ -4906,7 +4900,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               color: textColor,
               letterSpacing: 0.3,
             ),
-          ),
+          )),
         ],
       ),
     );

@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <application
+        android:allowBackup="false"
+        android:fullBackupContent="false"
         android:label="vektolux"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">

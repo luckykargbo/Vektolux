@@ -583,7 +583,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                 color: isSelected ? AppColors.obsidian : AppColors.gray600,
               ),
               const SizedBox(width: 6),
-              Text(
+              Flexible(child: Text(
                 label,
                 style: TextStyle(
                   fontSize: 12,
@@ -592,7 +592,7 @@ class _OperatorDashboardScreenState extends State<OperatorDashboardScreen> {
                   color:
                       isSelected ? AppColors.obsidian : AppColors.gray600,
                 ),
-              ),
+              )),
             ],
           ),
         ),

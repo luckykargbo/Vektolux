@@ -29,6 +29,8 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<UserRoleUpdatedEvent>(_onUserRoleUpdated);
     on<RefreshUserSessionEvent>(_onRefreshUserSession);
     on<SocialAuthEvent>(_onSocialAuth);
+    on<SocialMfaSubmittedEvent>(_onSocialMfaSubmitted);
+    on<SocialMfaCancelledEvent>(_onSocialMfaCancelled);
     on<LinkPhoneNumberEvent>(_onLinkPhoneNumber);
   }
 
@@ -159,13 +161,24 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       final user = await _repository.login(
         identifier: event.identifier,
         password: event.password,
+        totpCode: event.totpCode,
       );
 
       emit(state.copyWith(
         status: AuthStatus.authenticated,
         user: user,
         successMessage: 'Welcome back, ${user.name}!',
+        clearMfaChallenge: true,
       ));
+    } on MfaRequiredException catch (e) {
+      // Correct password, second factor needed: the screen asks for the code and submits the
+      // login again. No session exists until the server verifies it.
+      emit(state.copyWith(
+        status: AuthStatus.mfaRequired,
+        clearMfaChallenge: true,
+        errorMessage: (event.totpCode ?? '').isNotEmpty ? 'That code was not accepted. Try again.' : null,
+      ));
+      _log.i('Second factor required for password login: ${e.message}');
     } on AuthException catch (e) {
       _log.w('Credential authentication failure: ${e.message}');
       emit(state.copyWith(
@@ -332,6 +345,12 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           successMessage: 'Welcome${result.user.name.isNotEmpty ? ", ${result.user.name.split(' ').first}" : ""}! 🎉',
         ));
       }
+    } on MfaRequiredException catch (e) {
+      if (e.challengeToken == null) {
+        emit(state.copyWith(status: AuthStatus.error, errorMessage: e.message));
+      } else {
+        emit(state.copyWith(status: AuthStatus.mfaRequired, mfaChallengeToken: e.challengeToken));
+      }
     } on SignInWithAppleAuthorizationException catch (e) {
       if (e.code == AuthorizationErrorCode.canceled) {
         emit(state.copyWith(status: AuthStatus.unauthenticated));
@@ -354,6 +373,53 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         errorMessage: e.toString().replaceFirst('Exception: ', ''),
       ));
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //                     SOCIAL SIGN-IN: SECOND FACTOR
+  // ═══════════════════════════════════════════════════════════════════
+
+  Future<void> _onSocialMfaSubmitted(
+    SocialMfaSubmittedEvent event,
+    Emitter<AuthState> emit,
+  ) async {
+    final token = state.mfaChallengeToken;
+    if (token == null || state.mfaVerifying) return; // nothing pending, or a submit is in flight
+    final code = event.code.trim();
+    if (code.isEmpty) return;
+    emit(state.copyWith(status: AuthStatus.mfaRequired, mfaVerifying: true));
+    try {
+      final result = await _repository.completeSocialMfa(challengeToken: token, totpCode: code);
+      emit(state.copyWith(
+        status: result.hasPhone ? AuthStatus.authenticated : AuthStatus.needsPhoneSetup,
+        user: result.user,
+        hasPhone: result.hasPhone,
+        clearMfaChallenge: true,
+      ));
+    } on MfaChallengeException catch (e) {
+      if (e.retryable) {
+        // Wrong code (or a network blip): same challenge, try again.
+        emit(state.copyWith(status: AuthStatus.mfaRequired, errorMessage: e.message));
+      } else {
+        // Expired, locked or spent: the user must start the sign-in again.
+        emit(state.copyWith(status: AuthStatus.error, errorMessage: e.message, clearMfaChallenge: true));
+      }
+    } catch (e) {
+      _log.e('Social MFA failed: $e');
+      emit(state.copyWith(
+        status: AuthStatus.mfaRequired,
+        errorMessage: 'Something went wrong. Please try again.',
+      ));
+    }
+  }
+
+  Future<void> _onSocialMfaCancelled(
+    SocialMfaCancelledEvent event,
+    Emitter<AuthState> emit,
+  ) async {
+    final token = state.mfaChallengeToken;
+    emit(state.copyWith(status: AuthStatus.unauthenticated, clearMfaChallenge: true));
+    if (token != null) await _repository.cancelSocialMfa(token);
   }
 
   // ═══════════════════════════════════════════════════════════════════

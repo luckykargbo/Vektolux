@@ -395,14 +395,14 @@ class _MyRealEstateEscrowsScreenState extends State<MyRealEstateEscrowsScreen>
                         style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.emeraldDark),
                       ),
                     ),
-                    Text(
+                    Flexible(child: Text(
                       state.replaceAll('_', ' '),
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                         color: state == 'DISPUTED' ? AppColors.error : AppColors.emeraldDark,
                       ),
-                    ),
+                    )),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -421,7 +421,7 @@ class _MyRealEstateEscrowsScreenState extends State<MyRealEstateEscrowsScreen>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Column(
+                    Flexible(child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text('ESCROW CUSTODY', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.gray500)),
@@ -431,8 +431,10 @@ class _MyRealEstateEscrowsScreenState extends State<MyRealEstateEscrowsScreen>
                           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: AppColors.obsidian),
                         ),
                       ],
-                    ),
+                    )),
+                    const SizedBox(width: 12),
                     const Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Text('Open Console', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.emerald)),
                         SizedBox(width: 4),

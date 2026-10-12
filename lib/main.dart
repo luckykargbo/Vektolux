@@ -27,6 +27,9 @@ void main() async {
     DeviceOrientation.portraitDown,
   ]);
 
+  // Release builds must be given an explicit, valid CONVEX_URL; never guess a backend.
+  ApiConstants.assertConvexUrlConfigured();
+
   // ── Initialize Core Services ──────────────────────────────────────
   final convexClient = ConvexClientWrapper(
     deploymentUrl: ApiConstants.convexUrl,

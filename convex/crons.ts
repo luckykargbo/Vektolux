@@ -38,6 +38,10 @@ if (BACKGROUND_JOBS_ENABLED) {
   // Marketplace bookings: release escrow 24h after the booking ends unless it was disputed.
   crons.interval("release due booking escrows", { minutes: 15 }, internal.bookings.releaseDueBookings, {});
 
+  // Account deletion: erase/anonymise accounts whose 30-day window elapsed (retention-aware; see
+  // accountDeletion.ts). Stays OFF with the rest of the jobs until the owner enables them.
+  crons.interval("complete scheduled account deletions", { hours: 6 }, internal.accountDeletion.processDueDeletions, {});
+
   // Webhook event ledger housekeeping.
   crons.interval("purge old monime webhook events", { hours: 24 }, internal.monimeWebhooks.purgeOldEvents, {});
 }

@@ -938,17 +938,22 @@ Amount to Transfer: SLE ${_currencyFormat.format(_totalEscrowInflow)}
             runSpacing: 6,
             children: [
               const Text('Lease Duration', style: TextStyle(fontWeight: FontWeight.w700)),
-              DropdownButton<int>(
-                value: _leaseMonths,
-                underline: const SizedBox(),
-                items: const [
-                  DropdownMenuItem(value: 6, child: Text('6 Months')),
-                  DropdownMenuItem(value: 12, child: Text('1 Year (12 Months)')),
-                  DropdownMenuItem(value: 24, child: Text('2 Years (24 Months)')),
-                ],
-                onChanged: (val) {
-                  if (val != null) setState(() => _leaseMonths = val);
-                },
+              ConstrainedBox(
+                // Never wider than the card: the label shrinks/ellipsizes instead of overflowing.
+                constraints: const BoxConstraints(maxWidth: 230),
+                child: DropdownButton<int>(
+                  value: _leaseMonths,
+                  isExpanded: true,
+                  underline: const SizedBox(),
+                  items: const [
+                    DropdownMenuItem(value: 6, child: Text('6 Months', overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(value: 12, child: Text('1 Year (12 Months)', overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(value: 24, child: Text('2 Years (24 Months)', overflow: TextOverflow.ellipsis)),
+                  ],
+                  onChanged: (val) {
+                    if (val != null) setState(() => _leaseMonths = val);
+                  },
+                ),
               ),
             ],
           ),

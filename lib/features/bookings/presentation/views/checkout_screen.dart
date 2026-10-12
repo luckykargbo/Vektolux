@@ -494,15 +494,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
+                      Flexible(child: const Text(
                         'Schedule',
                         style: TextStyle(
                           fontSize: 13,
                           color: AppColors.gray600,
                           fontWeight: FontWeight.w500,
                         ),
-                      ),
-                      Text(
+                      )),
+                      Flexible(child: Text(
                         DateFormat('EEE, MMM d, yyyy')
                             .format(DateTime.fromMillisecondsSinceEpoch(widget.startTime)),
                         style: const TextStyle(
@@ -510,7 +510,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           fontWeight: FontWeight.w700,
                           color: AppColors.obsidian,
                         ),
-                      ),
+                      )),
                     ],
                   ),
                   if (widget.hours != null) ...[
@@ -542,22 +542,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
+                        Flexible(child: const Text(
                           'Rental Period',
                           style: TextStyle(
                             fontSize: 13,
                             color: AppColors.gray600,
                             fontWeight: FontWeight.w500,
                           ),
-                        ),
-                        Text(
+                        )),
+                        Flexible(child: Text(
                           '${widget.days} Days',
                           style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
                             color: AppColors.obsidian,
                           ),
-                        ),
+                        )),
                       ],
                     ),
                   ],
@@ -821,22 +821,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
+                      Flexible(child: const Text(
                         'Subtotal',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
                           color: AppColors.gray600,
                         ),
-                      ),
-                      Text(
+                      )),
+                      Flexible(child: Text(
                         'SLE ${_currencyFormat.format(widget.subtotal)}',
                         style: const TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
                           color: AppColors.obsidian,
                         ),
-                      ),
+                      )),
                     ],
                   ),
                   const SizedBox(height: 8),

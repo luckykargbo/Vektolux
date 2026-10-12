@@ -3,23 +3,63 @@
 // VEKTOLUX — App-Wide Constants
 // ═══════════════════════════════════════════════════════════════════════
 
+/// Compile-time guard: a RELEASE build (`dart.vm.product`) whose `CONVEX_URL` is empty fails to
+/// COMPILE, so it can never be produced, let alone shipped. (Const evaluation cannot inspect the
+/// string any further; the https / `.convex.cloud` shape is enforced by
+/// [ApiConstants.assertConvexUrlConfigured] at startup and by `tool/build_release.sh` before building.)
+class _ReleaseConvexUrlGuard {
+  const _ReleaseConvexUrlGuard(String url)
+      : assert(
+          !const bool.fromEnvironment('dart.vm.product') || url.length > 0,
+          'Release builds require --dart-define=CONVEX_URL=https://<deployment>.convex.cloud',
+        );
+}
+
+// ignore: unused_element
+const _releaseConvexUrlGuard = _ReleaseConvexUrlGuard(
+  String.fromEnvironment('CONVEX_URL', defaultValue: bool.fromEnvironment('dart.vm.product') ? '' : 'dev'),
+);
+
 /// API and backend configuration constants.
 abstract final class ApiConstants {
-  /// Default production Convex deployment URL.
-  /// Override at build time via `--dart-define=CONVEX_URL=https://<your-prod-deployment>.convex.cloud`.
-  static const String defaultProdConvexUrl = 'https://vektolux-prod.convex.cloud';
+  /// Development deployment, used ONLY by debug/profile builds when CONVEX_URL is not supplied.
   static const String defaultDevConvexUrl = 'https://ideal-poodle-813.convex.cloud';
 
-  /// Convex deployment URL. Configurable via `--dart-define=CONVEX_URL=<url>`.
-  /// Automatically defaults to the production backend in release builds (`dart.vm.product`)
-  /// and the development deployment in debug/profile builds.
+  /// Convex deployment URL, supplied at build time: `--dart-define=CONVEX_URL=https://<name>.convex.cloud`.
+  ///
+  /// Release builds (`dart.vm.product`) have NO default: the value must be passed explicitly and
+  /// pass [validateConvexUrl], otherwise the app refuses to start (see [assertConvexUrlConfigured]).
+  /// Debug/profile builds fall back to [defaultDevConvexUrl].
   static const String convexUrl = String.fromEnvironment(
     'CONVEX_URL',
-    defaultValue: bool.fromEnvironment('dart.vm.product')
-        ? defaultProdConvexUrl
-        : defaultDevConvexUrl,
+    defaultValue: bool.fromEnvironment('dart.vm.product') ? '' : defaultDevConvexUrl,
   );
 
+  /// Returns null when [url] is an acceptable Convex deployment URL, else a reason it is not.
+  static String? validateConvexUrl(String url) {
+    if (url.trim().isEmpty) {
+      return 'CONVEX_URL is not set. Release builds must pass --dart-define=CONVEX_URL=https://<deployment>.convex.cloud';
+    }
+    final uri = Uri.tryParse(url.trim());
+    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
+      return 'CONVEX_URL must be an https:// URL.';
+    }
+    if (!uri.host.endsWith('.convex.cloud') || uri.host == '.convex.cloud') {
+      return 'CONVEX_URL must be a <deployment>.convex.cloud host.';
+    }
+    if ((uri.path.isNotEmpty && uri.path != '/') || uri.hasQuery || uri.hasFragment) {
+      return 'CONVEX_URL must be the bare deployment origin (no path, query or fragment).';
+    }
+    return null;
+  }
+
+  /// Throws if the compiled-in [convexUrl] is missing or malformed. Call once at startup, before
+  /// any network client is created, so a misconfigured release build fails loudly instead of
+  /// talking to an unknown backend.
+  static void assertConvexUrlConfigured({String url = convexUrl}) {
+    final problem = validateConvexUrl(url);
+    if (problem != null) throw StateError(problem);
+  }
 
   // (No Paystack/Flutterwave: payments go through Monime / the Vektolux wallet on the server.)
 
@@ -29,6 +69,19 @@ abstract final class ApiConstants {
 
   /// HTTP timeout.
   static const Duration httpTimeout = Duration(seconds: 30);
+}
+
+/// The app's own version, injected by the Flutter tool at build time from pubspec.yaml
+/// (`FLUTTER_BUILD_NAME` / `FLUTTER_BUILD_NUMBER`), so the label can never drift from the build.
+abstract final class AppInfo {
+  static const String buildName = String.fromEnvironment('FLUTTER_BUILD_NAME');
+  static const String buildNumber = String.fromEnvironment('FLUTTER_BUILD_NUMBER');
+
+  /// e.g. "v1.0.31 (Build 32)"; "unknown" only when run outside a Flutter build (tests, tooling).
+  static String get versionLabel {
+    if (buildName.isEmpty) return 'unknown';
+    return buildNumber.isEmpty ? 'v$buildName' : 'v$buildName (Build $buildNumber)';
+  }
 }
 
 /// UI layout constants.

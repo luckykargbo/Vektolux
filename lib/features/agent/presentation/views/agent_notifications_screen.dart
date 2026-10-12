@@ -130,7 +130,7 @@ class _AgentNotificationsScreenState extends State<AgentNotificationsScreen> {
                   ],
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: AgentTokens.gutter),

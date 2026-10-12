@@ -1463,7 +1463,11 @@ class _AgentVerificationScreenState extends State<AgentVerificationScreen> {
     final isActive = _currentStep == stepIndex;
     final isDone = _currentStep > stepIndex;
 
-    return Column(
+    return ConstrainedBox(
+      // Four labelled steps share one row: each is capped so they always fit a 320pt phone, and the
+      // label scales down (never overflows) when the user's text size is large.
+      constraints: const BoxConstraints(maxWidth: 62),
+      child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
@@ -1489,16 +1493,20 @@ class _AgentVerificationScreenState extends State<AgentVerificationScreen> {
           ),
         ),
         const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-            color: isActive ? AppColors.obsidian : AppColors.textSecondary,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            label,
+            maxLines: 1,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+              color: isActive ? AppColors.obsidian : AppColors.textSecondary,
+            ),
           ),
         ),
       ],
-    );
+    ));
   }
 
   Widget _buildStepLine(int afterStep) {

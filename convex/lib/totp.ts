@@ -136,11 +136,27 @@ function constantTimeCompare(a: string, b: string): boolean {
 
 // ─── AES-256-GCM Secret Encryption at Rest ───────────────────────────
 
+/** Minimum length of TOTP_ENCRYPTION_KEY. It is hashed with SHA-256, so it must carry real entropy. */
+export const MIN_TOTP_ENCRYPTION_KEY_LENGTH = 32;
+/** The key that older builds silently fell back to. It is public (in git), so it is refused outright. */
+const REVOKED_DEFAULT_KEY = "vektolux-totp-default-secure-rest-key-2026";
+
+/**
+ * The AES key for TOTP secrets. Fails CLOSED: there is no development or production fallback.
+ * A correctly configured key derives the same AES key as before (SHA-256 of the configured value),
+ * so secrets encrypted under it keep decrypting. No key is ever rotated or rewritten here.
+ */
 async function getEncryptionKey(): Promise<CryptoKey> {
-  const rawKey = (process.env.TOTP_ENCRYPTION_KEY || "").trim();
-  // Derive 256-bit key using SHA-256 of TOTP_ENCRYPTION_KEY or a hard deployment seed
-  const seed = rawKey || "vektolux-totp-default-secure-rest-key-2026";
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(seed));
+  const rawKey = (process.env.TOTP_ENCRYPTION_KEY ?? "").trim();
+  if (!rawKey) {
+    throw new Error("TOTP_ENCRYPTION_KEY is not configured; two-factor secrets cannot be encrypted or decrypted.");
+  }
+  if (rawKey === REVOKED_DEFAULT_KEY || rawKey.length < MIN_TOTP_ENCRYPTION_KEY_LENGTH) {
+    throw new Error(
+      `TOTP_ENCRYPTION_KEY is invalid: it must be a unique secret of at least ${MIN_TOTP_ENCRYPTION_KEY_LENGTH} characters.`
+    );
+  }
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawKey));
 
   return crypto.subtle.importKey(
     "raw",

@@ -3,6 +3,7 @@
 // VEKTOLUX — Transactional Email & OTP Dispatch Service (Resend)
 // ═══════════════════════════════════════════════════════════════════════
 
+import { safeDisplayNameForHtml } from "./lib/html";
 import { internalAction } from "./_generated/server";
 import { v } from "convex/values";
 
@@ -13,6 +14,11 @@ export const sendOtpEmail = internalAction({
     recipientName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // The code is interpolated into the subject and body: only a plain numeric code is ever allowed.
+    if (!/^\d{4,10}$/.test(args.otpCode)) {
+      console.error("[Vektolux Mailer] Refusing to send: malformed code");
+      return { success: false, error: "INVALID_CODE" };
+    }
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {
       console.warn("[Vektolux Mailer] RESEND_API_KEY is not configured. Email skipped.");
@@ -40,7 +46,7 @@ export const sendOtpEmail = internalAction({
                 <p style="color: #10B981; font-size: 11px; font-weight: 700; margin-top: 4px; text-transform: uppercase; letter-spacing: 1.5px;">Escrow & Mobility Security</p>
               </div>
               <p style="color: #334155; font-size: 15px; line-height: 1.6; margin-bottom: 12px;">
-                Hello${args.recipientName ? ` <strong>${args.recipientName}</strong>` : ""},
+                Hello${args.recipientName ? ` <strong>${safeDisplayNameForHtml(args.recipientName)}</strong>` : ""},
               </p>
               <p style="color: #334155; font-size: 15px; line-height: 1.6; margin-bottom: 24px;">
                 You requested a verification code to access your Vektolux account. Please enter the 6-digit code below:

@@ -224,11 +224,11 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     if (isVerifiedSeller)
-                      _buildStatColumn(_posts.length.toString(), 'Listings')
+                      Flexible(child: _buildStatColumn(_posts.length.toString(), 'Listings'))
                     else
-                      _buildStatColumn('Client', 'Tier'),
-                    _buildStatColumn(_formatCount(followersCount), 'Followers'),
-                    _buildStatColumn(_formatCount(followingCount), 'Following'),
+                      Flexible(child: _buildStatColumn('Client', 'Tier')),
+                    Flexible(child: _buildStatColumn(_formatCount(followersCount), 'Followers')),
+                    Flexible(child: _buildStatColumn(_formatCount(followingCount), 'Following')),
                   ],
                 ),
               ),
@@ -366,7 +366,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     children: [
                       const Icon(Icons.apartment_rounded, size: 18),
                       const SizedBox(width: 6),
-                      Text('Properties (${propertyPosts.length})'),
+                      Flexible(child: Text('Properties (${propertyPosts.length})')),
                     ],
                   ),
                 ),
@@ -376,7 +376,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     children: [
                       const Icon(Icons.directions_car_rounded, size: 18),
                       const SizedBox(width: 6),
-                      Text('Vehicles (${vehiclePosts.length})'),
+                      Flexible(child: Text('Vehicles (${vehiclePosts.length})')),
                     ],
                   ),
                 ),

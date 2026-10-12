@@ -80,8 +80,17 @@ async function pendingSale(t: T, buyer: U, owner: U) {
   expect(order.status).toBe("PENDING_PAYMENT");
   return order as { _id: Id<"escrow_orders">; grossEscrowAmount: number };
 }
+// The starter rows are created DISABLED and without account details; the administrator fills in the real
+// details and enables them. This helper plays that administrator (with obviously fake test values).
 async function seedProviders(t: T, admin: U) {
   await t.mutation(api.payments.seedDefaultPaymentMethods, { sessionToken: admin.token });
+  const rows: any[] = await t.run(async (ctx) => ctx.db.query("payment_settings").collect());
+  for (const r of rows) {
+    expect(r.isEnabled).toBe(false); // never enabled by the seed
+    await t.mutation(api.payments.updatePaymentMethod, {
+      sessionToken: admin.token, settingsId: r._id, isEnabled: true, accountNumber: "TEST-ACCOUNT", accountName: "Test Escrow",
+    });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -162,9 +171,62 @@ describe("payment claims never fake an escrow", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+const BANK_ENV = {
+  ESCROW_BANK_NAME: "Test Bank Ltd",
+  ESCROW_BANK_ACCOUNT_NAME: "Vektolux Test Escrow",
+  ESCROW_BANK_ACCOUNT_NUMBER: "000111222333",
+};
+const withBankEnv = async (fn: () => Promise<void>) => {
+  const saved: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(BANK_ENV)) { saved[k] = process.env[k]; process.env[k] = v; }
+  try { await fn(); } finally {
+    for (const k of Object.keys(BANK_ENV)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
+};
+
+describe("bank escrow account details come only from owner-set configuration", () => {
+  test("with nothing configured: details are 'not available', and no reference is created or order touched", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await makeUser(t, "owner");
+    const client = await makeUser(t, "client");
+    const c: any = await t.mutation(api.realEstateEscrow.initiateRealEstateEscrow, {
+      sessionToken: client.token, contractType: "LAND_PURCHASE_MILESTONE", propertyListingId: await property(t, owner.id, "sale", 50_000), paymentRail: "BANK_TRANSFER",
+    } as any);
+    const before: any = await t.run(async (ctx) => ctx.db.get(c.contractId));
+    const details: any = await t.query(api.payments.getEscrowBankClearingDetails, {});
+    expect(details.available).toBe(false);
+    expect(JSON.stringify(details)).not.toMatch(/\d{8,}/); // no account number of any kind
+    await expect(
+      t.mutation(api.payments.generateBankEscrowReference, { sessionToken: client.token, orderType: "REAL_ESTATE", orderId: c.contractId })
+    ).rejects.toThrow(/not available/i);
+    const after: any = await t.run(async (ctx) => ctx.db.get(c.contractId));
+    expect(after.bankEscrowReference).toBe(before.bankEscrowReference); // untouched by the refused call
+  });
+
+  test("an incomplete configuration is treated as not configured", async () => {
+    const t = convexTest(schema, modules);
+    process.env.ESCROW_BANK_NAME = "Only A Name";
+    try {
+      expect(((await t.query(api.payments.getEscrowBankClearingDetails, {})) as any).available).toBe(false);
+    } finally { delete process.env.ESCROW_BANK_NAME; }
+  });
+
+  test("configured: details are exactly what the owner set (nothing from source code)", async () => {
+    const t = convexTest(schema, modules);
+    await withBankEnv(async () => {
+      const d: any = await t.query(api.payments.getEscrowBankClearingDetails, { reference: "R-1" });
+      expect(d.available).toBe(true);
+      expect(d.accountNumber).toBe("000111222333");
+      expect(d.bankName).toBe("Test Bank Ltd");
+      expect(d.paymentReference).toBe("R-1");
+    });
+  });
+});
+
 describe("bank escrow references", () => {
   test("only the contract's own client can create one, and the amount is the contract's", async () => {
     const t = convexTest(schema, modules);
+    await withBankEnv(async () => {
     const owner = await makeUser(t, "owner");
     const client = await makeUser(t, "client");
     const attacker = await makeUser(t, "attacker");
@@ -176,6 +238,7 @@ describe("bank escrow references", () => {
     ).rejects.toThrow(/not found/i);
     const r: any = await t.mutation(api.payments.generateBankEscrowReference, { sessionToken: client.token, orderType: "REAL_ESTATE", orderId: c.contractId, amount: 1 });
     expect(r.bankDetails.amount).toBe(c.grossEscrowAmount);
+    });
   });
 });
 

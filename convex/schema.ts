@@ -396,14 +396,25 @@ export default defineSchema({
     totpSecretEncrypted: v.optional(v.string()),
     totpPendingSecretEncrypted: v.optional(v.string()),
     totpBackupCodesHashed: v.optional(v.array(v.string())),
+    // Server-generated backup codes (hashed) staged with the pending secret; promoted by enableTotp.
+    totpPendingBackupCodesHashed: v.optional(v.array(v.string())),
+    // Phone ownership proof. Set ONLY by internal.users.markPhoneVerified once the owner has actually
+    // demonstrated control of that number. Carrier deposits are matched to an account ONLY through a
+    // verified number: an unverified `phone` is a claim, never proof, and is never used to move money.
+    phoneVerifiedAt: v.optional(v.number()),
+    phoneVerifiedNumber: v.optional(v.string()),
     // Set ONLY when ownership of `email` was proven: a code delivered to it (registration verification
     // or password reset) or a provider-verified email (Google / Apple). Unset = not verified.
     emailVerifiedAt: v.optional(v.number()),
     // Account deletion requested by the owner (users.requestAccountDeletion). The account is
     // signed out and kept for a 30-day recovery window; signing in again cancels the request.
-    // Nothing purges automatically: the final erasure is a separate, retention-aware step.
+    // The final, retention-aware erasure is internal.accountDeletion.processDueDeletions (not scheduled
+    // by any cron until the owner enables it).
     deletionRequestedAt: v.optional(v.number()),
     deletionScheduledFor: v.optional(v.number()),
+    // Set by internal.accountDeletion.processDueDeletions once personal data has been erased /
+    // anonymised. Ledger, escrow, dispute and audit records keep pointing at this (now anonymous) row.
+    anonymizedAt: v.optional(v.number()),
 
     // Geolocation (for drivers)
     currentLat: v.optional(v.number()),
@@ -486,10 +497,22 @@ export default defineSchema({
     .index("by_role_verification", ["role", "verificationStatus"])
     .index("by_account_verification", ["accountType", "verificationStatus"])
     .index("by_sessionToken", ["sessionToken"])
+    .index("by_deletion_scheduled", ["deletionScheduledFor"])
     .searchIndex("search_name", {
       searchField: "name",
       filterFields: ["role", "isActive"],
     }),
+
+  // ─── ACCOUNT DELETION AUDIT (written by accountDeletion.processDueDeletions) ─
+  // One row per completed erasure. Holds no personal data: only the (now anonymous) user id,
+  // when it happened and how many rows of each kind were removed.
+  account_deletion_events: defineTable({
+    userId: v.id("users"),
+    processedAt: v.number(),
+    requestedAt: v.optional(v.number()),
+    scheduledFor: v.number(),
+    erasedCounts: v.string(), // JSON: { auth_identities: n, user_fcm_tokens: n, ... }
+  }).index("by_userId", ["userId"]),
 
   // ─── SAVED LISTINGS (the heart button; one row per account + listing) ─
   saved_listings: defineTable({
@@ -1108,6 +1131,24 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_nonceHash", ["nonceHash"])
+    .index("by_expiresAt", ["expiresAt"]),
+
+  // ─── SOCIAL SIGN-IN SECOND-FACTOR CHALLENGES (short-lived, single use) ─────
+  // Created when a verified Google/Apple identity belongs to an account with 2FA enabled. Holds no
+  // session: users.completeSocialMfa trades it plus a valid code for one. Only a hash of the token is stored.
+  mfa_challenges: defineTable({
+    tokenHash: v.string(), // SHA-256 of the raw challenge token
+    userId: v.id("users"),
+    provider: v.string(),
+    sub: v.string(),
+    emailProved: v.boolean(),
+    avatarUrl: v.optional(v.string()),
+    attempts: v.number(),
+    usedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_tokenHash", ["tokenHash"])
     .index("by_expiresAt", ["expiresAt"]),
 
   // ─── PROVIDER ID TOKENS ALREADY ACCEPTED (replay protection) ────

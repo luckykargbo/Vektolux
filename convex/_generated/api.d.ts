@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as accountDeletion from "../accountDeletion.js";
 import type * as admin from "../admin.js";
 import type * as adminFinance from "../adminFinance.js";
 import type * as adminPortal from "../adminPortal.js";
@@ -35,6 +36,7 @@ import type * as lib_hotelAccess from "../lib/hotelAccess.js";
 import type * as lib_legacyRoles from "../lib/legacyRoles.js";
 import type * as lib_monimeWebhook from "../lib/monimeWebhook.js";
 import type * as lib_oauth from "../lib/oauth.js";
+import type * as lib_oauthState from "../lib/oauthState.js";
 import type * as lib_paymentErrors from "../lib/paymentErrors.js";
 import type * as lib_permissions from "../lib/permissions.js";
 import type * as lib_pin from "../lib/pin.js";
@@ -42,6 +44,8 @@ import type * as lib_publicListing from "../lib/publicListing.js";
 import type * as lib_rateLimit from "../lib/rateLimit.js";
 import type * as lib_session from "../lib/session.js";
 import type * as lib_slLocations from "../lib/slLocations.js";
+import type * as lib_totp from "../lib/totp.js";
+import type * as lib_totpFactor from "../lib/totpFactor.js";
 import type * as lib_uploads from "../lib/uploads.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as listingAgents from "../listingAgents.js";
@@ -77,6 +81,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  accountDeletion: typeof accountDeletion;
   admin: typeof admin;
   adminFinance: typeof adminFinance;
   adminPortal: typeof adminPortal;
@@ -104,6 +109,7 @@ declare const fullApi: ApiFromModules<{
   "lib/legacyRoles": typeof lib_legacyRoles;
   "lib/monimeWebhook": typeof lib_monimeWebhook;
   "lib/oauth": typeof lib_oauth;
+  "lib/oauthState": typeof lib_oauthState;
   "lib/paymentErrors": typeof lib_paymentErrors;
   "lib/permissions": typeof lib_permissions;
   "lib/pin": typeof lib_pin;
@@ -111,6 +117,8 @@ declare const fullApi: ApiFromModules<{
   "lib/rateLimit": typeof lib_rateLimit;
   "lib/session": typeof lib_session;
   "lib/slLocations": typeof lib_slLocations;
+  "lib/totp": typeof lib_totp;
+  "lib/totpFactor": typeof lib_totpFactor;
   "lib/uploads": typeof lib_uploads;
   "lib/validation": typeof lib_validation;
   listingAgents: typeof listingAgents;

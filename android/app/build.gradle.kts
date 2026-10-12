@@ -14,6 +14,24 @@ if (hasReleaseKey) {
     keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
 
+// A release artifact is NEVER silently signed with the debug key. Without android/key.properties a
+// release build fails, unless the caller opts in explicitly with -PvektoluxAllowDebugSigning=true
+// (local smoke builds only: such an artifact must not be distributed).
+val allowDebugSigning = (project.findProperty("vektoluxAllowDebugSigning") as String?) == "true"
+gradle.taskGraph.whenReady {
+    val releaseArtifactRequested = allTasks.any {
+        val n = it.name
+        n.endsWith("Release") && (n.startsWith("assemble") || n.startsWith("bundle") || n.startsWith("package"))
+    }
+    if (releaseArtifactRequested && !hasReleaseKey && !allowDebugSigning) {
+        throw GradleException(
+            "Release signing is not configured: android/key.properties is missing. Create it from the " +
+                "owner's keystore (see README), or pass -PvektoluxAllowDebugSigning=true for a local, " +
+                "non-distributable build."
+        )
+    }
+}
+
 android {
     namespace = "com.vektolux.app"
     compileSdk = 36
@@ -47,12 +65,12 @@ android {
 
     buildTypes {
         release {
-            // Production key when key.properties exists. Otherwise (e.g. CI without secrets) the build
-            // falls back to the DEBUG key so it still compiles; such an APK must NOT be published.
+            // Production key when key.properties exists. The debug key is reachable ONLY through the
+            // explicit -PvektoluxAllowDebugSigning=true opt-in (see the task-graph check above).
             signingConfig = if (hasReleaseKey) {
                 signingConfigs.getByName("release")
             } else {
-                logger.warn("WARNING: android/key.properties not found - release build is signed with the DEBUG key.")
+                logger.warn("WARNING: release build signed with the DEBUG key (explicit opt-in). Do not distribute.")
                 signingConfigs.getByName("debug")
             }
             isMinifyEnabled = false

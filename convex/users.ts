@@ -8,12 +8,13 @@ import { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { verifyAppleIdToken, verifyGoogleIdToken } from "./lib/oauth";
 import { issueSession } from "./lib/session";
+import { verifySecondFactor } from "./lib/totpFactor";
 import { verifyAndTrackPin } from "./lib/pin";
 import { v } from "convex/values";
 import { userRole } from "./schema";
 import { findUserByIdentifier, verifyPassword } from "./auth";
 import { consume } from "./lib/rateLimit";
-import { consumeChallenge, issueChallenge, recordTokenUse, sha256Hex, tokenAlreadyUsed } from "./lib/oauthState";
+import { consumeChallenge, issueChallenge, randomHex, recordTokenUse, sha256Hex, tokenAlreadyUsed } from "./lib/oauthState";
 import { hasCarDealerCapability, isRoleApproved, professionalBadge, professionalTitle, roleForApplication } from "./lib/permissions";
 import { requireAuthenticatedUser, requireAdmin, requireSelf, resolveOptionalUser } from "./lib/auth";
 import { isListingPublic, toPublicProperty, toPublicVehicle } from "./lib/publicListing";
@@ -812,14 +813,6 @@ export const approveSellerVerification = mutation({
   },
 });
 
-async function generateDeterministicHash(payload: string): Promise<string> {
-  const enc = new TextEncoder();
-  const data = enc.encode(payload);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 /**
  * Verify Transaction PIN or Account Password for payment authorization.
  */
@@ -838,23 +831,16 @@ export const verifyTransactionPin = query({
     const user = await ctx.db.get(userId);
     if (!user) return { valid: false, message: "User not found", hasPin: false };
 
+    // Not an oracle (see verifyWalletPin): validity is decided, with lockout, by the spending mutation.
     const pinStr = args.pin.trim();
     if (!pinStr) return { valid: false, message: "PIN / Password cannot be empty", hasPin: Boolean(user.walletPinHash) };
-
-    // 1. Check wallet security PIN
-    if (user.walletPinHash) {
-      const testPinHash = await generateDeterministicHash(`wallet_pin_${userId}_${pinStr}`);
-      if (testPinHash === user.walletPinHash) {
-        return { valid: true, hasPin: true };
-      }
-    }
-
-    // 2. Check account password as authorization fallback
-    if (user.passwordHash) {
-      const isPasswordValid = await verifyPassword(pinStr, user.passwordHash);
-      if (isPasswordValid) {
-        return { valid: true, hasPin: Boolean(user.walletPinHash) };
-      }
+    if (user.walletPinHash || user.passwordHash) {
+      return {
+        valid: true,
+        hasPin: Boolean(user.walletPinHash),
+        deferred: true,
+        message: "Your PIN is checked when the payment is submitted.",
+      };
     }
 
     // 3. Fallback: if user has neither wallet PIN nor password configured yet
@@ -873,6 +859,30 @@ export const verifyTransactionPin = query({
         : "Incorrect account password.",
       hasPin: Boolean(user.walletPinHash),
     };
+  },
+});
+
+/**
+ * INTERNAL: records that the owner of `userId` has demonstrated control of `phone` (e.g. an SMS/USSD
+ * one-time code or an in-person check by the owner). Nothing in the app calls this yet: no
+ * phone-ownership flow exists, so carrier deposits stay HELD until one is built and approved.
+ * It refuses a number that another account already holds verified, so one number can never be
+ * verified for two accounts.
+ */
+export const markPhoneVerified = internalMutation({
+  args: { userId: v.id("users"), phone: v.string(), method: v.string() },
+  returns: v.object({ success: v.boolean(), reason: v.optional(v.string()) }),
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user || user.isActive === false) return { success: false, reason: "NO_ACTIVE_ACCOUNT" };
+    const phone = args.phone.trim();
+    if (!/^\+?\d{8,15}$/.test(phone)) return { success: false, reason: "INVALID_PHONE" };
+    const holders = await ctx.db.query("users").withIndex("by_phone", (q) => q.eq("phone", phone)).take(10);
+    if (holders.some((h) => h._id !== user._id && h.phoneVerifiedNumber === phone)) {
+      return { success: false, reason: "PHONE_ALREADY_VERIFIED_ELSEWHERE" };
+    }
+    await ctx.db.patch(user._id, { phone, phoneVerifiedAt: Date.now(), phoneVerifiedNumber: phone, updatedAt: Date.now() });
+    return { success: true };
   },
 });
 
@@ -982,7 +992,15 @@ const socialSuccess = v.object({
 });
 // Returned (not thrown) when the identity may not be used to sign in. No session is issued and
 // nothing about the existing account is changed.
-const socialBlocked = v.object({ blocked: v.literal(true), code: v.string(), message: v.string() });
+const socialBlocked = v.object({
+  blocked: v.literal(true),
+  code: v.string(),
+  message: v.string(),
+  // Only with code "MFA_REQUIRED": a short-lived, single-use challenge. It is NOT a session and
+  // grants nothing except the right to call users.completeSocialMfa with a valid second factor.
+  mfaChallengeToken: v.optional(v.string()),
+  mfaExpiresAt: v.optional(v.number()),
+});
 
 const oauthProvider = v.union(v.literal("google"), v.literal("apple"));
 const providerLabel = (p: string) => (p === "apple" ? "Apple" : "Google");
@@ -1024,11 +1042,141 @@ export const createOAuthChallenge = mutation({
   args: { provider: oauthProvider },
   returns: v.object({ nonce: v.string(), nonceHash: v.string(), expiresAt: v.number() }),
   handler: async (ctx, args) => {
-    // The caller is not signed in yet, so this is bounded globally to keep the table from being flooded.
-    if (!(await consume(ctx, "oauth-challenge:global", { max: 600, windowMs: 60_000 }))) {
+    // The caller is not signed in yet, so issuance is bounded to keep the table from being flooded.
+    // Bounded PER ADDRESS (platform-observed): one abuser exhausts only their own budget and never
+    // blocks other people's Apple sign-in. With no observable address the budget is spread over a
+    // fixed number of shards so no single counter row becomes a write-contention hotspot.
+    const ip = (await ctx.meta.getRequestMetadata()).ip;
+    const allowed = ip
+      ? await consume(ctx, `oauth-challenge:ip:${ip.toLowerCase()}`, { max: 30, windowMs: 60_000 })
+      : await consume(ctx, `oauth-challenge:shard:${Math.floor(Math.random() * 16)}`, { max: 100, windowMs: 60_000 });
+    if (!allowed) {
       throw new Error("Too many sign-in attempts right now. Please try again in a moment.");
     }
     return await issueChallenge(ctx, args.provider);
+  },
+});
+
+const MFA_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const MFA_CHALLENGE_MAX_ATTEMPTS = 5;
+
+async function purgeExpiredMfaChallenges(ctx: MutationCtx, now: number): Promise<void> {
+  const rows = await ctx.db.query("mfa_challenges").withIndex("by_expiresAt", (q) => q.lt("expiresAt", now)).take(25);
+  for (const r of rows) await ctx.db.delete(r._id);
+}
+
+/** Issues the session for an already-linked, already-verified (and, if required, 2FA-verified) account. */
+async function signInLinkedAccount(
+  ctx: MutationCtx,
+  existing: Doc<"users">,
+  a: { provider: string; sub: string; verifiedEmail?: string; proves: boolean; avatarUrl?: string; now: number }
+) {
+  const { now, proves } = a;
+  // Role-based lifetime: a linked administrator gets the 8 hour admin session, never 30 days.
+  const { sessionToken, sessionExpiresAt } = issueSession(now, existing.role === "admin");
+  const hasPhone = !!(
+    (existing.phoneNumber && existing.phoneNumber.trim().length > 0) ||
+    (existing.phone && existing.phone.trim().length > 0)
+  );
+  await ctx.db.patch(existing._id, {
+    sessionToken,
+    sessionExpiresAt,
+    lastLoginAt: now,
+    updatedAt: now,
+    ...(a.avatarUrl && !existing.avatarUrl ? { avatarUrl: a.avatarUrl } : {}),
+    // The provider just proved control of this very address: that is proof of ownership.
+    ...(proves && !existing.emailVerifiedAt ? { emailVerifiedAt: now } : {}),
+    // Signing in within the 30-day window cancels a pending account deletion.
+    deletionRequestedAt: undefined,
+    deletionScheduledFor: undefined,
+  });
+  // Accounts linked before auth_identities existed get their identity row on first use.
+  const hasRow = await ctx.db
+    .query("auth_identities")
+    .withIndex("by_provider_subject", (q) => q.eq("provider", a.provider).eq("subject", a.sub))
+    .first();
+  if (!hasRow) {
+    await ctx.db.insert("auth_identities", {
+      userId: existing._id, provider: a.provider, subject: a.sub, email: a.verifiedEmail, linkedAt: now,
+    });
+  }
+  return {
+    userId: existing._id as string,
+    hasPhone,
+    sessionToken,
+    emailVerified: !!(existing.emailVerifiedAt || proves),
+    user: {
+      id: existing._id as string,
+      name: existing.name,
+      email: existing.email,
+      phone: existing.phone ?? "",
+      phoneNumber: existing.phoneNumber,
+      role: existing.role,
+      isVerified: existing.isVerified,
+      avatarUrl: existing.avatarUrl,
+      walletAddress: existing.walletAddress,
+    },
+  };
+}
+
+/**
+ * Step 2 of a social sign-in for an account with 2FA enabled: trades the challenge from
+ * socialSignIn plus a valid authenticator / backup code for the session.
+ *
+ * The challenge is single use, expires after 5 minutes, is bound to the account and provider
+ * identity that earned it, and is burned after 5 wrong codes. Wrong codes are RETURNED (not thrown)
+ * so the attempt counters persist, and they also feed the account-wide 2FA lockout shared with
+ * password login. Every refusal looks the same to the caller.
+ */
+export const completeSocialMfa = mutation({
+  args: { challengeToken: v.string(), totpCode: v.string() },
+  returns: v.union(socialSuccess, socialBlocked),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const refuse = (code: string, message: string) => ({ blocked: true as const, code, message });
+    const INVALID = refuse("MFA_CHALLENGE_INVALID", "This sign-in has expired. Please start again.");
+
+    if (!/^[0-9a-f]{64}$/.test(args.challengeToken)) return INVALID;
+    const tokenHash = await sha256Hex(args.challengeToken);
+    const row = await ctx.db.query("mfa_challenges").withIndex("by_tokenHash", (q) => q.eq("tokenHash", tokenHash)).first();
+    if (!row || row.usedAt !== undefined || row.expiresAt <= now) return INVALID;
+
+    const user = await ctx.db.get(row.userId);
+    if (!user || user.isActive === false || !user.totpEnabled) {
+      await ctx.db.patch(row._id, { usedAt: now });
+      return INVALID;
+    }
+
+    const factor = await verifySecondFactor(ctx, user, args.totpCode, now);
+    if (!factor.ok) {
+      const attempts = row.attempts + 1;
+      await ctx.db.patch(row._id, {
+        attempts,
+        ...(attempts >= MFA_CHALLENGE_MAX_ATTEMPTS || factor.lockedMs > 0 ? { usedAt: now } : {}),
+      });
+      return factor.lockedMs > 0
+        ? refuse("MFA_LOCKED", `Too many failed 2FA attempts. Please try again in ${Math.max(1, Math.ceil(factor.lockedMs / 60000))} minute(s).`)
+        : refuse("MFA_INVALID", "Invalid two-factor authentication code.");
+    }
+
+    await ctx.db.patch(row._id, { usedAt: now });
+    return await signInLinkedAccount(ctx, user, {
+      provider: row.provider, sub: row.sub, verifiedEmail: undefined, proves: row.emailProved, avatarUrl: row.avatarUrl, now,
+    });
+  },
+});
+
+/** The user backed out of the second-factor step: the challenge is burned. Never reveals whether it existed. */
+export const cancelSocialMfa = mutation({
+  args: { challengeToken: v.string() },
+  returns: v.object({ success: v.boolean() }),
+  handler: async (ctx, args) => {
+    if (/^[0-9a-f]{64}$/.test(args.challengeToken)) {
+      const tokenHash = await sha256Hex(args.challengeToken);
+      const row = await ctx.db.query("mfa_challenges").withIndex("by_tokenHash", (q) => q.eq("tokenHash", tokenHash)).first();
+      if (row && row.usedAt === undefined) await ctx.db.patch(row._id, { usedAt: Date.now() });
+    }
+    return { success: true };
   },
 });
 
@@ -1061,53 +1209,41 @@ export const completeSocialSignIn = internalMutation({
     const existing = await findAccountForIdentity(ctx, args.provider, args.sub);
     if (existing) {
       if (existing.isActive === false) throw new Error("Account has been deactivated. Please contact support.");
-      // Role-based lifetime: a linked administrator gets the 8 hour admin session, never 30 days.
-      const { sessionToken, sessionExpiresAt } = issueSession(now, existing.role === "admin");
-      const hasPhone = !!(
-        (existing.phoneNumber && existing.phoneNumber.trim().length > 0) ||
-        (existing.phone && existing.phone.trim().length > 0)
-      );
-      // The provider just proved control of this very address: that is proof of ownership.
       const proves = !!verifiedEmail && verifiedEmail === existing.email?.trim().toLowerCase();
-      await ctx.db.patch(existing._id, {
-        sessionToken,
-        sessionExpiresAt,
-        lastLoginAt: now,
-        updatedAt: now,
-        ...(args.avatarUrl && !existing.avatarUrl ? { avatarUrl: args.avatarUrl } : {}),
-        ...(proves && !existing.emailVerifiedAt ? { emailVerifiedAt: now } : {}),
-        // Signing in within the 30-day window cancels a pending account deletion.
-        deletionRequestedAt: undefined,
-        deletionScheduledFor: undefined,
-      });
-      // Accounts linked before auth_identities existed get their identity row on first use.
-      const hasRow = await ctx.db
-        .query("auth_identities")
-        .withIndex("by_provider_subject", (q) => q.eq("provider", args.provider).eq("subject", args.sub))
-        .first();
-      if (!hasRow) {
-        await ctx.db.insert("auth_identities", {
-          userId: existing._id, provider: args.provider, subject: args.sub, email: verifiedEmail, linkedAt: now,
+
+      // Second factor: an account with 2FA enabled NEVER gets a session from a provider token alone,
+      // not even a short one. The verified identity is parked behind a short-lived, single-use
+      // challenge; the provider token is consumed now (so it can never be replayed) and the nonce was
+      // consumed by the gates above. A session exists only after users.completeSocialMfa succeeds.
+      if (existing.totpEnabled) {
+        await recordTokenUse(ctx, args.provider, args.tokenHash, args.tokenExpiresAt, now);
+        const challengeToken = randomHex(32);
+        const expiresAt = now + MFA_CHALLENGE_TTL_MS;
+        await ctx.db.insert("mfa_challenges", {
+          tokenHash: await sha256Hex(challengeToken),
+          userId: existing._id,
+          provider: args.provider,
+          sub: args.sub,
+          emailProved: proves,
+          avatarUrl: args.avatarUrl,
+          attempts: 0,
+          createdAt: now,
+          expiresAt,
         });
+        await purgeExpiredMfaChallenges(ctx, now);
+        return {
+          blocked: true as const,
+          code: "MFA_REQUIRED",
+          message: "Two-factor authentication code required.",
+          mfaChallengeToken: challengeToken,
+          mfaExpiresAt: expiresAt,
+        };
       }
+
       await recordTokenUse(ctx, args.provider, args.tokenHash, args.tokenExpiresAt, now);
-      return {
-        userId: existing._id as string,
-        hasPhone,
-        sessionToken,
-        emailVerified: !!(existing.emailVerifiedAt || proves),
-        user: {
-          id: existing._id as string,
-          name: existing.name,
-          email: existing.email,
-          phone: existing.phone ?? "",
-          phoneNumber: existing.phoneNumber,
-          role: existing.role,
-          isVerified: existing.isVerified,
-          avatarUrl: existing.avatarUrl,
-          walletAddress: existing.walletAddress,
-        },
-      };
+      return await signInLinkedAccount(ctx, existing, {
+        provider: args.provider, sub: args.sub, verifiedEmail, proves, avatarUrl: args.avatarUrl, now,
+      });
     }
 
     // 2. Not linked, but the verified email belongs to an existing account: REFUSE. No session, no

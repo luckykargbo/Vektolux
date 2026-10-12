@@ -10,21 +10,14 @@
 
 import { Doc } from "../_generated/dataModel";
 import { verifyPassword } from "../auth";
+import { hashPin, verifyPinHash } from "./pinHash";
 
 export const PIN_MAX_ATTEMPTS = 5;
 export const PIN_LOCK_MS = 15 * 60 * 1000;
 
-async function sha256Hex(payload: string): Promise<string> {
-  const data = new TextEncoder().encode(payload);
-  const buf = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-/** Hash exactly as `payments.setWalletPin` stores it ("0x" + sha256 hex). */
+/** Creates a stored PIN hash (v2: salted PBKDF2). Kept under its old name for existing callers. */
 export async function hashWalletPin(userId: string, pin: string): Promise<string> {
-  return "0x" + (await sha256Hex(`wallet_pin_${userId}_${pin}`));
+  return await hashPin(userId, pin);
 }
 
 export type PinCheck =
@@ -66,7 +59,12 @@ export async function verifyAndTrackPin(
 
   let valid = false;
   if (user.walletPinHash) {
-    valid = (await hashWalletPin(user._id, pinStr)) === user.walletPinHash;
+    const check = await verifyPinHash(user._id, pinStr, user.walletPinHash);
+    valid = check.valid;
+    // Legacy (unsalted SHA-256) hashes are replaced the moment the right PIN is presented.
+    if (valid && check.needsUpgrade) {
+      await ctx.db.patch(user._id, { walletPinHash: await hashPin(user._id, pinStr) });
+    }
   }
   if (!valid && user.passwordHash) {
     valid = await verifyPassword(pinStr, user.passwordHash);

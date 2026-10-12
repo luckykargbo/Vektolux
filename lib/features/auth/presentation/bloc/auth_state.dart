@@ -15,6 +15,9 @@ enum AuthStatus {
   registering,
   loggingIn,
   linkingPhone,
+
+  /// The account needs its second factor. No session exists yet; see [AuthState.mfaChallengeToken].
+  mfaRequired,
   error,
 }
 
@@ -31,6 +34,12 @@ class AuthState extends Equatable {
   final bool hasExistingSession;
   final bool hasPhone;
 
+  /// Social sign-in: the single-use server challenge awaiting a code (null for password-login MFA).
+  final String? mfaChallengeToken;
+
+  /// True while a submitted second-factor code is being verified.
+  final bool mfaVerifying;
+
   const AuthState({
     this.status = AuthStatus.initial,
     this.user,
@@ -41,6 +50,8 @@ class AuthState extends Equatable {
     this.isConvexReachable = false,
     this.hasExistingSession = false,
     this.hasPhone = false,
+    this.mfaChallengeToken,
+    this.mfaVerifying = false,
   });
 
   AuthState copyWith({
@@ -55,6 +66,9 @@ class AuthState extends Equatable {
     bool? isConvexReachable,
     bool? hasExistingSession,
     bool? hasPhone,
+    String? mfaChallengeToken,
+    bool clearMfaChallenge = false,
+    bool? mfaVerifying,
   }) {
     return AuthState(
       status: status ?? this.status,
@@ -66,6 +80,8 @@ class AuthState extends Equatable {
       isConvexReachable: isConvexReachable ?? this.isConvexReachable,
       hasExistingSession: hasExistingSession ?? this.hasExistingSession,
       hasPhone: hasPhone ?? this.hasPhone,
+      mfaChallengeToken: clearMfaChallenge ? null : (mfaChallengeToken ?? this.mfaChallengeToken),
+      mfaVerifying: mfaVerifying ?? false,
     );
   }
 
@@ -87,6 +103,8 @@ class AuthState extends Equatable {
         isConvexReachable,
         hasExistingSession,
         hasPhone,
+        mfaChallengeToken,
+        mfaVerifying,
       ];
 }
 

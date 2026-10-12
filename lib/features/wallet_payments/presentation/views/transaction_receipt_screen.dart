@@ -353,14 +353,14 @@ class TransactionReceiptScreen extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
+        Flexible(child: Text(
           label,
           style: TextStyle(
             fontSize: 13,
             fontWeight: isHighlighted ? FontWeight.w700 : FontWeight.w500,
             color: const Color(0xFF64748B),
           ),
-        ),
+        )),
         const SizedBox(width: 12),
         Flexible(
           child: Text(

@@ -62,8 +62,13 @@ describe("login", () => {
   const IP_MAX = 20;
   const loginFrom = (t: T, ip: string, identifier: string, password: string, extra: Record<string, unknown> = {}) =>
     t.withRequestMetadata({ ip }).mutation(api.auth.loginWithPhoneOrEmail, { identifier, password, ...extra }) as Promise<any>;
+  // Failures that count against the ADDRESS across many identifiers: "ghost@" is varied per attempt so
+  // the per-(identifier, address) lock (10) never engages before the address limit (20) is reached.
   const failFrom = async (t: T, ip: string, identifier: string, n: number, extra: Record<string, unknown> = {}) => {
-    for (let i = 0; i < n; i++) expect((await loginFrom(t, ip, identifier, `wrong-${i}-xx`, extra)).success).toBe(false);
+    for (let i = 0; i < n; i++) {
+      const id = identifier.startsWith("ghost@") ? identifier.replace("ghost@", `ghost${i}@`) : identifier;
+      expect((await loginFrom(t, ip, id, `wrong-${i}-xx`, extra)).success).toBe(false);
+    }
   };
   const makeAdminUser = async (t: T, email: string, phone: string) => {
     const r = await register(t, email, phone);
@@ -107,7 +112,7 @@ describe("login", () => {
     await register(t, "bypass@test.vektolux", "+23276100011");
     // Attacker rotates made-up `ip` values every attempt; the platform still sees one address.
     for (let i = 0; i < IP_MAX; i++) {
-      expect((await loginFrom(t, "203.0.113.30", "ghost@test.vektolux", `wrong-${i}-xx`, { ip: `10.9.9.${i}` })).success).toBe(false);
+      expect((await loginFrom(t, "203.0.113.30", `ghost${i}@test.vektolux`, `wrong-${i}-xx`, { ip: `10.9.9.${i}` })).success).toBe(false);
     }
     expect((await loginFrom(t, "203.0.113.30", "bypass@test.vektolux", PASSWORD, { ip: "10.1.1.1" })).success).toBe(false);
     expect((await loginFrom(t, "203.0.113.30", "bypass@test.vektolux", PASSWORD)).success).toBe(false);
@@ -164,11 +169,81 @@ describe("login", () => {
     expect((await loginFrom(t, "198.51.100.2", "bob@test.vektolux", PASSWORD)).success).toBe(true);
     // The block expires with its window: no permanent state remains on any account.
     const rows = await t.run(async (ctx) => ctx.db.query("auth_rate_limits").collect());
-    expect(rows.every((r) => r.key.startsWith("login:ip:"))).toBe(true);
+    // Only address-scoped keys exist: no account-wide lock was ever recorded for Alice or Bob.
+    const loginRows = rows.filter((r) => r.key.startsWith("login:"));
+    expect(loginRows.every((r) => r.key.startsWith("login:ip:") || r.key.startsWith("login:pair:"))).toBe(true);
+    expect(loginRows.some((r) => r.key.includes("alice") || r.key.includes("bob"))).toBe(false);
     await t.run(async (ctx) => {
       for (const r of rows) await ctx.db.patch(r._id, { lockedUntil: Date.now() - 1, windowStart: Date.now() - 16 * 60_000 });
     });
     expect((await loginFrom(t, "203.0.113.81", "alice@test.vektolux", PASSWORD)).success).toBe(true);
+  });
+
+  // ── per-(identifier, address) throttle for ordinary accounts ─────────────────────────────────
+  test("ordinary account: 10 wrong guesses from ONE address lock only that address for that account", async () => {
+    const t = convexTest(schema, modules);
+    await register(t, "pair@test.vektolux", "+23276100090");
+    for (let i = 0; i < 10; i++) {
+      expect((await loginFrom(t, "203.0.113.90", "pair@test.vektolux", `wrong-${i}-xx`)).success).toBe(false);
+    }
+    const blocked = await loginFrom(t, "203.0.113.90", "pair@test.vektolux", PASSWORD);
+    expect(blocked.success).toBe(false);
+    expect(blocked.errorMessage).toMatch(/too many failed attempts/i);
+    // The owner at another address, and other accounts at the attacker's address, are unaffected.
+    expect((await loginFrom(t, "198.51.100.90", "pair@test.vektolux", PASSWORD)).success).toBe(true);
+    await register(t, "pair-other@test.vektolux", "+23276100091");
+    expect((await loginFrom(t, "203.0.113.90", "pair-other@test.vektolux", PASSWORD)).success).toBe(true);
+  });
+
+  test("ordinary account: with NO trustworthy address a per-identifier bucket still limits guessing", async () => {
+    const t = convexTest(schema, modules);
+    await register(t, "noip@test.vektolux", "+23276100092");
+    for (let i = 0; i < 25; i++) {
+      expect((await login(t, "noip@test.vektolux", `wrong-${i}-xx`)).success).toBe(false); // no request IP at all
+    }
+    const blocked = await login(t, "noip@test.vektolux", PASSWORD);
+    expect(blocked.success).toBe(false);
+    expect(blocked.errorMessage).toMatch(/too many failed attempts/i);
+  });
+
+  test("a successful login clears the (identifier, address) counter; the lock expires with its window", async () => {
+    const t = convexTest(schema, modules);
+    await register(t, "clear@test.vektolux", "+23276100093");
+    for (let i = 0; i < 9; i++) await loginFrom(t, "203.0.113.93", "clear@test.vektolux", `wrong-${i}-xx`);
+    expect((await loginFrom(t, "203.0.113.93", "clear@test.vektolux", PASSWORD)).success).toBe(true);
+    for (let i = 0; i < 9; i++) await loginFrom(t, "203.0.113.93", "clear@test.vektolux", `wrong2-${i}-xx`);
+    expect((await loginFrom(t, "203.0.113.93", "clear@test.vektolux", PASSWORD)).success).toBe(true); // 9 < 10 again
+    for (let i = 0; i < 10; i++) await loginFrom(t, "203.0.113.93", "clear@test.vektolux", `wrong3-${i}-xx`);
+    expect((await loginFrom(t, "203.0.113.93", "clear@test.vektolux", PASSWORD)).success).toBe(false);
+    const rows = await t.run(async (ctx) => ctx.db.query("auth_rate_limits").collect());
+    await t.run(async (ctx) => {
+      for (const r of rows) await ctx.db.patch(r._id, { lockedUntil: Date.now() - 1, windowStart: Date.now() - 16 * 60_000 });
+    });
+    expect((await loginFrom(t, "203.0.113.93", "clear@test.vektolux", PASSWORD)).success).toBe(true);
+  });
+
+  test("dashboard proxy WITHOUT a forwarded address never keys a lockout on the shared server IP", async () => {
+    vi.stubEnv("LOGIN_PROXY_SECRET", "proxy-secret-for-tests-0123456789");
+    const t = convexTest(schema, modules);
+    await register(t, "shared@test.vektolux", "+23276100094");
+    const proxy = { proxySecret: "proxy-secret-for-tests-0123456789" }; // no `ip`
+    // An attacker's failures through the dashboard server (all from 192.0.2.1 as Convex sees it)
+    for (let i = 0; i < 25; i++) await loginFrom(t, "192.0.2.1", `ghost${i}@test.vektolux`, `wrong-${i}-xx`, proxy);
+    // ... do NOT lock the shared server address: another visitor can still sign in.
+    expect((await loginFrom(t, "192.0.2.1", "shared@test.vektolux", PASSWORD, proxy)).success).toBe(true);
+    const rows = await t.run(async (ctx) => ctx.db.query("auth_rate_limits").collect());
+    expect(rows.some((r) => r.key === "login:ip:192.0.2.1")).toBe(false);
+  });
+
+  test("dashboard proxy: failures are still counted per identifier, and admin account lock still applies", async () => {
+    vi.stubEnv("LOGIN_PROXY_SECRET", "proxy-secret-for-tests-0123456789");
+    const t = convexTest(schema, modules);
+    await makeAdminUser(t, "padmin@test.vektolux", "+23276100095");
+    const proxy = { proxySecret: "proxy-secret-for-tests-0123456789" };
+    for (let i = 0; i < 5; i++) await loginFrom(t, "192.0.2.1", "padmin@test.vektolux", `wrong-${i}-xx`, proxy);
+    const r = await loginFrom(t, "192.0.2.1", "padmin@test.vektolux", PASSWORD, proxy);
+    expect(r.success).toBe(false);
+    expect(r.errorMessage).toMatch(/too many failed attempts/i);
   });
 
   test("admin accounts ARE locked after 5 wrong passwords, even for the correct password", async () => {
@@ -694,5 +769,36 @@ describe("registration does not reveal which email or phone is registered", () =
     const a: any = await t.mutation(api.auth.registerUser, { name: "X", email: "exists@test.vektolux", phone: "+23276200090", password: "short", role: "client" });
     const b: any = await t.mutation(api.auth.registerUser, { name: "X", email: "nobody@test.vektolux", phone: "+23276200091", password: "short", role: "client" });
     expect(a.errorMessage).toBe(b.errorMessage);
+  });
+});
+
+describe("registration abuse controls and email safety", () => {
+  test("sign-ups from one address are budgeted (10/hour); others are unaffected", async () => {
+    const t = convexTest(schema, modules);
+    const from = (ip: string, n: number) =>
+      t.withRequestMetadata({ ip }).mutation(api.auth.registerUser, {
+        name: "U", email: `u${n}@test.vektolux`, phone: `+2327611${String(n).padStart(4, "0")}`, password: PASSWORD, role: "client",
+      }) as Promise<any>;
+    for (let i = 0; i < 10; i++) expect((await from("203.0.113.120", i)).success).toBe(true);
+    const over = await from("203.0.113.120", 10);
+    expect(over.success).toBe(false);
+    expect(over.errorMessage).toMatch(/too many sign-up attempts/i);
+    expect((await from("198.51.100.120", 11)).success).toBe(true);
+  });
+
+  test("a verification email goes to one address at most 6 times an hour, however it is triggered", async () => {
+    const t = convexTest(schema, modules);
+    const u = await register(t, "flood@test.vektolux", "+23276100130");
+    for (let i = 0; i < 40; i++) {
+      await t.mutation(api.auth.resendEmailVerification, { sessionToken: u.sessionToken });
+      // lift the account-level (3 / 15 min) policy so only the per-address budget is under test
+      await t.run(async (ctx) => {
+        for (const r of await ctx.db.query("auth_rate_limits").collect()) {
+          if (r.key.startsWith("email-verify-send:")) await ctx.db.delete(r._id);
+        }
+      });
+    }
+    const rows = await t.run(async (ctx) => ctx.db.query("email_verifications").collect());
+    expect(rows.length).toBeLessThanOrEqual(6);
   });
 });

@@ -544,14 +544,14 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
                           children: [
                             const Icon(Icons.check_circle_rounded, size: 14, color: AppColors.emeraldDark),
                             const SizedBox(width: 6),
-                            Text(
+                            Flexible(child: Text(
                               item,
                               style: const TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
                                 color: AppColors.obsidian,
                               ),
-                            ),
+                            )),
                           ],
                         ),
                       );
@@ -738,20 +738,26 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen> {
         ),
         child: Row(
           children: [
-            Column(
+            Flexible(
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text('Rate', style: TextStyle(fontSize: 11, color: AppColors.gray500)),
-                Text(
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
                   _priceFormatted,
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w800,
                     color: AppColors.obsidian,
                   ),
+                  ),
                 ),
               ],
+            ),
             ),
             const SizedBox(width: 16),
             Expanded(

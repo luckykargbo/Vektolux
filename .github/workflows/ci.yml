@@ -1,0 +1,75 @@
+name: CI
+
+# Runs on every pull request and on pushes to the release-readiness branches. It builds nothing for
+# distribution, deploys nothing and never contacts a live backend or payment provider.
+on:
+  pull_request:
+  push:
+    branches: [prod-readiness]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Convex + dashboard tests, TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            admin-dashboard/package-lock.json
+      - name: Install (backend)
+        run: npm ci
+      - name: Install (dashboard)
+        run: npm ci
+        working-directory: admin-dashboard
+      - name: Typecheck (Convex)
+        run: npm run typecheck
+      - name: Tests (Convex + dashboard server code)
+        run: npx vitest run
+      - name: Typecheck (dashboard)
+        run: npx tsc --noEmit
+        working-directory: admin-dashboard
+      - name: Production build (dashboard)
+        run: npx next build
+        working-directory: admin-dashboard
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          # Build-time placeholder only; the build makes no network call. Not a real deployment.
+          NEXT_PUBLIC_CONVEX_URL: https://ci-placeholder.convex.cloud
+          CONVEX_URL: https://ci-placeholder.convex.cloud
+
+  release-config:
+    name: Release build configuration checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: tool/build_release.sh refuses a missing or malformed CONVEX_URL
+        run: bash tool/test_build_release.sh
+
+  flutter:
+    name: Flutter analyze + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Analyze
+        run: flutter analyze lib
+      - name: Test
+        run: flutter test

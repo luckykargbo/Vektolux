@@ -347,20 +347,29 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                 ],
               ),
             ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '$sign SLE ${_fmt.format(tx.amount)}',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                    color: amountColor,
+            const SizedBox(width: 8),
+            // Flexible + scale-down: a large amount at a big text size shrinks instead of overflowing.
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      '$sign SLE ${_fmt.format(tx.amount)}',
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: amountColor,
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 3),
-                _buildStatusBadge(tx.status),
-              ],
+                  const SizedBox(height: 3),
+                  _buildStatusBadge(tx.status),
+                ],
+              ),
             ),
           ],
         ),

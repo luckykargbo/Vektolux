@@ -418,7 +418,13 @@ class _ClosedBar extends StatelessWidget {
             children: [
               Icon(Icons.lock_outline_rounded, size: 16, color: AppColors.gray500),
               SizedBox(width: 6),
-              Text('This conversation is closed', style: TextStyle(color: AppColors.gray600, fontWeight: FontWeight.w600)),
+              Flexible(
+                child: Text(
+                  'This conversation is closed',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.gray600, fontWeight: FontWeight.w600),
+                ),
+              ),
             ],
           ),
         ),

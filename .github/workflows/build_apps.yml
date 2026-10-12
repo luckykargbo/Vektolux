@@ -40,8 +40,58 @@ jobs:
           echo "kotlin.daemon.jvmOptions=-Xmx2g" >> ~/.gradle/gradle.properties
           cat ~/.gradle/gradle.properties
 
+      # The backend is chosen explicitly: there is no default for a release build. Set the repository
+      # variable CONVEX_URL (Settings > Secrets and variables > Actions > Variables) to the deployment
+      # the owner has approved for this release. The job fails here, loudly, until it is.
+      - name: Require the release backend URL
+        env:
+          CONVEX_URL: ${{ vars.CONVEX_URL }}
+        run: |
+          if [ -z "$CONVEX_URL" ]; then
+            echo "::error::Repository variable CONVEX_URL is not set. Release builds must name their backend."
+            exit 1
+          fi
+
+      # Release signing comes ONLY from repository secrets. Without them the job fails: a release
+      # artifact is never signed with the debug key.
+      - name: Restore Android release signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for v in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Secret $v is not configured; refusing to build an unsigned/debug-signed release."
+              exit 1
+            fi
+          done
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/release.jks
+          {
+            echo "storeFile=release.jks"
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > android/key.properties
+
       - name: Build Release APK
-        run: flutter build apk --release
+        env:
+          CONVEX_URL: ${{ vars.CONVEX_URL }}
+        run: tool/build_release.sh apk
+
+      - name: Build Release App Bundle (Google Play)
+        env:
+          CONVEX_URL: ${{ vars.CONVEX_URL }}
+        run: tool/build_release.sh appbundle
+
+      - name: Upload Android App Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-aab
+          path: build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
@@ -68,8 +118,22 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
+      - name: Require the release backend URL
+        env:
+          CONVEX_URL: ${{ vars.CONVEX_URL }}
+        run: |
+          if [ -z "$CONVEX_URL" ]; then
+            echo "::error::Repository variable CONVEX_URL is not set. Release builds must name their backend."
+            exit 1
+          fi
+
+      # NOTE: this produces an UNSIGNED test IPA (re-signed on install). App Store / TestFlight
+      # distribution needs Apple signing (certificate + provisioning profile) configured by the owner;
+      # nothing in this workflow creates or uploads those.
       - name: Build iOS Release (No Codesign)
-        run: flutter build ios --release --no-codesign
+        env:
+          CONVEX_URL: ${{ vars.CONVEX_URL }}
+        run: tool/build_release.sh ios --no-codesign
 
       - name: Package Payload into IPA
         run: |
@@ -85,9 +149,13 @@ jobs:
           VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PL")
           BLD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PL")
           echo "Bundle ID: $BID  Version: $VER  Build: $BLD"
+          # Expected version/build come from pubspec.yaml (single source of truth), not a literal here.
+          PUB=$(grep -E '^version:' pubspec.yaml | awk '{print $2}')
+          EXP_VER="${PUB%%+*}"
+          EXP_BLD="${PUB##*+}"
           test "$BID" = "com.vektolux.app"
-          test "$VER" = "1.0.31"
-          test "$BLD" = "32"
+          test "$VER" = "$EXP_VER"
+          test "$BLD" = "$EXP_BLD"
           lipo -info build/ios/iphoneos/Runner.app/Runner
           lipo -info build/ios/iphoneos/Runner.app/Runner | grep -q arm64
           unzip -tq Vektolux.ipa
