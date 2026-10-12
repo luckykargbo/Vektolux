@@ -43,7 +43,7 @@ provides its webhook documentation"). The two contracts are different and are ke
     window is therefore an **assumption** inherited from the original code.
   - *Consequences:* (a) the implementation is HS256-only: if Vektolux's Monime webhook is ES256 every
     delivery is rejected (safe, but it never settles); (b) hosted-checkout payments have no documented
-    webhook yet, so they settle via status checks — see `settleMyPendingDeposits` and the reconciliation
+    webhook yet, so they settle via status checks — see `checkMyPendingDeposits` and the reconciliation
     switch; (c) money safety does not depend on the signature (the payload is a hint; Monime's API decides).
 - **Direct Orange**: unverified contract; accepts only an HMAC of the body; credits only an active account
   whose phone number is verified (nothing sets that yet), otherwise holds. Not the path used by the app.
@@ -75,7 +75,7 @@ provides its webhook documentation"). The two contracts are different and are ke
    `completed` only.
 8. **No settlement path for a closed app**: with `checkout_session.*` webhooks "coming soon" and the
    poller off, a hosted-checkout payment made after the app closed stayed pending until someone checked.
-   Added `payments.settleMyPendingDeposits` (caller's own deposits only, ≤5, 6/min, each re-verified with
+   Added `payments.checkMyPendingDeposits` (caller's own deposits only, ≤5, 6/min, each re-verified with
    Monime). **The app must call it when the wallet/history opens** — the function and its session-token
    registration exist; the screen wiring is not done yet.
 

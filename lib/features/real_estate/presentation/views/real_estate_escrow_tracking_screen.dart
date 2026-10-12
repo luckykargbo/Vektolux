@@ -5,6 +5,7 @@
 // and Land Outright Purchases (10/40/50 gated milestones).
 // ═══════════════════════════════════════════════════════════════════════
 
+import '../../../mobility/domain/escrow_order_status.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -438,7 +439,7 @@ class _RealEstateEscrowTrackingScreenState
     final cautionDeposit = _contractData!['cautionDeposit'] as Map<String, dynamic>?;
 
     final contractType = contract['contractType']?.toString() ?? 'SHORT_STAY';
-    final state = contract['state']?.toString() ?? 'PENDING_DEPOSIT';
+    final state = EscrowOrderStatus.contractState(contract);
     final totalInflow = (contract['totalEscrowInflow'] as num?)?.toDouble() ?? 0.0;
     final agreedPrice = (contract['agreedPriceOrRent'] as num?)?.toDouble() ?? 0.0;
     final checkInTimestamp = contract['checkInTimestamp'] as num?;
@@ -519,6 +520,10 @@ class _RealEstateEscrowTrackingScreenState
       case 'DISPUTED':
         stateColor = AppColors.error;
         stateLabel = 'Dispute Under Review';
+        break;
+      case 'CANCELLED':
+        stateColor = AppColors.gray500;
+        stateLabel = EscrowOrderStatus.cancelledTitle;
         break;
       default:
         stateColor = AppColors.gray500;

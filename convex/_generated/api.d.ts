@@ -20,6 +20,7 @@ import type * as businessVerification from "../businessVerification.js";
 import type * as crons from "../crons.js";
 import type * as emails from "../emails.js";
 import type * as escrow from "../escrow.js";
+import type * as escrowExpiry from "../escrowExpiry.js";
 import type * as explore from "../explore.js";
 import type * as feeRules from "../feeRules.js";
 import type * as files from "../files.js";
@@ -93,6 +94,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   emails: typeof emails;
   escrow: typeof escrow;
+  escrowExpiry: typeof escrowExpiry;
   explore: typeof explore;
   feeRules: typeof feeRules;
   files: typeof files;

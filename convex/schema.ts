@@ -1210,8 +1210,13 @@ export default defineSchema({
     updatedAt: v.number(),
     // Immutable snapshot of the fee rule + breakdown used when this order was priced.
     feeSnapshot: v.optional(feeSnapshotValidator),
+    // Set ONLY by escrowExpiry.expireUnpaidOrders when an order that never received money is closed.
+    cancelledAt: v.optional(v.number()),
+    cancelReason: v.optional(v.string()),
+    cancelledBy: v.optional(v.string()),
   })
     .index("by_order_code", ["orderCode"])
+    .index("by_status_rail_createdAt", ["status", "paymentRail", "createdAt"])
     .index("by_renter_or_buyer", ["renterOrBuyerId"])
     .index("by_owner_or_seller", ["ownerOrSellerId"])
     .index("by_vehicle", ["vehicleListingId"])
@@ -1352,6 +1357,10 @@ export default defineSchema({
     feeSnapshot: v.optional(feeSnapshotValidator),
     // The owner-authorised listing agent relationship this order relied on (if any).
     agentAuthorizationId: v.optional(v.id("listing_agent_authorizations")),
+    // Set ONLY by escrowExpiry.expireUnpaidOrders for a pass that was never paid.
+    cancelledAt: v.optional(v.number()),
+    cancelReason: v.optional(v.string()),
+    cancelledBy: v.optional(v.string()),
   })
     .index("by_client", ["clientId"])
     .index("by_agent", ["agentId"])
@@ -1390,8 +1399,13 @@ export default defineSchema({
     feeSnapshot: v.optional(feeSnapshotValidator),
     // The owner-authorised listing agent relationship this order relied on (if any).
     agentAuthorizationId: v.optional(v.id("listing_agent_authorizations")),
+    // Set ONLY by escrowExpiry.expireUnpaidOrders for a contract that never received money.
+    cancelledAt: v.optional(v.number()),
+    cancelReason: v.optional(v.string()),
+    cancelledBy: v.optional(v.string()),
   })
     .index("by_contract_code", ["contractCode"])
+    .index("by_state_rail_createdAt", ["currentState", "paymentRail", "createdAt"])
     .index("by_client", ["clientId"])
     .index("by_beneficiary", ["beneficiaryId"])
     .index("by_property", ["propertyListingId"])
@@ -1431,7 +1445,9 @@ export default defineSchema({
       v.literal("REFUNDED_CLEAN"),
       v.literal("DEDUCTED_PARTIAL"),
       v.literal("FORFEITED_FULL"),
-      v.literal("IN_DISPUTE")
+      v.literal("IN_DISPUTE"),
+      // The contract was cancelled before any money was held: nothing was ever deposited (heldAmount 0).
+      v.literal("VOID")
     ),
     inventoryChecklistSigned: v.boolean(),
     checkoutNotes: v.optional(v.string()),
@@ -1526,7 +1542,9 @@ export default defineSchema({
     .index("by_userId", ["userId"])
     .index("by_status", ["status"])
     .index("by_providerId", ["providerId"])
-    .index("by_userId_status", ["userId", "status"]),
+    .index("by_userId_status", ["userId", "status"])
+    .index("by_escrowOrderId", ["escrowOrderId"])
+    .index("by_reContractId", ["reContractId"]),
 
   // ─── USER LINKED PAYMENT ACCOUNTS (Per-User saved numbers) ─────────
   // Stores each user's personally linked Mobile Money numbers / bank accounts.

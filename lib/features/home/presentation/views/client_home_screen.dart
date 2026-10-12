@@ -26,6 +26,7 @@ import '../../../notifications/presentation/views/notifications_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
 import '../../../profile/presentation/views/widgets/camera_qr_scanner_view.dart';
 import '../../../profile/presentation/views/widgets/ussd_payment_sheet.dart';
+import '../../../wallet_payments/data/pending_deposit_settler.dart';
 import '../../../wallet_payments/presentation/bloc/wallet_cubit.dart';
 import '../../../wallet_payments/presentation/views/transaction_history_screen.dart';
 import '../../../wallet_payments/presentation/widgets/qr_pay_sheet.dart';
@@ -181,7 +182,27 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   }
 
   // ── Fetch the authenticated user's wallet (server is the only source) ─
-  Future<void> _fetchWalletData(String? userId, {bool silent = false}) async {
+  /// Asks the server to settle this user's own pending Monime deposits (hosted checkout has no
+  /// webhook yet). Never blocks the wallet card; only an explicit open/refresh calls it (not the
+  /// periodic silent poll), and PendingDepositSettler single-flights + throttles it. When something was
+  /// confirmed the card is re-read once, without another check.
+  Future<void> _settlePendingDeposits(String userId, {bool force = false}) async {
+    final result = await PendingDepositSettler.shared.settle(widget.convexClient, userId: userId, force: force);
+    if (!mounted || !result.anySettled) return;
+    await _fetchWalletData(userId, silent: true, checkDeposits: false);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result.settled == 1 ? 'A deposit was confirmed and added to your wallet.' : '${result.settled} deposits were confirmed and added to your wallet.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _fetchWalletData(String? userId, {bool silent = false, bool checkDeposits = true, bool force = false}) async {
+    if (checkDeposits && !silent && userId != null && userId.isNotEmpty) {
+      unawaited(_settlePendingDeposits(userId, force: force));
+    }
     if (userId == null || userId.isEmpty) {
       if (mounted) {
         setState(() {
@@ -1293,7 +1314,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                         ),
                         const SizedBox(width: 6),
                         InkWell(
-                          onTap: () => _fetchWalletData(user.id),
+                          onTap: () => _fetchWalletData(user.id, force: true),
                           borderRadius: BorderRadius.circular(14),
                           child: const Padding(
                             padding: EdgeInsets.all(4),

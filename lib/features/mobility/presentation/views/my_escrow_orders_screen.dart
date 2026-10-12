@@ -13,6 +13,7 @@ import '../../../../core/network/convex_client_wrapper.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/vx_network_image.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
+import '../../domain/escrow_order_status.dart';
 import 'escrow_tracking_screen.dart';
 import 'vehicle_inspection_screen.dart';
 
@@ -110,13 +111,13 @@ class _MyEscrowOrdersScreenState extends State<MyEscrowOrdersScreen>
 
       switch (tabIndex) {
         case 1: // Active in Escrow
-          return status != 'SETTLED' && status != 'CANCELLED_REFUNDED';
+          return !EscrowOrderStatus.isClosed(status);
         case 2: // Rentals
           return type == 'RENTAL';
         case 3: // Purchases
           return type == 'PURCHASE';
         case 4: // Settled
-          return status == 'SETTLED' || status == 'CANCELLED_REFUNDED';
+          return EscrowOrderStatus.isClosed(status);
         default:
           return true;
       }
@@ -139,6 +140,10 @@ class _MyEscrowOrdersScreenState extends State<MyEscrowOrdersScreen>
         return const Color(0xFFD97706); // Amber
       case 'DISPUTED':
         return AppColors.error;
+      case 'CANCELLED':
+      case 'CANCELLED_REFUNDED':
+      case 'REFUNDED':
+        return AppColors.gray500;
       default:
         return AppColors.gray500;
     }
@@ -162,8 +167,11 @@ class _MyEscrowOrdersScreenState extends State<MyEscrowOrdersScreen>
         return 'Settled & 100% Released';
       case 'DISPUTED':
         return 'Dispute In Review';
+      case 'CANCELLED':
       case 'CANCELLED_REFUNDED':
-        return 'Cancelled & Refunded';
+        return EscrowOrderStatus.cancelledLabel(status);
+      case 'REFUNDED':
+        return 'Refunded';
       default:
         return status.replaceAll('_', ' ');
     }

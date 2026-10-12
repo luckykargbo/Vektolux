@@ -25,6 +25,9 @@ export const JOB_SWITCHES = {
   SUBSCRIPTION_JOBS_ENABLED: false,
   ESCROW_RELEASE_JOBS_ENABLED: false,
   DELETION_JOBS_ENABLED: false,
+  // Expires UNPAID escrow orders/contracts (14 days, never bank-transfer) and passes past their own
+  // deadline. Writes status only; never touches wallets or the ledger. Run the admin dry-run first.
+  ESCROW_ORDER_EXPIRY_JOBS_ENABLED: false,
 } as const;
 
 if (JOB_SWITCHES.RECONCILIATION_JOBS_ENABLED) {
@@ -55,6 +58,10 @@ if (JOB_SWITCHES.SUBSCRIPTION_JOBS_ENABLED) {
 if (JOB_SWITCHES.ESCROW_RELEASE_JOBS_ENABLED) {
   // Marketplace bookings: release escrow 24h after the booking ends unless it was disputed.
   crons.interval("release due booking escrows", { minutes: 15 }, internal.bookings.releaseDueBookings, {});
+}
+
+if (JOB_SWITCHES.ESCROW_ORDER_EXPIRY_JOBS_ENABLED) {
+  crons.interval("expire unpaid escrow orders", { hours: 6 }, internal.escrowExpiry.expireUnpaidOrders, {});
 }
 
 if (JOB_SWITCHES.DELETION_JOBS_ENABLED) {

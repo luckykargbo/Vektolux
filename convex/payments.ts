@@ -2517,11 +2517,16 @@ export const listMyPendingMoniMeDeposits = internalQuery({
     const userId = ctx.db.normalizeId("users", args.userId);
     if (!userId) return [];
     const since = Date.now() - 48 * 3600 * 1000;
-    const rows = await ctx.db.query("transactions").withIndex("by_user", (q) => q.eq("userId", userId)).order("desc").take(50);
+    // By (user, type): the caller's deposits only, newest first, so an account with lots of other
+    // activity cannot push a recent pending deposit out of the window.
+    const rows = await ctx.db
+      .query("transactions")
+      .withIndex("by_user_type", (q) => q.eq("userId", userId).eq("type", "top_up"))
+      .order("desc")
+      .take(30);
     return rows
       .filter(
         (t) =>
-          t.type === "top_up" &&
           t.status === "pending" &&
           (t.gatewayProvider ?? "").startsWith("MONIME") &&
           (t.createdAt ?? t._creationTime) >= since &&
@@ -2539,7 +2544,7 @@ export const listMyPendingMoniMeDeposits = internalQuery({
  * against Monime's own API by settleMoniMeReference (credit only if Monime says completed, only to the
  * owner of OUR pending transaction, idempotent). Budgeted per account.
  */
-export const settleMyPendingDeposits = action({
+export const checkMyPendingDeposits = action({
   args: { sessionToken: v.optional(v.string()) },
   handler: async (ctx, args): Promise<{ checked: number; settled: number }> => {
     const caller: any = await ctx.runQuery(internal.payments.getSessionCaller, { sessionToken: args.sessionToken });
@@ -3468,6 +3473,52 @@ export const generateBankEscrowReference = mutation({
 });
 
 /**
+ * A bank wire confirmed by an admin for an order/contract that was CANCELLED (it can no longer be funded).
+ * The money really arrived, so it is credited to the BUYER's WALLET (never lost, never held against a
+ * dead order), exactly once: `settleVerifiedDeposit` is idempotent on the provider reference, and the
+ * target is marked CLEARED so a repeated confirmation returns "already processed". The credit is audited.
+ * (Only a CANCELLED target takes this path; any other non-fundable state still errors as before.)
+ */
+async function creditLateBankTransfer(
+  ctx: MutationCtx,
+  p: { userId: Id<"users">; amount: number; providerRef: string; kind: string; targetId: string; adminId: Id<"users">; notes?: string; now: number }
+) {
+  const settled = await settleVerifiedDeposit(ctx, {
+    userId: p.userId,
+    amount: p.amount,
+    currency: "SLE",
+    provider: "BANK_TRANSFER",
+    providerReference: p.providerRef,
+    description: `Bank transfer received after the order was cancelled (Ref: ${p.providerRef})`,
+  });
+  await ctx.db.insert("audit_logs", {
+    adminUserId: p.adminId,
+    action: "APPROVE_DEPOSIT",
+    targetTransactionId: p.providerRef,
+    snapshot: JSON.stringify({
+      kind: p.kind,
+      targetId: p.targetId,
+      amount: p.amount,
+      creditedToWallet: true,
+      duplicateCredit: settled.duplicate,
+      notes: p.notes ?? null,
+    }),
+    timestamp: p.now,
+  });
+  if (!settled.duplicate) {
+    await ctx.db.insert("user_notifications", {
+      userId: p.userId as string,
+      targetType: "single_user",
+      title: "Bank transfer received",
+      body: `Your bank transfer of SLE ${p.amount.toFixed(2)} arrived after your order was cancelled. It has been added to your Vektolux wallet.`,
+      read: false,
+      createdAt: p.now,
+    });
+  }
+  return settled;
+}
+
+/**
  * Confirm a commercial bank wire clearing (e.g. via SLCB interbank webhook or admin review).
  * Automatically transitions the escrow order into ESCROW_LOCKED and posts double-entry ledger.
  */
@@ -3511,6 +3562,24 @@ export const confirmBankEscrowTransfer = mutation({
           alreadyProcessed: true,
         };
       }
+      // The order was cancelled (expired unpaid) but the wire DID arrive: credit the buyer's wallet.
+      if (vehicleOrder.status === "CANCELLED") {
+        const credited = await creditLateBankTransfer(ctx, {
+          userId: vehicleOrder.renterOrBuyerId, amount: args.amountTransferred, providerRef,
+          kind: "late_bank_transfer_vehicle_order", targetId: vehicleOrder._id as string, adminId, notes: args.adminNotes, now,
+        });
+        await ctx.db.patch(vehicleOrder._id, { bankClearingStatus: "CLEARED", updatedAt: now });
+        return {
+          success: true,
+          type: "VEHICLE_ESCROW",
+          orderId: vehicleOrder._id,
+          orderCode: vehicleOrder.orderCode,
+          status: vehicleOrder.status,
+          clearedAmount: args.amountTransferred,
+          creditedToWallet: true,
+          alreadyProcessed: credited.duplicate,
+        };
+      }
       // The deal's own amount is the source of truth; an underpayment cannot fund it.
       if (args.amountTransferred + 0.005 < vehicleOrder.grossEscrowAmount) {
         throw new Error(
@@ -3552,6 +3621,23 @@ export const confirmBankEscrowTransfer = mutation({
           status: reContract.currentState,
           clearedAmount: reContract.grossAmount,
           alreadyProcessed: true,
+        };
+      }
+      if (reContract.currentState === "CANCELLED") {
+        const credited = await creditLateBankTransfer(ctx, {
+          userId: reContract.clientId, amount: args.amountTransferred, providerRef,
+          kind: "late_bank_transfer_re_contract", targetId: reContract._id as string, adminId, notes: args.adminNotes, now,
+        });
+        await ctx.db.patch(reContract._id, { bankClearingStatus: "CLEARED", updatedAt: now });
+        return {
+          success: true,
+          type: "REAL_ESTATE_ESCROW",
+          contractId: reContract._id,
+          contractCode: reContract.contractCode,
+          status: reContract.currentState,
+          clearedAmount: args.amountTransferred,
+          creditedToWallet: true,
+          alreadyProcessed: credited.duplicate,
         };
       }
       if (args.amountTransferred + 0.005 < reContract.grossAmount) {

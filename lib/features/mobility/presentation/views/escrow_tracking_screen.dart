@@ -3,6 +3,7 @@
 // VEKTOLUX — Real-Time Escrow Contract Tracking & Milestone Console
 // ═══════════════════════════════════════════════════════════════════════
 
+import '../../domain/escrow_order_status.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
@@ -522,6 +523,9 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
         return AppColors.error;
       case 'PENDING_PAYMENT':
         return const Color(0xFF475569);
+      case 'CANCELLED':
+      case 'CANCELLED_REFUNDED':
+        return AppColors.gray500;
       default:
         return AppColors.gray600;
     }
@@ -540,6 +544,9 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
         return Icons.warning_amber_rounded;
       case 'PENDING_PAYMENT':
         return Icons.pending_actions_rounded;
+      case 'CANCELLED':
+      case 'CANCELLED_REFUNDED':
+        return Icons.cancel_outlined;
       default:
         return Icons.info_outline_rounded;
     }
@@ -558,6 +565,9 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
         return 'Damage Dispute Opened';
       case 'PENDING_PAYMENT':
         return 'Awaiting Payment Clearance';
+      case 'CANCELLED':
+      case 'CANCELLED_REFUNDED':
+        return EscrowOrderStatus.cancelledTitle;
       default:
         return status;
     }
@@ -576,6 +586,9 @@ class _EscrowTrackingScreenState extends State<EscrowTrackingScreen> {
         return 'Damage reported. Deposit is held in escrow pending admin review.';
       case 'PENDING_PAYMENT':
         return 'Awaiting mobile money approval or commercial bank wire clearing.';
+      case 'CANCELLED':
+      case 'CANCELLED_REFUNDED':
+        return EscrowOrderStatus.cancelledDescription;
       default:
         return 'Status: $status';
     }

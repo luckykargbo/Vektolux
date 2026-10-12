@@ -260,7 +260,7 @@ describe("settlement edge cases", () => {
   });
 });
 
-describe("settleMyPendingDeposits (self-heal when no webhook exists for hosted checkout)", () => {
+describe("checkMyPendingDeposits (self-heal when no webhook exists for hosted checkout)", () => {
   test("settles the caller's own paid deposits, never someone else's, and is idempotent", async () => {
     const t = convexTest(schema, modules);
     const a = await makeUser(t, "alice");
@@ -270,12 +270,12 @@ describe("settleMyPendingDeposits (self-heal when no webhook exists for hosted c
     sessions.get(ra.transactionId).status = "completed";
     sessions.get(rb.transactionId).status = "completed";
 
-    const res: any = await t.action(api.payments.settleMyPendingDeposits, { sessionToken: a.token });
+    const res: any = await t.action(api.payments.checkMyPendingDeposits, { sessionToken: a.token });
     expect(res).toEqual({ checked: 1, settled: 1 });
     expect(await balance(t, a.id)).toBe(20);
     expect(await balance(t, b.id)).toBe(0); // Bob's paid deposit is untouched by Alice's call
 
-    const again: any = await t.action(api.payments.settleMyPendingDeposits, { sessionToken: a.token });
+    const again: any = await t.action(api.payments.checkMyPendingDeposits, { sessionToken: a.token });
     expect(again.settled).toBe(0);
     expect(await balance(t, a.id)).toBe(20);
   });
@@ -284,9 +284,122 @@ describe("settleMyPendingDeposits (self-heal when no webhook exists for hosted c
     const t = convexTest(schema, modules);
     const u = await makeUser(t, "payer");
     await t.action(api.payments.initiateMoniMePayment, { sessionToken: u.token, amount: 20, phoneNumber: "076123456" });
-    expect(((await t.action(api.payments.settleMyPendingDeposits, { sessionToken: u.token })) as any).settled).toBe(0);
-    await expect(t.action(api.payments.settleMyPendingDeposits, { sessionToken: "nope-nope-nope-nope-0123456789" })).rejects.toThrow();
-    for (let i = 0; i < 8; i++) await t.action(api.payments.settleMyPendingDeposits, { sessionToken: u.token });
-    expect(await t.action(api.payments.settleMyPendingDeposits, { sessionToken: u.token })).toEqual({ checked: 0, settled: 0 });
+    expect(((await t.action(api.payments.checkMyPendingDeposits, { sessionToken: u.token })) as any).settled).toBe(0);
+    await expect(t.action(api.payments.checkMyPendingDeposits, { sessionToken: "nope-nope-nope-nope-0123456789" })).rejects.toThrow();
+    for (let i = 0; i < 8; i++) await t.action(api.payments.checkMyPendingDeposits, { sessionToken: u.token });
+    expect(await t.action(api.payments.checkMyPendingDeposits, { sessionToken: u.token })).toEqual({ checked: 0, settled: 0 });
+  });
+});
+
+describe("checkMyPendingDeposits: window and eligibility", () => {
+  test("a recent pending deposit is found even when the account has many newer non-deposit transactions", async () => {
+    const t = convexTest(schema, modules);
+    const u = await makeUser(t, "busy");
+    const r: any = await t.action(api.payments.initiateMoniMePayment, { sessionToken: u.token, amount: 25, phoneNumber: "076123456" });
+    sessions.get(r.transactionId).status = "completed";
+    await t.run(async (ctx) => {
+      const w = await ctx.db.insert("walletBalances", { userId: u.id, availableBalance: 0, pendingBalance: 0, escrowBalance: 0, currency: "SLE", updatedAt: Date.now() });
+      for (let i = 0; i < 60; i++) {
+        await ctx.db.insert("transactions", {
+          transactionId: `NOISE-${i}`, walletId: w, userId: u.id, type: "p2p_transfer", amount: 1, currency: "SLE",
+          status: "completed", createdAt: Date.now() + 1000 + i, updatedAt: Date.now(),
+        } as any);
+      }
+    });
+    const res: any = await t.action(api.payments.checkMyPendingDeposits, { sessionToken: u.token });
+    expect(res.settled).toBe(1);
+    expect(await balance(t, u.id)).toBe(25);
+  });
+
+  test("old (>48h), failed and non-Monime deposits are ignored", async () => {
+    const t = convexTest(schema, modules);
+    const u = await makeUser(t, "payer");
+    await t.run(async (ctx) => {
+      const w = await ctx.db.insert("walletBalances", { userId: u.id, availableBalance: 0, pendingBalance: 0, escrowBalance: 0, currency: "SLE", updatedAt: Date.now() });
+      const base = { walletId: w, userId: u.id, type: "top_up", amount: 10, currency: "SLE", updatedAt: Date.now() } as any;
+      await ctx.db.insert("transactions", { ...base, transactionId: "OLD", gatewayProvider: "MONIME_ORANGE", gatewayReference: "cs-oldold1", status: "pending", createdAt: Date.now() - 60 * 3600 * 1000 });
+      await ctx.db.insert("transactions", { ...base, transactionId: "FAILED", gatewayProvider: "MONIME_ORANGE", gatewayReference: "cs-failed1", status: "failed", createdAt: Date.now() });
+      await ctx.db.insert("transactions", { ...base, transactionId: "OTHER", gatewayProvider: "ORANGE_MONEY_SL", gatewayReference: "cs-other11", status: "pending", createdAt: Date.now() });
+    });
+    expect(await t.action(api.payments.checkMyPendingDeposits, { sessionToken: u.token })).toEqual({ checked: 0, settled: 0 });
+    expect(calls.filter((c) => c.method === "GET")).toHaveLength(0); // nothing was sent to Monime
+  });
+});
+
+describe("checkMyPendingDeposits: sessions and provider failures", () => {
+  test("a missing, unknown or EXPIRED session cannot settle anything", async () => {
+    const t = convexTest(schema, modules);
+    const u = await makeUser(t, "payer");
+    const r: any = await t.action(api.payments.initiateMoniMePayment, { sessionToken: u.token, amount: 30, phoneNumber: "076123456" });
+    sessions.get(r.transactionId).status = "completed";
+    const before = calls.length;
+
+    await expect(t.action(api.payments.checkMyPendingDeposits, {})).rejects.toThrow();
+    await expect(t.action(api.payments.checkMyPendingDeposits, { sessionToken: "nope-nope-nope-nope-0123456789" })).rejects.toThrow();
+    await t.run(async (ctx) => ctx.db.patch(u.id, { sessionExpiresAt: Date.now() - 1000 } as any));
+    await expect(t.action(api.payments.checkMyPendingDeposits, { sessionToken: u.token })).rejects.toThrow();
+
+    expect(await balance(t, u.id)).toBe(0);
+    expect(calls.slice(before).filter((c) => c.method === "GET")).toHaveLength(0); // Monime was never asked
+  });
+
+  test("provider error, malformed answer and ambiguous statuses never count as settlement", async () => {
+    const t = convexTest(schema, modules);
+    const u = await makeUser(t, "payer");
+    const r: any = await t.action(api.payments.initiateMoniMePayment, { sessionToken: u.token, amount: 30, phoneNumber: "076123456" });
+    const s = sessions.get(r.transactionId);
+
+    // ambiguous / non-final statuses
+    for (const status of ["pending", "processing", "delayed", "unknown", "", "COMPLETED_PENDING"]) {
+      s.status = status;
+      const res: any = await t.action(api.payments.checkMyPendingDeposits, { sessionToken: u.token });
+      expect(res.settled, status).toBe(0);
+      expect(await balance(t, u.id), status).toBe(0);
+      // let the per-account budget window move on without waiting a minute
+      await t.run(async (ctx) => {
+        for (const row of await ctx.db.query("auth_rate_limits").collect()) if (row.key.startsWith("settle-mine:")) await ctx.db.delete(row._id);
+      });
+    }
+
+    // completed, but Monime reports no usable amount
+    s.status = "completed";
+    s.lineItems = { data: [] };
+    expect(((await t.action(api.payments.checkMyPendingDeposits, { sessionToken: u.token })) as any).settled).toBe(0);
+    expect(await balance(t, u.id)).toBe(0);
+
+    // the session disappears at Monime (404)
+    sessions.delete(r.transactionId);
+    await t.run(async (ctx) => {
+      for (const row of await ctx.db.query("auth_rate_limits").collect()) if (row.key.startsWith("settle-mine:")) await ctx.db.delete(row._id);
+    });
+    expect(((await t.action(api.payments.checkMyPendingDeposits, { sessionToken: u.token })) as any).settled).toBe(0);
+    expect((await pendingTxs(t))[0].status).toBe("pending"); // never cancelled just because a check failed
+  });
+
+  test("concurrent checks and a competing webhook credit exactly once", async () => {
+    const t = convexTest(schema, modules);
+    const u = await makeUser(t, "payer");
+    const r: any = await t.action(api.payments.initiateMoniMePayment, { sessionToken: u.token, amount: 45, phoneNumber: "076123456" });
+    sessions.get(r.transactionId).status = "completed";
+    await Promise.all([
+      t.action(api.payments.checkMyPendingDeposits, { sessionToken: u.token }),
+      t.action(api.payments.checkMyPendingDeposits, { sessionToken: u.token }),
+      webhook(t, "checkout_session.completed", r.transactionId),
+    ]);
+    expect(await balance(t, u.id)).toBe(45);
+    expect((await pendingTxs(t)).filter((x) => x.status === "completed")).toHaveLength(1);
+  });
+
+  test("an explicit client 'force' cannot exceed the server budget (6 per minute per account)", async () => {
+    const t = convexTest(schema, modules);
+    const u = await makeUser(t, "payer");
+    await t.action(api.payments.initiateMoniMePayment, { sessionToken: u.token, amount: 10, phoneNumber: "076123456" });
+    let allowedCalls = 0;
+    for (let i = 0; i < 10; i++) {
+      const before = calls.filter((c) => c.method === "GET").length;
+      await t.action(api.payments.checkMyPendingDeposits, { sessionToken: u.token });
+      if (calls.filter((c) => c.method === "GET").length > before) allowedCalls++;
+    }
+    expect(allowedCalls).toBe(6);
   });
 });

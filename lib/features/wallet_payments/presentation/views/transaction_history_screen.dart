@@ -39,15 +39,41 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
     _fetchTransactions();
   }
 
-  void _fetchTransactions() {
+  /// [force]: an explicit refresh by the user (the pending-deposit check then uses a shorter throttle).
+  void _fetchTransactions({bool force = false}) {
     final authState = context.read<AuthBloc>().state;
     final user = authState.user;
     if (user != null) {
       context.read<WalletCubit>().loadWallet(
             userId: user.id,
             sessionToken: user.sessionToken,
+            force: force,
           );
     }
+  }
+
+  Widget _depositBanner({required Key key, required Widget icon, required String text, required Color background}) {
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        key: key,
+        width: double.infinity,
+        color: background,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            icon,
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -75,7 +101,7 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: Colors.white, size: 22),
-            onPressed: _fetchTransactions,
+            onPressed: () => _fetchTransactions(force: true),
           ),
         ],
       ),
@@ -106,6 +132,46 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
             ),
           ),
 
+          // ── Pending-deposit check status (never blocks the list) ────
+          BlocBuilder<WalletCubit, WalletState>(
+            buildWhen: (a, b) =>
+                a.isCheckingDeposits != b.isCheckingDeposits ||
+                a.settledDeposits != b.settledDeposits ||
+                a.depositCheckFailed != b.depositCheckFailed,
+            builder: (context, state) {
+              if (state.isCheckingDeposits) {
+                return _depositBanner(
+                  key: const Key('deposit-check-running'),
+                  icon: const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.emerald),
+                  ),
+                  text: 'Checking for confirmed deposits…',
+                  background: AppColors.gray100,
+                );
+              }
+              if (state.settledDeposits > 0) {
+                final n = state.settledDeposits;
+                return _depositBanner(
+                  key: const Key('deposit-check-settled'),
+                  icon: const Icon(Icons.check_circle_rounded, size: 16, color: AppColors.emeraldDark),
+                  text: n == 1 ? '1 deposit confirmed. Your balance is updated.' : '$n deposits confirmed. Your balance is updated.',
+                  background: AppColors.emeraldSurface,
+                );
+              }
+              if (state.depositCheckFailed) {
+                return _depositBanner(
+                  key: const Key('deposit-check-failed'),
+                  icon: const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.gray600),
+                  text: "Couldn't check pending deposits just now. Pull down or tap refresh to try again.",
+                  background: AppColors.gray100,
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+
           // ── Transaction List ────────────────────────────────────────
           Expanded(
             child: BlocBuilder<WalletCubit, WalletState>(
@@ -123,7 +189,7 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
 
                 if (filtered.isEmpty) {
                   return RefreshIndicator(
-                    onRefresh: () async => _fetchTransactions(),
+                    onRefresh: () async => _fetchTransactions(force: true),
                     color: AppColors.emerald,
                     child: ListView(
                       physics: const AlwaysScrollableScrollPhysics(),
@@ -175,7 +241,7 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                 }
 
                 return RefreshIndicator(
-                  onRefresh: () async => _fetchTransactions(),
+                  onRefresh: () async => _fetchTransactions(force: true),
                   color: AppColors.emerald,
                   child: ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),

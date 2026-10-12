@@ -5,6 +5,7 @@
 // escrow contracts (Short Stay, Long Lease, Land Purchase).
 // ═══════════════════════════════════════════════════════════════════════
 
+import '../../../mobility/domain/escrow_order_status.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -349,7 +350,7 @@ class _MyRealEstateEscrowsScreenState extends State<MyRealEstateEscrowsScreen>
         final c = list[i];
         final contractId = c['_id']?.toString() ?? '';
         final contractType = c['contractType']?.toString() ?? 'SHORT_STAY';
-        final state = c['state']?.toString() ?? 'PENDING_DEPOSIT';
+        final state = EscrowOrderStatus.contractState(c);
         final totalInflow = (c['totalEscrowInflow'] as num?)?.toDouble() ?? 0.0;
         final propTitle = c['propertyTitle']?.toString() ?? 'Property Listing';
         final location = c['propertyLocation']?.toString() ?? 'Sierra Leone';
@@ -400,7 +401,11 @@ class _MyRealEstateEscrowsScreenState extends State<MyRealEstateEscrowsScreen>
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: state == 'DISPUTED' ? AppColors.error : AppColors.emeraldDark,
+                        color: state == 'DISPUTED'
+                            ? AppColors.error
+                            : (state == 'CANCELLED' || state == 'REFUNDED')
+                                ? AppColors.gray500
+                                : AppColors.emeraldDark,
                       ),
                     )),
                   ],

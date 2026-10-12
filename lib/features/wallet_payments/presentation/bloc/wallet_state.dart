@@ -89,6 +89,15 @@ class WalletState extends Equatable {
   final String? errorMessage;
   final List<TransactionItem> transactions;
 
+  /// A background check of pending deposits is running (never blocks the wallet itself).
+  final bool isCheckingDeposits;
+
+  /// Deposits confirmed by the most recent check (0 = none / not yet checked).
+  final int settledDeposits;
+
+  /// The most recent check could not complete (network/server). Sign-in problems are not reported here.
+  final bool depositCheckFailed;
+
   const WalletState({
     this.availableBalance = 0.0,
     this.escrowBalance = 0.0,
@@ -97,6 +106,9 @@ class WalletState extends Equatable {
     this.isLoading = false,
     this.errorMessage,
     this.transactions = const [],
+    this.isCheckingDeposits = false,
+    this.settledDeposits = 0,
+    this.depositCheckFailed = false,
   });
 
   WalletState copyWith({
@@ -108,6 +120,9 @@ class WalletState extends Equatable {
     String? errorMessage,
     bool clearError = false,
     List<TransactionItem>? transactions,
+    bool? isCheckingDeposits,
+    int? settledDeposits,
+    bool? depositCheckFailed,
   }) {
     return WalletState(
       availableBalance: availableBalance ?? this.availableBalance,
@@ -117,6 +132,9 @@ class WalletState extends Equatable {
       isLoading: isLoading ?? this.isLoading,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       transactions: transactions ?? this.transactions,
+      isCheckingDeposits: isCheckingDeposits ?? this.isCheckingDeposits,
+      settledDeposits: settledDeposits ?? this.settledDeposits,
+      depositCheckFailed: depositCheckFailed ?? this.depositCheckFailed,
     );
   }
 
@@ -129,5 +147,8 @@ class WalletState extends Equatable {
         isLoading,
         errorMessage,
         transactions,
+        isCheckingDeposits,
+        settledDeposits,
+        depositCheckFailed,
       ];
 }
