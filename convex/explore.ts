@@ -10,7 +10,8 @@ import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { publicLocation } from "./lib/slLocations";
 import { Doc } from "./_generated/dataModel";
-import { businessRole, hasCarDealerCapability, isRoleApproved, professionalBadge, professionalTitle } from "./lib/permissions";
+import { filterOfferableVehicles } from "./lib/vehicleEligibility";
+import { businessRole, hasCarCompanyCapability, hasCarDealerCapability, isRoleApproved, professionalBadge, professionalTitle } from "./lib/permissions";
 import { isListingPublic } from "./lib/publicListing";
 
 /**
@@ -18,7 +19,12 @@ import { isListingPublic } from "./lib/publicListing";
  * Agent / Hotel Owner is shown only while their subscription is active (computed, never a flag).
  */
 async function publicProfessional(ctx: { db: any }, u: Doc<"users">): Promise<{ label: string; verified: boolean } | null> {
-  if (u.isActive === false || !isRoleApproved(u)) return null;
+  if (u.isActive === false) return null;
+  // A car company is shown only while its OWN subscription is active (no other plan counts).
+  if (hasCarCompanyCapability(u) && (await professionalBadge(ctx, u)).verifiedCarCompany) {
+    return { label: "Car Company", verified: true };
+  }
+  if (!isRoleApproved(u)) return null;
   const role = businessRole(u);
   if (role === "vehicle_dealer") return { label: "Vehicle Dealer", verified: true };
   if (role === "real_estate_owner") return { label: "Property Owner", verified: true };
@@ -137,11 +143,14 @@ export const getExploreFeed = query({
         .order("desc")
         .take(limit * 2);
 
-      const publishedVehicles = vDocs.filter(
-        (doc) =>
-          doc.isDeleted !== true &&
-          doc.isPublished !== false &&
-          doc.status === "AVAILABLE"
+      const publishedVehicles = await filterOfferableVehicles(
+        ctx,
+        vDocs.filter(
+          (doc) =>
+            doc.isDeleted !== true &&
+            doc.isPublished !== false &&
+            doc.status === "AVAILABLE"
+        )
       );
 
       for (const vDoc of publishedVehicles.slice(0, limit)) {
@@ -220,7 +229,7 @@ export const getExploreFeed = query({
         // public listings only (no drafts, listings under review, rejected, archived or removed)
         const totalListings =
           reCount.filter((l) => isListingPublic(l)).length +
-          vCount.filter((x) => x.isDeleted !== true && x.isPublished !== false && x.status !== "TAKEN_DOWN").length;
+          (await filterOfferableVehicles(ctx, vCount.filter((x) => x.isDeleted !== true && x.isPublished !== false && x.status !== "TAKEN_DOWN"))).length;
 
         topAgents.push({
           id: u._id as string,
@@ -356,8 +365,7 @@ export const searchExplore = query({
       .query("vehicleListings")
       .order("desc")
       .take(50);
-    const vehicles = vDocs
-      .filter(
+    const matchingVDocs = vDocs.filter(
         (vDoc) =>
           vDoc.isDeleted !== true &&
           vDoc.isPublished !== false &&
@@ -366,7 +374,8 @@ export const searchExplore = query({
             (vDoc.model && vDoc.model.toLowerCase().includes(q)) ||
             (vDoc.location && vDoc.location.toLowerCase().includes(q)) ||
             vDoc.category.toLowerCase().includes(q))
-      )
+      );
+    const vehicles = (await filterOfferableVehicles(ctx, matchingVDocs))
       .slice(0, maxItems)
       .map((vDoc) => ({
         id: vDoc._id as string,

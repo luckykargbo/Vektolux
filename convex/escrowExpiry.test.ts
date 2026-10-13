@@ -5,6 +5,7 @@ import { describe, expect, test, afterEach } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import type { Id } from "./_generated/dataModel";
+import { seedLegacyRentalOrder } from "../test-support/legacyRentalFixture";
 import { fundVehicleOrderFromWallet } from "./escrow";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
@@ -50,9 +51,10 @@ async function unpaidVehicleOrder(t: T, ageDays = 15, rail = "MOBILE_MONEY") {
   const owner = await makeUser(t, "owner");
   const buyer = await makeUser(t, "buyer");
   const v = await makeVehicle(t, owner.id);
-  const r: any = await t.mutation(api.escrow.initiateEscrowOrder, {
-    sessionToken: buyer.token, orderType: "VEHICLE_RENTAL", vehicleListingId: v, numberOfDays: 3, paymentRail: rail,
-  } as any);
+  // a HISTORICAL rental order (new rentals can no longer be created through the public mutation)
+  const r: any = await seedLegacyRentalOrder(t, {
+    buyerId: buyer.id, vehicleListingId: v, numberOfDays: 3, payFromWallet: false, paymentRail: rail as any,
+  });
   const id = r.escrowOrderId as Id<"escrow_orders">;
   await t.run(async (ctx) => ctx.db.patch(id, { createdAt: Date.now() - ageDays * DAY }));
   return { id, owner, buyer };
@@ -214,9 +216,7 @@ describe("vehicle orders", () => {
     const buyer = await makeUser(t, "buyer");
     await fund(t, buyer.id, 5000);
     const v = await makeVehicle(t, owner.id);
-    const r: any = await t.mutation(api.escrow.initiateEscrowOrder, {
-      sessionToken: buyer.token, orderType: "VEHICLE_RENTAL", vehicleListingId: v, numberOfDays: 3, payFromWallet: true,
-    } as any);
+    const r: any = await seedLegacyRentalOrder(t, { buyerId: buyer.id, vehicleListingId: v, numberOfDays: 3, payFromWallet: true });
     await t.run(async (ctx) => ctx.db.patch(r.escrowOrderId, { createdAt: Date.now() - 60 * DAY }));
     const before = await counts(t);
     expect((await run(t)).vehicleOrders).toBe(0);

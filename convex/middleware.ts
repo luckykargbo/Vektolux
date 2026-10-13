@@ -7,7 +7,7 @@
 import { MutationCtx, QueryCtx } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { requireSelf } from "./lib/auth";
-import { postingPermission, PostingKind } from "./lib/permissions";
+import { postingPermission, PostingKind, VehiclePostingCapability } from "./lib/permissions";
 
 export class SellerNotVerifiedException extends Error {
   readonly code = "SELLER_NOT_VERIFIED";
@@ -31,22 +31,25 @@ export async function requireVerifiedSeller(
   ctx: MutationCtx | QueryCtx,
   ownerId: string,
   sessionToken: string | undefined,
-  kind: PostingKind
+  kind: PostingKind,
+  capability?: VehiclePostingCapability
 ): Promise<{
   id: Id<"users">;
   name: string;
   email: string;
   isVerified: boolean;
+  /** Vehicle capability the listing is posted under (undefined for admins and other kinds). */
+  capability?: VehiclePostingCapability;
 }> {
   const { user } = await requireSelf(ctx, sessionToken, ownerId);
   if (!user.isActive) {
     throw new Error("User account is inactive, suspended, or does not exist.");
   }
-  const permission = await postingPermission(ctx, user, kind);
+  const permission = await postingPermission(ctx, user, kind, Date.now(), { capability });
   if (!permission.allowed) {
     const e = new SellerNotVerifiedException(user.verificationStatus ?? "unverified_seller");
     e.message = permission.reason;
     throw e;
   }
-  return { id: user._id, name: user.name, email: user.email, isVerified: true };
+  return { id: user._id, name: user.name, email: user.email, isVerified: true, capability: permission.capability };
 }

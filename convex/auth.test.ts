@@ -7,6 +7,7 @@ import { api, internal } from "./_generated/api";
 import { hashWalletPin } from "./lib/pin";
 import schema from "./schema";
 import type { Id } from "./_generated/dataModel";
+import { seedLegacyRentalOrder } from "../test-support/legacyRentalFixture";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
 type T = ReturnType<typeof convexTest>;
@@ -324,9 +325,7 @@ async function seedVictimAssets(t: T, userId: Id<"users">, token: string) {
   await t.run(async (ctx) =>
     ctx.db.patch(userId, { name: "Victim Verified", isVerified: true, verificationStatus: "verified", role: "agent" } as any)
   );
-  const order: any = await t.mutation(api.escrow.initiateEscrowOrder, {
-    sessionToken: token, orderType: "VEHICLE_RENTAL", vehicleListingId: vehicleId, numberOfDays: 3, payFromWallet: true,
-  } as any);
+  const order: any = await seedLegacyRentalOrder(t, { buyerId: userId, vehicleListingId: vehicleId, numberOfDays: 3, payFromWallet: true });
   expect(order.status).toBe("HELD_IN_ESCROW");
 }
 

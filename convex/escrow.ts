@@ -6,6 +6,7 @@
 // Standard: Sierra Leone New Leones (SLE)
 // ═══════════════════════════════════════════════════════════════════════
 
+import { vehicleAcceptsNewTransactions } from "./lib/vehicleEligibility";
 import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
@@ -150,12 +151,25 @@ export const initiateEscrowOrder = mutation({
     detectedCarrier: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
+    // 0. Vehicle rental / daily hire is no longer offered. Refused FIRST, before any read of
+    //    balances or any write, so a rejected request leaves no order, transaction or ledger entry.
+    //    Existing rental orders keep their full lifecycle (funding, handoff, return, dispute, expiry).
+    // (Compared as a plain string so the remaining rental branch below, kept for the shared pricing
+    //  and legacy code paths, is not narrowed away by the type checker.)
+    const requestedOrderType: string = args.orderType;
+    if (requestedOrderType === "VEHICLE_RENTAL") {
+      throw new Error("Vehicle rental is no longer available on Vektolux. Vehicles can be purchased from their listing.");
+    }
+
     // 1. Caller identity comes from the session only
     const currentUserId = await resolveCallerUser(ctx, args.renterOrBuyerId, args.sessionToken);
 
     // 2. Listing must exist and be available
     const vehicle = await ctx.db.get(args.vehicleListingId);
-    if (!vehicle || vehicle.isDeleted === true || vehicle.isPublished === false) {
+    // Only a listing that is published, unsold, not taken down and (for a car company) still
+    // approved and subscribed takes a NEW order. This is the server-side gate for direct API calls
+    // too; existing orders are never touched by it (their lifecycle continues under its own rules).
+    if (!vehicle || !(await vehicleAcceptsNewTransactions(ctx, vehicle)).ok) {
       throw new Error("This vehicle listing is not available.");
     }
     if (vehicle.ownerId === currentUserId) {

@@ -8,9 +8,10 @@
 //   3. Professional subscription        vendor_subscriptions (active AND not expired)
 //   4. Posting privilege / pro badge    computed from 2 + 3 (never a stored permanent flag)
 //
-// Real Estate Agent and Hotel/Guest-House Owner are subscription-based professionals: they can
-// post only while their subscription is active. Real Estate Owners and Vehicle Dealers post once
-// their role is approved. A client never posts.
+// Real Estate Agent, Hotel/Guest-House Owner and Car Company are subscription-based capabilities:
+// each needs ITS OWN active subscription (one never satisfies another). Real Estate Owners and
+// individual Vehicle Dealers post once their role is approved and never need a subscription, even if
+// the same account also holds a subscription-required capability. A client never posts.
 // ═══════════════════════════════════════════════════════════════════════
 
 import { Doc, Id } from "../_generated/dataModel";
@@ -23,7 +24,11 @@ export type BusinessRole =
   | "hotel_owner"
   | "admin";
 
-export type SubscriptionRole = "agent" | "hotel_operator";
+/** Subscription-required capabilities. "merchant" (legacy plan target) is deliberately NOT one. */
+export type SubscriptionRole = "agent" | "hotel_operator" | "car_company";
+
+/** Capability a vehicle listing is posted under. Only "car_company" needs a subscription. */
+export type VehiclePostingCapability = "individual_dealer" | "car_company";
 
 /** Maps the stored role (including legacy spellings) to a business role. */
 export function businessRole(user: Pick<Doc<"users">, "role">): BusinessRole {
@@ -62,8 +67,83 @@ export function hasCarDealerCapability(user: Doc<"users">): boolean {
   return role === "real_estate_agent" && typeof user.vehicleDealerApprovedAt === "number";
 }
 
+/**
+ * Car Company capability: explicitly approved by an administrator (users.carCompanyApprovedAt, set
+ * only by roles:adminDecideRoleApplication) AND linked to a verified BUSINESS account. It lapses
+ * when the account is deactivated, its business verification is no longer approved, or its business
+ * identity (name + TIN) is no longer the one the approval was granted for. It is never implied by
+ * any role, by the individual dealer capability, or by a subscription.
+ */
+export function hasCarCompanyCapability(user: Doc<"users">): boolean {
+  if (!user.isActive) return false;
+  if (typeof user.carCompanyApprovedAt !== "number") return false;
+  if (!(user.accountType === "BUSINESS" && isIdentityVerified(user))) return false;
+  return carCompanyIdentityMatchesApproval(user);
+}
+
+/** Case-, spacing- and punctuation-insensitive form used to compare business names and TINs. */
+export function normalizeBusinessIdentity(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+/** The business identity currently on the account (what KYC verified). */
+export function currentBusinessIdentity(user: Doc<"users">): { name: string; tin: string } {
+  return {
+    name: String(user.businessName ?? "").trim(),
+    tin: String(user.tinNumber ?? user.tin ?? "").trim(),
+  };
+}
+
+/**
+ * Does the account's current business name and TIN still match the identity its car-company approval
+ * was granted for? Fails closed: an approval without a recorded identity never matches, so a changed
+ * (or never-recorded) identity needs a fresh car-company review, never a silent carry-over.
+ */
+export function carCompanyIdentityMatchesApproval(user: Doc<"users">): boolean {
+  const approvedName = normalizeBusinessIdentity(user.carCompanyApprovedName);
+  const approvedTin = normalizeBusinessIdentity(user.carCompanyApprovedTin);
+  if (!approvedName || !approvedTin) return false;
+  const now = currentBusinessIdentity(user);
+  return normalizeBusinessIdentity(now.name) === approvedName && normalizeBusinessIdentity(now.tin) === approvedTin;
+}
+
+/** An approval is on record but the business identity has since changed (re-review required). */
+export function carCompanyReapprovalRequired(user: Doc<"users">): boolean {
+  return typeof user.carCompanyApprovedAt === "number" && !carCompanyIdentityMatchesApproval(user);
+}
+
+/** Identity/business verification approved by an administrator (any of the stored spellings). */
+export function isIdentityVerified(user: Doc<"users">): boolean {
+  const s = String(user.verificationStatus ?? "").toLowerCase();
+  return user.isVerified === true && (s === "verified" || s === "approved");
+}
+
+/**
+ * Business-verification state for display and approval gating, from authoritative server data only
+ * (never from the client): "approved" | "pending" | "rejected" | "missing".
+ * "missing" = not a BUSINESS account, or no business name / TIN on record, or never submitted.
+ */
+export function businessVerificationState(user: Doc<"users">): "approved" | "pending" | "rejected" | "missing" {
+  if (user.accountType !== "BUSINESS") return "missing";
+  if (!String(user.businessName ?? "").trim() || !String(user.tinNumber ?? "").trim()) return "missing";
+  if (isIdentityVerified(user)) return "approved";
+  const s = String(user.verificationStatus ?? "").toLowerCase();
+  if (s === "rejected") return "rejected";
+  if (s === "pending_review" || s === "pending") return "pending";
+  return "missing";
+}
+
 /** Professional identity shown to the user and on public profiles (server-derived). */
 export function professionalTitle(user: Doc<"users">): string {
+  const base = baseProfessionalTitle(user);
+  if (!hasCarCompanyCapability(user)) return base;
+  return base === "Client" ? "Car Company" : `${base} & Car Company`;
+}
+
+function baseProfessionalTitle(user: Doc<"users">): string {
   const role = businessRole(user);
   if (role === "real_estate_agent") {
     if (!isRoleApproved(user)) return "Client";
@@ -179,13 +259,27 @@ export function legacyAgentGrace(
 
 export type PostingKind = "property" | "vehicle" | "hotel";
 
-/** Server-side decision: may this user create/publish this kind of listing right now? */
+export type PostingDecision =
+  | { allowed: true; capability?: VehiclePostingCapability }
+  | { allowed: false; reason: string; code?: "CAPABILITY_REQUIRED" };
+
+/**
+ * Server-side decision: may this user create/publish this kind of listing right now?
+ *
+ * Vehicles are posted under ONE explicit capability, and only that capability's rules apply:
+ *   individual_dealer  free (approved Car Dealer / Vehicle Owner, or an agent's dealer add-on)
+ *   car_company        needs the approved Car Company capability AND an active car_company
+ *                      subscription; no other subscription (agent, hotel) ever satisfies it.
+ * An account holding both must choose; the stricter rule is never inferred away. An account holding
+ * a single capability does not have to say which.
+ */
 export async function postingPermission(
   ctx: { db: any },
   user: Doc<"users">,
   kind: PostingKind,
-  now: number = Date.now()
-): Promise<{ allowed: true } | { allowed: false; reason: string }> {
+  now: number = Date.now(),
+  opts: { capability?: VehiclePostingCapability } = {}
+): Promise<PostingDecision> {
   if (!user.isActive) return { allowed: false, reason: "Your account is not active." };
   const role = businessRole(user);
   if (role === "admin") return { allowed: true };
@@ -216,9 +310,27 @@ export async function postingPermission(
     return needApproval("Real Estate Owner or Real Estate Agent");
   }
   if (kind === "vehicle") {
-    if (role === "vehicle_dealer") return approved ? { allowed: true } : needApproval("Car Dealer / Vehicle Owner");
-    // A Real Estate Agent posts vehicles ONLY with a separately approved Car Dealer capability.
-    if (hasCarDealerCapability(user)) return { allowed: true };
+    const company = hasCarCompanyCapability(user);
+    const dealer = hasCarDealerCapability(user);
+    let chosen: VehiclePostingCapability | undefined = opts.capability;
+    if (!chosen) {
+      if (company && dealer) {
+        return {
+          allowed: false,
+          code: "CAPABILITY_REQUIRED",
+          reason: "Your account is both a Car Company and a Car Dealer. Choose which one this vehicle is posted under.",
+        };
+      }
+      chosen = company ? "car_company" : "individual_dealer";
+    }
+    if (chosen === "car_company") {
+      if (!company) return needApproval("Car Company");
+      return (await activeSubscription(ctx, user._id, "car_company", now))
+        ? { allowed: true, capability: "car_company" }
+        : { allowed: false, reason: "Your Car Company subscription is not active. Subscribe to post vehicles." };
+    }
+    // individual dealer: free. (A Real Estate Agent needs the separately approved add-on.)
+    if (dealer) return { allowed: true, capability: "individual_dealer" };
     return needApproval("Car Dealer / Vehicle Owner");
   }
   // hotel
@@ -236,21 +348,25 @@ export async function professionalBadge(
   ctx: { db: any },
   user: Doc<"users">,
   now: number = Date.now()
-): Promise<{ verifiedAgent: boolean; verifiedHotel: boolean; agentExpiresAt: number | null; hotelExpiresAt: number | null }> {
+): Promise<{ verifiedAgent: boolean; verifiedHotel: boolean; verifiedCarCompany: boolean; agentExpiresAt: number | null; hotelExpiresAt: number | null; carCompanyExpiresAt: number | null }> {
   const role = businessRole(user);
   const ok = user.isActive && isRoleApproved(user);
   const agent = ok && role === "real_estate_agent" ? await activeSubscription(ctx, user._id, "agent", now) : null;
   const hotel = ok && role === "hotel_owner" ? await activeSubscription(ctx, user._id, "hotel_operator", now) : null;
+  const company = hasCarCompanyCapability(user) ? await activeSubscription(ctx, user._id, "car_company", now) : null;
   return {
     verifiedAgent: !!agent,
     verifiedHotel: !!hotel,
+    verifiedCarCompany: !!company,
     agentExpiresAt: agent?.expiryDate ?? null,
     hotelExpiresAt: hotel?.expiryDate ?? null,
+    carCompanyExpiresAt: company?.expiryDate ?? null,
   };
 }
 
 /** Role requested in an application -> stored users.role on approval. */
 export function roleForApplication(target: string): "agent" | "property_owner" | "dealer" | "hotel_operator" | null {
+  // "car_company" is a capability add-on, not a primary role: it never maps to users.role.
   if (target === "agent") return "agent";
   if (target === "property_owner") return "property_owner";
   if (target === "dealer" || target === "merchant") return "dealer";

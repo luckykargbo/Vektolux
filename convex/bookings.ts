@@ -5,6 +5,7 @@
 // Includes collision check to prevent double bookings & platform fee calc.
 // ═══════════════════════════════════════════════════════════════════════
 
+import { vehicleAcceptsNewTransactions } from "./lib/vehicleEligibility";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
@@ -93,6 +94,22 @@ export const createBooking = mutation({
     vendorId: v.string(),
   }),
   handler: async (ctx, args) => {
+    // Which booking types exist for which listing type. Checked FIRST (before any listing read or
+    // write) so an unsupported or mismatched request leaves no booking, fee or ledger record:
+    //   property listing -> property_inspection (site visit), hourly_guesthouse
+    //   vehicle listing  -> vehicle_inspection (free pre-purchase inspection / test drive) only
+    // Vehicle rental / daily hire is no longer offered; hotel bookings use hotelBookings.ts.
+    if (args.bookingType === "vehicle_rental") {
+      throw new Error("Vehicle rental is no longer available on Vektolux. Vehicles can be purchased from their listing.");
+    }
+    const allowedBookingTypes: Record<"property" | "vehicle", ReadonlyArray<string>> = {
+      property: ["property_inspection", "hourly_guesthouse"],
+      vehicle: ["vehicle_inspection"],
+    };
+    if (!allowedBookingTypes[args.listingType].includes(args.bookingType)) {
+      throw new Error("This booking type is not available for this listing.");
+    }
+
     // Identity, vendor and price are all decided by the SERVER, never by the client.
     const { userId: buyerUserId, user: buyer } = await requireSelf(ctx, args.sessionToken, args.buyerId);
     if (!(args.endTime > args.startTime)) throw new Error("End time must be after start time.");
@@ -111,7 +128,9 @@ export const createBooking = mutation({
     } else {
       const vehId = ctx.db.normalizeId("vehicleListings", args.listingId);
       const veh = vehId ? await ctx.db.get(vehId) : null;
-      if (!veh || veh.isDeleted === true) throw new Error("Listing not found.");
+      // Only an available listing takes a new booking: published, unsold, not taken down, and (for a
+      // car company) still approved and subscribed.
+      if (!veh || !(await vehicleAcceptsNewTransactions(ctx, veh)).ok) throw new Error("Listing not found.");
       vendorUserId = veh.ownerId as string;
       serverRate = veh.pricePerDay;
       listingTitle = veh.title;

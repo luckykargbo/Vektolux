@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { filterOfferableVehicles } from "./lib/vehicleEligibility";
 import { mutation, query } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { isListingPublic, toPublicProperty, toPublicVehicle } from "./lib/publicListing";
@@ -174,7 +175,7 @@ export const getSocialFeed = query({
         .order("desc")
         .take(10);
         
-      for (const item of vehicles) {
+      for (const item of await filterOfferableVehicles(ctx, vehicles)) {
         // Privacy Guard: Strip phone fields from public feed
         const { privateContactPhone: _p, contactPhone: _c, ...safeItem } =
           item as typeof item & { privateContactPhone?: string; contactPhone?: string };

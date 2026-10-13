@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import type { Id } from "./_generated/dataModel";
+import { seedLegacyRentalOrder } from "../test-support/legacyRentalFixture";
 import { ADMIN_SESSION_TTL_MS, USER_SESSION_TTL_MS } from "./lib/session";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
@@ -117,7 +118,7 @@ describe("snapshots on every order type", () => {
     const buyer = await makeUser(t, "buyer");
     await fund(t, buyer.id, 200_000);
 
-    const rent: any = await t.mutation(api.escrow.initiateEscrowOrder, { sessionToken: buyer.token, orderType: "VEHICLE_RENTAL", vehicleListingId: await vehicle(t, owner.id, 100, "per_day"), numberOfDays: 3, payFromWallet: true });
+    const rent: any = await seedLegacyRentalOrder(t, { buyerId: buyer.id, vehicleListingId: await vehicle(t, owner.id, 100, "per_day"), numberOfDays: 3, payFromWallet: true });
     const sale: any = await t.mutation(api.escrow.initiateEscrowOrder, { sessionToken: buyer.token, orderType: "VEHICLE_PURCHASE", vehicleListingId: await vehicle(t, owner.id, 10_000, "total_sale"), payFromWallet: true });
     const stay: any = await t.mutation(api.realEstateEscrow.initiateRealEstateEscrow, { sessionToken: buyer.token, contractType: "SHORT_STAY_BOOKING", propertyListingId: await property(t, owner.id, "hourly_guesthouse", 100), nightsCount: 2, paymentRail: "WALLET" } as any);
     const lease: any = await t.mutation(api.realEstateEscrow.initiateRealEstateEscrow, { sessionToken: buyer.token, contractType: "LONG_TERM_LEASE", propertyListingId: await property(t, owner.id, "long_term_rent", 12_000), leaseDurationMonths: 12, paymentRail: "WALLET" } as any);
@@ -275,7 +276,7 @@ describe("buyer and owner fees through payouts and refunds", () => {
     const renter = await makeUser(t, "renter");
     await fund(t, renter.id, 5_000);
     await setRule(t, admin, "vehicle_rental", { ownerFeeBps: 1500, buyerFeeBps: 300 });
-    const o: any = await t.mutation(api.escrow.initiateEscrowOrder, { sessionToken: renter.token, orderType: "VEHICLE_RENTAL", vehicleListingId: await vehicle(t, owner.id, 100, "per_day"), numberOfDays: 3, payFromWallet: true });
+    const o: any = await seedLegacyRentalOrder(t, { buyerId: renter.id, vehicleListingId: await vehicle(t, owner.id, 100, "per_day"), numberOfDays: 3, payFromWallet: true });
     expect(o.grossEscrowAmount).toBe(809); // 300 + 9 buyer fee + 500 deposit
     await t.mutation(api.escrow.completeVehicleInspection, {
       sessionToken: owner.token, escrowOrderId: o.escrowOrderId, inspectionType: "PRE_TRIP_RENTAL", odometerReadingKm: 1, fuelTankPercentage: 50,

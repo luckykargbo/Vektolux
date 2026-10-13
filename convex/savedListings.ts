@@ -7,6 +7,7 @@
 // the number of real saves. Only public listings can be saved; un-saving always works.
 // ═══════════════════════════════════════════════════════════════════════
 
+import { vehicleOfferability } from "./lib/vehicleEligibility";
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { requireSelf } from "./lib/auth";
@@ -16,6 +17,11 @@ const listingType = v.union(v.literal("property"), v.literal("vehicle"));
 
 function vehicleIsPublic(doc: any): boolean {
   return !!doc && doc.isDeleted !== true && doc.isPublished !== false && doc.status !== "TAKEN_DOWN";
+}
+
+/** Public AND (for car-company listings) the company is still approved and subscribed. */
+async function vehicleIsOffered(ctx: { db: any }, doc: any): Promise<boolean> {
+  return vehicleIsPublic(doc) && (await vehicleOfferability(ctx, doc)).offerable;
 }
 
 async function loadListing(ctx: { db: any }, type: "property" | "vehicle", listingId: string) {
@@ -44,7 +50,7 @@ export const toggleSavedListing = mutation({
       return { saved: false };
     }
 
-    const isPublic = args.listingType === "property" ? isListingPublic(listing) : vehicleIsPublic(listing);
+    const isPublic = args.listingType === "property" ? isListingPublic(listing) : await vehicleIsOffered(ctx, listing);
     if (!listing || !isPublic) throw new Error("This listing is no longer available.");
     if (String(listing.ownerId) === String(userId)) throw new Error("You cannot save your own listing.");
     const count = await ctx.db
@@ -93,7 +99,7 @@ export const getMySavedListings = query({
     const out = [];
     for (const r of rows) {
       const doc: any = await loadListing(ctx, r.listingType, r.listingId);
-      const available = r.listingType === "property" ? isListingPublic(doc) : vehicleIsPublic(doc);
+      const available = r.listingType === "property" ? isListingPublic(doc) : await vehicleIsOffered(ctx, doc);
       if (!doc || !available) {
         // Kept so the user can remove it; no details of a listing that is not public.
         out.push({ listingType: r.listingType, listingId: r.listingId, savedAt: r.createdAt, available: false });

@@ -6,6 +6,7 @@
 // All functions enforce admin role validation.
 // ═══════════════════════════════════════════════════════════════════════
 
+import { vehicleAcceptsNewTransactions } from "./lib/vehicleEligibility";
 import { query, mutation, action, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireSelf } from "./lib/auth";
@@ -1547,7 +1548,9 @@ export const submitContactRequest = mutation({
       const vehId = ctx.db.normalizeId("vehicleListings", args.listingId);
       if (!vehId) throw new Error("Vehicle listing not found.");
       const listing = await ctx.db.get(vehId);
-      if (!listing || listing.isDeleted === true) throw new Error("Vehicle listing not found.");
+      // Only an available listing takes a new inquiry (not unpublished, sold, taken down, or a car
+      // company that is no longer approved and subscribed).
+      if (!listing || !(await vehicleAcceptsNewTransactions(ctx, listing)).ok) throw new Error("Vehicle listing not found.");
       sellerId = listing.ownerId;
       listingTitle = listing.title;
     }

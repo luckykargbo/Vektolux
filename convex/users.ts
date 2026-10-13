@@ -3,6 +3,7 @@
 // VEKTOLUX — User Profile Queries & Mutations
 // ═══════════════════════════════════════════════════════════════════════
 
+import { filterOfferableVehicles } from "./lib/vehicleEligibility";
 import { action, mutation, query, internalMutation, internalQuery, MutationCtx } from "./_generated/server";
 import { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
@@ -15,7 +16,7 @@ import { userRole } from "./schema";
 import { findUserByIdentifier, verifyPassword } from "./auth";
 import { consume } from "./lib/rateLimit";
 import { consumeChallenge, issueChallenge, randomHex, recordTokenUse, sha256Hex, tokenAlreadyUsed } from "./lib/oauthState";
-import { hasCarDealerCapability, isRoleApproved, professionalBadge, professionalTitle, roleForApplication } from "./lib/permissions";
+import { hasCarCompanyCapability, hasCarDealerCapability, isRoleApproved, professionalBadge, professionalTitle, roleForApplication } from "./lib/permissions";
 import { requireAuthenticatedUser, requireAdmin, requireSelf, resolveOptionalUser } from "./lib/auth";
 import { isListingPublic, toPublicProperty, toPublicVehicle } from "./lib/publicListing";
 
@@ -498,7 +499,8 @@ export const applyRoleUpgrade = mutation({
       v.literal("property_owner"),
       v.literal("dealer"),
       v.literal("merchant"),
-      v.literal("hotel_operator")
+      v.literal("hotel_operator"),
+      v.literal("car_company")
     ),
     businessName: v.optional(v.string()),
     tinNumber: v.optional(v.string()),
@@ -528,6 +530,21 @@ export const applyRoleUpgrade = mutation({
     // Car Dealer held as an add-on to the Real Estate Agent role counts as granted too.
     if (targetRole === "dealer" && hasCarDealerCapability(user)) {
       return { success: false, errorCode: "ALREADY_GRANTED", message: "Your account is already an approved Car Dealer." };
+    }
+    if (targetRole === "car_company") {
+      // An application is only a request: the capability is granted by an administrator, and only
+      // for a verified BUSINESS account (re-checked at approval in roles.ts).
+      if (hasCarCompanyCapability(user)) {
+        return { success: false, errorCode: "ALREADY_GRANTED", message: "Your account is already an approved Car Company." };
+      }
+      if (user.accountType !== "BUSINESS") {
+        return { success: false, errorCode: "BUSINESS_ACCOUNT_REQUIRED", message: "Car Company status needs a business account. Complete business verification first." };
+      }
+      const name = (args.businessName ?? user.businessName ?? "").trim();
+      const tin = (args.tinNumber ?? user.tinNumber ?? "").trim();
+      if (!name || !tin) {
+        return { success: false, errorCode: "BUSINESS_DETAILS_REQUIRED", message: "Business name and TIN are required for a Car Company application." };
+      }
     }
     const now = Date.now();
     const appId = await ctx.db.insert("role_applications", {
@@ -609,9 +626,10 @@ export const getUserPosts = query({
       // Public profile view: never private phone / street address / coordinates.
       // Public listings only: no drafts, listings under review, rejected, archived or removed ones.
       ...realEstate.filter((r) => isListingPublic(r)).map((r) => ({ ...toPublicProperty(r), type: "property" })),
-      ...vehicles
-        .filter((v) => v.isDeleted !== true && v.isPublished !== false && v.status !== "TAKEN_DOWN")
-        .map((v) => ({ ...toPublicVehicle(v), type: "vehicle" })),
+      ...(await filterOfferableVehicles(
+        ctx,
+        vehicles.filter((v) => v.isDeleted !== true && v.isPublished !== false && v.status !== "TAKEN_DOWN")
+      )).map((v) => ({ ...toPublicVehicle(v), type: "vehicle" })),
     ];
 
     combined.sort((a: any, b: any) => b._creationTime - a._creationTime);

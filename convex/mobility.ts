@@ -18,6 +18,7 @@ import {
 } from "./schema";
 import { encodeGeohash } from "./lib/geo";
 import { requireVerifiedSeller } from "./middleware";
+import { filterOfferableVehicles, vehicleOfferability, vehicleOfferabilityChecker } from "./lib/vehicleEligibility";
 import { requireAdminSession, requireOwnedDoc, requireSelf, resolveOptionalUser } from "./lib/auth";
 import { toPublicVehicle } from "./lib/publicListing";
 import { postingPermission } from "./lib/permissions";
@@ -54,6 +55,9 @@ export const registerVehicleListing = mutation({
     currency: v.optional(v.string()),
     latitude: v.optional(v.number()),
     longitude: v.optional(v.number()),
+    // Capability this vehicle is posted under. Required only when the account holds BOTH the
+    // individual dealer and the car-company capability (the server never guesses).
+    postingCapability: v.optional(v.union(v.literal("individual_dealer"), v.literal("car_company"))),
   },
   returns: v.object({
     success: v.boolean(),
@@ -62,7 +66,7 @@ export const registerVehicleListing = mutation({
   }),
   handler: async (ctx, args) => {
     // Enforce verified seller or dealer status
-    await requireVerifiedSeller(ctx, args.ownerId, args.sessionToken, "vehicle");
+    const seller = await requireVerifiedSeller(ctx, args.ownerId, args.sessionToken, "vehicle", args.postingCapability);
 
     const userId = ctx.db.normalizeId("users", args.ownerId);
     if (!userId) {
@@ -95,6 +99,7 @@ export const registerVehicleListing = mutation({
 
     const listingId = await ctx.db.insert("vehicleListings", {
       ownerId: userId,
+      postedAs: seller.capability,
       title: args.title.trim(),
       category: args.category,
       price: args.price,
@@ -163,11 +168,14 @@ export const getVehiclesByCategory = query({
     }
 
     const targetStatus = args.status ?? "AVAILABLE";
-    const filtered = vehicles.filter(
-      (v) =>
-        v.isDeleted !== true &&
-        v.isPublished !== false &&
-        (args.status === "all" || v.status === targetStatus)
+    const filtered = await filterOfferableVehicles(
+      ctx,
+      vehicles.filter(
+        (v) =>
+          v.isDeleted !== true &&
+          v.isPublished !== false &&
+          (args.status === "all" || v.status === targetStatus)
+      )
     );
 
     return filtered.map((v) => ({
@@ -225,8 +233,9 @@ export const listVehicles = query({
       .order("desc")
       .take(args.limit ?? 50);
 
-    let filtered = vehicles.filter(
-      (v) => v.isPublished !== false && v.isDeleted !== true && v.status !== "TAKEN_DOWN"
+    let filtered = await filterOfferableVehicles(
+      ctx,
+      vehicles.filter((v) => v.isPublished !== false && v.isDeleted !== true && v.status !== "TAKEN_DOWN")
     );
 
     if (args.category && args.category !== "all") {
@@ -291,6 +300,11 @@ export const getVehicleById = query({
     const listing = await ctx.db.get(id);
     if (!listing || listing.isDeleted) return null;
     if (listing.isPublished === false || listing.status === "TAKEN_DOWN") {
+      const viewer = args.sessionToken ? await resolveOptionalUser(ctx, { sessionToken: args.sessionToken }) : null;
+      if (!viewer || viewer.userId !== listing.ownerId) return null;
+    } else if (!(await vehicleOfferability(ctx, listing as any)).offerable) {
+      // A car-company listing whose company is no longer approved/subscribed is not public (the
+      // owner still sees it, and the record is untouched).
       const viewer = args.sessionToken ? await resolveOptionalUser(ctx, { sessionToken: args.sessionToken }) : null;
       if (!viewer || viewer.userId !== listing.ownerId) return null;
     }
@@ -408,11 +422,14 @@ export const createVehicleListing = mutation({
     isPublished: v.optional(v.boolean()),
     capacity: v.optional(v.string()),
     location: v.optional(v.string()),
+    // Capability this vehicle is posted under. Required only when the account holds BOTH the
+    // individual dealer and the car-company capability (the server never guesses).
+    postingCapability: v.optional(v.union(v.literal("individual_dealer"), v.literal("car_company"))),
   },
   returns: v.string(),
   handler: async (ctx, args) => {
     // Enforce verified seller or dealer status
-    await requireVerifiedSeller(ctx, args.ownerId, args.sessionToken, "vehicle");
+    const seller = await requireVerifiedSeller(ctx, args.ownerId, args.sessionToken, "vehicle", args.postingCapability);
 
     const userId = ctx.db.normalizeId("users", args.ownerId);
     if (!userId) throw new Error("Invalid owner user ID.");
@@ -456,6 +473,7 @@ export const createVehicleListing = mutation({
     const now = Date.now();
     const listingId = await ctx.db.insert("vehicleListings", {
       ownerId: userId,
+      postedAs: seller.capability,
       title,
       category,
       price,
@@ -503,10 +521,15 @@ export const getMyVehicleListings = query({
       .order("desc")
       .collect();
 
-    return listings
-      .filter((v) => v.isDeleted !== true)
+    const check = vehicleOfferabilityChecker(ctx);
+    const visible = listings.filter((v) => v.isDeleted !== true);
+    const offer = new Map<string, any>();
+    for (const v of visible) offer.set(v._id as string, await check(v as any));
+    return visible
       .map((v) => ({
         ...v,
+        // Owner information only: whether the public can currently see / order this listing.
+        publicOfferability: offer.get(v._id as string),
         _id: v._id as string,
         id: v._id as string,
         ownerId: String(v.ownerId),
@@ -532,18 +555,33 @@ export const updateVehicleListing = mutation({
     pricePerDay: v.optional(v.number()),
     salePrice: v.optional(v.number()),
     isPublished: v.optional(v.boolean()),
+    // Capability this vehicle is posted under. Required only when the account holds BOTH the
+    // individual dealer and the car-company capability (the server never guesses).
+    postingCapability: v.optional(v.union(v.literal("individual_dealer"), v.literal("car_company"))),
   },
   handler: async (ctx, args) => {
     const { doc: listing, auth } = await requireOwnedDoc(
       ctx, "vehicleListings", args.listingId, args.sessionToken
     );
+    // The capability a vehicle was posted under is recorded once and is immutable: a caller can
+    // neither switch it nor use a different one to publish. Only a legacy listing (no record) takes
+    // the caller's choice, and that choice is then frozen.
+    const recorded = (listing as any).postedAs as "individual_dealer" | "car_company" | undefined;
+    if (recorded && args.postingCapability && args.postingCapability !== recorded) {
+      throw new Error("This vehicle was posted under a different capability and cannot be switched.");
+    }
+    let freezeCapability: "individual_dealer" | "car_company" | undefined;
     if (args.isPublished === true && listing.isPublished === false) {
-      const permission = await postingPermission(ctx, auth.user, "vehicle");
+      const permission = await postingPermission(ctx, auth.user, "vehicle", Date.now(), {
+        capability: recorded ?? args.postingCapability,
+      });
       if (!permission.allowed) throw new Error(permission.reason);
+      if (!recorded && permission.allowed && permission.capability) freezeCapability = permission.capability;
     }
     const id = listing._id;
 
     const updates: Record<string, any> = { updatedAt: Date.now() };
+    if (freezeCapability) updates.postedAs = freezeCapability;
     if (args.title !== undefined) updates.title = args.title;
     if (args.price !== undefined) updates.price = args.price;
     if (args.capacity !== undefined) updates.capacity = args.capacity;

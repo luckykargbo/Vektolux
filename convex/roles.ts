@@ -9,7 +9,16 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { requireAdmin } from "./lib/auth";
-import { businessRole, isRoleApproved, roleForApplication } from "./lib/permissions";
+import {
+  businessRole,
+  businessVerificationState,
+  currentBusinessIdentity,
+  isIdentityVerified,
+  isRoleApproved,
+  normalizeBusinessIdentity,
+  roleForApplication,
+} from "./lib/permissions";
+import type { Doc } from "./_generated/dataModel";
 
 const statusValidator = v.union(
   v.literal("pending"),
@@ -24,8 +33,26 @@ const ROLE_LABEL: Record<string, string> = {
   dealer: "Car Dealer / Vehicle Owner",
   merchant: "Car Dealer / Vehicle Owner",
   hotel_operator: "Hotel / Guest House Owner",
+  car_company: "Car Company",
   driver: "Driver (discontinued)",
 };
+
+/**
+ * Why a car-company application's business details cannot be approved (null when they can): values
+ * typed into the application must be the ones the account's verified business identity carries.
+ */
+function applicationIdentityMismatch(
+  app: Pick<Doc<"role_applications">, "businessName" | "tinNumber">,
+  user: Doc<"users">
+): string | null {
+  const verified = currentBusinessIdentity(user);
+  const differs = (applied: string | undefined, current: string) =>
+    !!applied?.trim() && normalizeBusinessIdentity(applied) !== normalizeBusinessIdentity(current);
+  if (differs(app.businessName, verified.name) || differs(app.tinNumber, verified.tin)) {
+    return "The application's business name or TIN does not match the verified business. Have the business re-verified with the new details, or withdraw the changed details, then apply again.";
+  }
+  return null;
+}
 
 export const adminListRoleApplications = query({
   args: {
@@ -39,9 +66,27 @@ export const adminListRoleApplications = query({
     return await Promise.all(
       filtered.slice(0, 200).map(async (r) => {
         const u = await ctx.db.get(r.userId);
+        const isCompany = r.targetRole === "car_company";
+        const bizState = u ? businessVerificationState(u) : "missing";
+        const identityMismatch = isCompany && u ? applicationIdentityMismatch(r, u) : null;
         return {
           id: r._id as string,
           userId: r.userId as string,
+          // Car Company applications: the SERVER's view of the business verification (display only;
+          // the approval itself re-checks it in adminDecideRoleApplication).
+          isCarCompanyApplication: isCompany,
+          accountType: u?.accountType ?? null,
+          businessVerification: isCompany ? bizState : null,
+          canApprove: isCompany ? bizState === "approved" && !identityMismatch : true,
+          approvalBlockedReason:
+            isCompany && bizState !== "approved"
+              ? bizState === "pending"
+                ? "Business verification is still pending review."
+                : bizState === "rejected"
+                  ? "Business verification was rejected."
+                  : "No verified business account (business name, TIN or business verification missing)."
+              : identityMismatch,
+          carCompanyApproved: isCompany && !!u && typeof u.carCompanyApprovedAt === "number",
           userName: u?.name ?? "Unknown",
           userEmail: u?.email ?? null,
           currentRole: u?.role ?? null,
@@ -101,10 +146,61 @@ export const adminDecideRoleApplication = mutation({
     const userIsApprovedAgent = businessRole(user) === "real_estate_agent" && isRoleApproved(user);
     const userIsApprovedDealer = businessRole(user) === "vehicle_dealer" && isRoleApproved(user);
     const isDealerApp = app.targetRole === "dealer" || app.targetRole === "merchant";
+    const isCompanyApp = app.targetRole === "car_company";
 
-    if (args.decision === "approve") {
+    if (isCompanyApp) {
+      // Car Company is a capability ADD-ON: the user's primary role, other capabilities and their
+      // subscriptions are never touched, in either direction.
+      if (args.decision === "approve") {
+        if (user.accountType !== "BUSINESS" || !isIdentityVerified(user)) {
+          throw new Error("A Car Company must be a verified business account. Approve its business verification first.");
+        }
+        // The approval is for the identity KYC verified (the account's own business name and TIN).
+        // Values typed into an application are never promoted to the account's identity here.
+        const verified = currentBusinessIdentity(user);
+        if (!verified.name || !verified.tin) {
+          throw new Error("Business name and TIN are required to approve a Car Company.");
+        }
+        const mismatch = applicationIdentityMismatch(app, user);
+        if (mismatch) throw new Error(mismatch);
+        await ctx.db.patch(user._id, {
+          carCompanyApprovedAt: now,
+          carCompanyApprovedBy: adminId,
+          carCompanyApprovedName: verified.name,
+          carCompanyApprovedTin: verified.tin,
+          updatedAt: now,
+        });
+        await ctx.db.patch(app._id, { status: "approved", reviewNotes: notes, reviewedBy: adminId, reviewedAt: now, updatedAt: now });
+        action = "ROLE_APPROVED";
+        title = "Application approved";
+        body = `You are approved as a ${label}. Activate a Car Company subscription to post vehicles.`;
+      } else if (args.decision === "reject") {
+        await ctx.db.patch(app._id, { status: "rejected", reviewNotes: notes, reviewedBy: adminId, reviewedAt: now, updatedAt: now });
+        action = "ROLE_REJECTED";
+        title = "Application not approved";
+        body = `Your ${label} application was not approved: ${notes}`;
+      } else {
+        await ctx.db.patch(user._id, {
+          carCompanyApprovedAt: undefined,
+          carCompanyApprovedBy: undefined,
+          carCompanyApprovedName: undefined,
+          carCompanyApprovedTin: undefined,
+          updatedAt: now,
+        });
+        await ctx.db.patch(app._id, { status: "suspended", reviewNotes: notes, reviewedBy: adminId, reviewedAt: now, updatedAt: now });
+        action = "ROLE_SUSPENDED";
+        title = "Business role suspended";
+        body = `Your ${label} status has been suspended: ${notes}. Your listings and history are kept.`;
+      }
+    } else if (args.decision === "approve") {
       const role = roleForApplication(app.targetRole);
       if (!role) throw new Error("This role is no longer offered and cannot be approved.");
+      // An account that holds a car-company approval keeps the business identity that approval was
+      // granted for: another role's application never silently rewrites it.
+      const identityFromApplication =
+        typeof user.carCompanyApprovedAt === "number"
+          ? {}
+          : { businessName: app.businessName ?? user.businessName, tinNumber: app.tinNumber ?? user.tinNumber };
       if (isDealerApp && userIsApprovedAgent) {
         // Real Estate Agent + Car Dealer: the dealer capability is ADDED; the agent role, its
         // workspace and its subscription rules are untouched.
@@ -119,8 +215,7 @@ export const adminDecideRoleApplication = mutation({
           roleApprovedBy: adminId,
           vehicleDealerApprovedAt: user.roleApprovedAt ?? now,
           vehicleDealerApprovedBy: user.roleApprovedBy ?? adminId,
-          businessName: app.businessName ?? user.businessName,
-          tinNumber: app.tinNumber ?? user.tinNumber,
+          ...identityFromApplication,
           updatedAt: now,
         });
       } else {
@@ -132,8 +227,7 @@ export const adminDecideRoleApplication = mutation({
           // a different primary role replaces any add-on capability
           vehicleDealerApprovedAt: undefined,
           vehicleDealerApprovedBy: undefined,
-          businessName: app.businessName ?? user.businessName,
-          tinNumber: app.tinNumber ?? user.tinNumber,
+          ...identityFromApplication,
           updatedAt: now,
         });
       }

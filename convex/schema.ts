@@ -458,6 +458,15 @@ export default defineSchema({
     // application; see roles.ts). Never set for a dealer whose primary role is already "dealer".
     vehicleDealerApprovedAt: v.optional(v.number()),
     vehicleDealerApprovedBy: v.optional(v.id("users")),
+    // Car Company capability (subscription-required). Granted ONLY by an admin decision on a
+    // "car_company" role application, and only for a verified BUSINESS account (roles.ts). It is an
+    // add-on: it never changes users.role and is independent of the individual dealer capability.
+    carCompanyApprovedAt: v.optional(v.number()),
+    carCompanyApprovedBy: v.optional(v.id("users")),
+    // The business identity (name + TIN) the approval was granted for. The capability only holds
+    // while the account's current business name and TIN still match (lib/permissions.ts).
+    carCompanyApprovedName: v.optional(v.string()),
+    carCompanyApprovedTin: v.optional(v.string()),
     // When an agent approved by the OLD admin flow (role never changed) got role "agent" restored
     // (lib/legacyRoles.ts). Audit trail only; it grants nothing by itself.
     legacyRoleRestoredAt: v.optional(v.number()),
@@ -664,6 +673,8 @@ export default defineSchema({
     images: v.array(v.string()),
     status: commercialVehicleStatus,
     createdAt: v.number(),
+    // Capability the listing was posted under (server-decided; absent on legacy listings).
+    postedAs: v.optional(v.union(v.literal("individual_dealer"), v.literal("car_company"))),
 
     // Detailed vehicle specs & options
     make: v.optional(v.string()),
@@ -1069,7 +1080,8 @@ export default defineSchema({
       v.literal("merchant"), // legacy alias of dealer
       v.literal("property_owner"), // Real Estate Owner
       v.literal("dealer"), // Car Dealer / Vehicle Owner
-      v.literal("hotel_operator") // Hotel / Guest House Owner (subscription-based)
+      v.literal("hotel_operator"), // Hotel / Guest House Owner (subscription-based)
+      v.literal("car_company") // Verified car company (subscription-based capability add-on)
     ),
     businessName: v.optional(v.string()),
     tinNumber: v.optional(v.string()),
@@ -1922,7 +1934,8 @@ export default defineSchema({
   subscription_plans: defineTable({
     name: v.string(),
     tierCode: v.string(),
-    roleTarget: v.union(v.literal("hotel_operator"), v.literal("agent"), v.literal("merchant")),
+    // "merchant" is LEGACY: never enforced and no longer sold (kept so old plans/subscriptions validate).
+    roleTarget: v.union(v.literal("hotel_operator"), v.literal("agent"), v.literal("car_company"), v.literal("merchant")),
     basePrice: v.number(),
     currency: v.string(),
     billingInterval: v.union(v.literal("monthly"), v.literal("quarterly"), v.literal("annual")),

@@ -22,6 +22,8 @@ import {
   professionalBadge,
   SubscriptionRole,
   hasCarDealerCapability,
+  hasCarCompanyCapability,
+  carCompanyReapprovalRequired,
   professionalTitle,
 } from "./lib/permissions";
 
@@ -34,7 +36,7 @@ const RENEWAL_WINDOW_MS = 72 * 60 * 60 * 1000; // 72 Hours
 export const getPlans = query({
   args: {
     roleTarget: v.optional(
-      v.union(v.literal("hotel_operator"), v.literal("agent"), v.literal("merchant"))
+      v.union(v.literal("hotel_operator"), v.literal("agent"), v.literal("car_company"), v.literal("merchant"))
     ),
   },
   handler: async (ctx, args) => {
@@ -45,6 +47,9 @@ export const getPlans = query({
 
     const filtered = plans.filter((p) => {
       if (!p.isActive) return false;
+      // Legacy "merchant" plans are never offered: individual dealers are free and car companies
+      // use the explicit "car_company" target. Existing records are untouched.
+      if (p.roleTarget === "merchant") return false;
       if (args.roleTarget && p.roleTarget !== args.roleTarget) return false;
       return true;
     });
@@ -241,7 +246,7 @@ export const adminUpsertPlan = mutation({
   args: {
     tierCode: v.string(),
     name: v.string(),
-    roleTarget: v.union(v.literal("hotel_operator"), v.literal("agent"), v.literal("merchant")),
+    roleTarget: v.union(v.literal("hotel_operator"), v.literal("agent"), v.literal("car_company"), v.literal("merchant")),
     basePrice: v.number(),
     currency: v.string(),
     billingInterval: v.union(v.literal("monthly"), v.literal("quarterly"), v.literal("annual")),
@@ -269,6 +274,16 @@ export const adminUpsertPlan = mutation({
       .query("subscription_plans")
       .withIndex("by_tierCode", (q) => q.eq("tierCode", args.tierCode))
       .first();
+
+    // A plan's target decides which capability its subscribers hold; changing it would silently
+    // re-point every existing subscription. Create a new tier code instead.
+    if (existing && existing.roleTarget !== args.roleTarget) {
+      throw new Error("A plan's role target cannot be changed. Create a new plan instead.");
+    }
+    // Legacy "merchant" plans are no longer sold: they can be edited only while inactive.
+    if (args.roleTarget === "merchant" && (!existing || args.isActive)) {
+      throw new Error("The legacy 'merchant' plan target is retired. Use 'car_company' for car companies.");
+    }
 
     const now = Date.now();
 
@@ -330,17 +345,25 @@ export const adminTogglePlanStatus = mutation({
 // 7. SUBSCRIBE / RENEW WITH WALLET FUNDS (PIN-authorized, idempotent)
 // ═══════════════════════════════════════════════════════════════════════
 
-function roleForPlan(roleTarget: string): { role: string; label: string } {
-  if (roleTarget === "agent") return { role: "real_estate_agent", label: "Real Estate Agent" };
-  if (roleTarget === "hotel_operator") return { role: "hotel_owner", label: "Hotel / Guest House Owner" };
-  return { role: "vehicle_dealer", label: "Car Dealer" };
-}
-
-/** Only an APPROVED professional of the plan's role may subscribe to it. */
+/**
+ * Only an account that HOLDS the plan's capability (admin-approved) may subscribe to it. A
+ * subscription belongs to exactly one capability and never satisfies another.
+ */
 function assertEligibleForPlan(user: any, plan: { roleTarget: string }) {
-  const needed = roleForPlan(plan.roleTarget);
-  if (businessRole(user) !== needed.role || !isRoleApproved(user)) {
-    throw new Error(`This plan requires an approved ${needed.label} account.`);
+  if (user.isActive === false) throw new Error("Your account is not active.");
+  switch (plan.roleTarget) {
+    case "agent":
+      if (businessRole(user) === "real_estate_agent" && isRoleApproved(user)) return;
+      throw new Error("This plan requires an approved Real Estate Agent account.");
+    case "hotel_operator":
+      if (businessRole(user) === "hotel_owner" && isRoleApproved(user)) return;
+      throw new Error("This plan requires an approved Hotel / Guest House Owner account.");
+    case "car_company":
+      if (hasCarCompanyCapability(user)) return;
+      throw new Error("This plan requires an approved Car Company account linked to a verified business.");
+    default:
+      // legacy "merchant" (and anything unknown): no longer sold.
+      throw new Error("This subscription plan is no longer available.");
   }
 }
 
@@ -427,6 +450,14 @@ export const getMyProfessionalStatus = query({
     const subRole: SubscriptionRole | null =
       role === "real_estate_agent" ? "agent" : role === "hotel_owner" ? "hotel_operator" : null;
     const hasActiveSubscription = subRole ? !!(await activeSubscription(ctx, user._id, subRole, now)) : false;
+    // Car Company is its own capability with its own subscription (never shared with the above).
+    const isCarCompany = hasCarCompanyCapability(user);
+    const hasActiveCarCompanySubscription = isCarCompany
+      ? !!(await activeSubscription(ctx, user._id, "car_company", now))
+      : false;
+    const individualDealer = hasCarDealerCapability(user);
+    const companyPost = await postingPermission(ctx, user, "vehicle", now, { capability: "car_company" });
+    const dealerPost = await postingPermission(ctx, user, "vehicle", now, { capability: "individual_dealer" });
     // Legacy grace: fixed window from constants; never counted as a paid subscription.
     const grace = legacyAgentGrace(user, now);
     const isInGracePeriod = !hasActiveSubscription && grace.active;
@@ -445,6 +476,7 @@ export const getMyProfessionalStatus = query({
         realEstateOwner: approvedAs("real_estate_owner"),
         hotelOperator: approvedAs("hotel_owner"),
         carDealer: hasCarDealerCapability(user),
+        carCompany: isCarCompany,
         admin: role === "admin",
       },
       // Separately approved capabilities and the resulting professional identity (server-derived).
@@ -452,13 +484,24 @@ export const getMyProfessionalStatus = query({
       professionalTitle: professionalTitle(user),
       ...badge,
       hasActiveSubscription,
+      isCarCompany,
+      // An approval is on record but the business name/TIN changed since: a new review is needed.
+      carCompanyReapprovalRequired: carCompanyReapprovalRequired(user),
+      hasActiveCarCompanySubscription,
+      carCompanyExpiresAt: badge.carCompanyExpiresAt,
+      // Vehicle posting is decided per capability; an account holding both must choose one.
+      vehiclePosting: {
+        individualDealer: { held: individualDealer, allowed: dealerPost.allowed },
+        carCompany: { held: isCarCompany, allowed: companyPost.allowed },
+        requiresChoice: individualDealer && isCarCompany,
+      },
       isInGracePeriod,
       gracePeriodEndsAt: isInGracePeriod ? grace.endsAt : null,
       // set when an eligible legacy agent's grace window is over (for "ended on" messaging)
       legacyGraceEndedAt: grace.eligible && !grace.active ? grace.endsAt : null,
       subscriptionPolicyConfigured: grace.configured,
       canPostProperty: (await postingPermission(ctx, user, "property")).allowed,
-      canPostVehicle: (await postingPermission(ctx, user, "vehicle")).allowed,
+      canPostVehicle: dealerPost.allowed || companyPost.allowed,
       canManageHotel: (await postingPermission(ctx, user, "hotel")).allowed,
       applications: apps.map((a) => ({ id: a._id as string, targetRole: a.targetRole, status: a.status, reviewNotes: a.reviewNotes ?? null })),
     };

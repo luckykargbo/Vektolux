@@ -166,7 +166,7 @@ describe("legacy approved Real Estate Agents", () => {
     expect(r.role).toBe("client");
     const s = await status(t, { ...client, token: r.sessionToken });
     expect(s.role).toBe("client");
-    expect(s.capabilities).toEqual({ client: true, realEstateAgent: false, realEstateOwner: false, hotelOperator: false, carDealer: false, admin: false });
+    expect(s.capabilities).toEqual({ client: true, realEstateAgent: false, realEstateOwner: false, hotelOperator: false, carDealer: false, carCompany: false, admin: false });
     expect((await backfill(t)).restored).toEqual([]);
   });
 

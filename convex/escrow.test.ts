@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import type { Id } from "./_generated/dataModel";
+import { seedLegacyRentalOrder } from "../test-support/legacyRentalFixture";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
 type T = ReturnType<typeof convexTest>;
@@ -38,10 +39,21 @@ async function makeVehicle(t: T, ownerId: Id<"users">, price: number, pricingTyp
   );
 }
 const order = (t: T, id: any) => t.run(async (ctx) => ctx.db.get(id as Id<"escrow_orders">));
-const initiate = (t: T, buyer: { token: string }, vehicleId: any, extra: Record<string, unknown> = {}) =>
-  t.mutation(api.escrow.initiateEscrowOrder, {
-    sessionToken: buyer.token, orderType: "VEHICLE_RENTAL", vehicleListingId: vehicleId, numberOfDays: 3, payFromWallet: true, ...extra,
-  } as any);
+// New rentals can no longer be created through the public mutation. A HISTORICAL rental order is
+// seeded as a fixture (same amounts, same wallet hold); purchases still use the real mutation.
+const initiate = async (t: T, buyer: { id?: Id<"users">; token: string }, vehicleId: any, extra: Record<string, unknown> = {}) => {
+  if (extra.orderType === "VEHICLE_PURCHASE") {
+    return t.mutation(api.escrow.initiateEscrowOrder, {
+      sessionToken: buyer.token, vehicleListingId: vehicleId, payFromWallet: true, ...extra,
+    } as any);
+  }
+  return seedLegacyRentalOrder(t, {
+    buyerId: buyer.id as Id<"users">, vehicleListingId: vehicleId, numberOfDays: 3,
+    payFromWallet: extra.payFromWallet as boolean | undefined, paymentRail: extra.paymentRail as any,
+    paymentProvider: extra.paymentProvider as string | undefined, paymentPhone: extra.paymentPhone as string | undefined,
+    bankEscrowReference: extra.bankEscrowReference as string | undefined,
+  });
+};
 const preTrip = (t: T, who: { token: string }, orderId: any) =>
   t.mutation(api.escrow.completeVehicleInspection, {
     sessionToken: who.token, escrowOrderId: orderId, inspectionType: "PRE_TRIP_RENTAL", odometerReadingKm: 1, fuelTankPercentage: 50,
@@ -95,7 +107,65 @@ describe("funding & pricing", () => {
     const rental = await makeVehicle(t, owner.id, 100, "per_day");
     await expect(initiate(t, buyer, rental, { orderType: "VEHICLE_PURCHASE" })).rejects.toThrow(/for rent/);
     const forSale = await makeVehicle(t, owner.id, 1000, "total_sale");
-    await expect(initiate(t, buyer, forSale)).rejects.toThrow(/for sale/);
+    // a NEW rental request is refused outright, whatever the listing
+    await expect(
+      t.mutation(api.escrow.initiateEscrowOrder, {
+        sessionToken: buyer.token, orderType: "VEHICLE_RENTAL", vehicleListingId: forSale, numberOfDays: 3, payFromWallet: true,
+      } as any)
+    ).rejects.toThrow(/no longer available/i);
+  });
+
+  test("a NEW vehicle-rental order is refused before anything is written (every rail, every listing)", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await makeUser(t, "owner");
+    const buyer = await makeUser(t, "buyer");
+    await fund(t, buyer.id, 5000);
+    const rental = await makeVehicle(t, owner.id, 100, "per_day");
+    const forSale = await makeVehicle(t, owner.id, 1000, "total_sale");
+    const snapshot = () =>
+      t.run(async (ctx) => ({
+        orders: await ctx.db.query("escrow_orders").collect(),
+        inspections: await ctx.db.query("vehicle_inspections").collect(),
+        transactions: await ctx.db.query("transactions").collect(),
+        ledger: await ctx.db.query("ledger_entries").collect(),
+        wallets: await ctx.db.query("walletBalances").collect(),
+        notifications: await ctx.db.query("user_notifications").collect(),
+        bookings: await ctx.db.query("bookings").collect(),
+        vehicles: await ctx.db.query("vehicleListings").collect(),
+      }));
+    const before = await snapshot();
+    const base = { sessionToken: buyer.token, orderType: "VEHICLE_RENTAL", numberOfDays: 3 };
+    for (const listing of [rental, forSale]) {
+      for (const extra of [
+        { payFromWallet: true },
+        { payFromWallet: false, paymentRail: "MOBILE_MONEY", paymentPhone: "+23277000000" },
+        { paymentRail: "BANK_TRANSFER", paymentProvider: "BANK_TRANSFER" },
+        { paymentRail: "WALLET", baseRentalAmount: 1, refundableDepositAmount: 1 },
+      ]) {
+        await expect(
+          t.mutation(api.escrow.initiateEscrowOrder, { ...base, vehicleListingId: listing, ...extra } as any)
+        ).rejects.toThrow(/no longer available/i);
+      }
+    }
+    // nothing changed: no order, transaction, ledger entry, balance move, notification or booking
+    expect(await snapshot()).toEqual(before);
+    expect((await wallet(t, buyer.id)).availableBalance).toBe(5000);
+  });
+
+  test("vehicle PURCHASE escrow still works end to end (funding, buyer release, fee once)", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await makeUser(t, "owner");
+    const buyer = await makeUser(t, "buyer");
+    await fund(t, buyer.id, 5000);
+    const v = await makeVehicle(t, owner.id, 1000, "total_sale");
+    const r: any = await t.mutation(api.escrow.initiateEscrowOrder, {
+      sessionToken: buyer.token, orderType: "VEHICLE_PURCHASE", vehicleListingId: v, payFromWallet: true,
+    } as any);
+    expect(r.status).toBe("HELD_IN_ESCROW");
+    const rel: any = await t.mutation(api.escrow.releaseDealEscrowFunds, { sessionToken: buyer.token, escrowOrderId: r.escrowOrderId });
+    expect(rel.success).toBe(true);
+    expect(((await order(t, r.escrowOrderId)) as any).status).toBe("SETTLED");
+    expect((await wallet(t, owner.id)).availableBalance).toBe(r.netMerchantExpected);
   });
 });
 
