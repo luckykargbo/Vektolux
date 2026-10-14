@@ -41,7 +41,8 @@ payment webhooks all talk to it.
 - `LEGACY_SUBSCRIPTION_POLICY_LAUNCH_TIMESTAMP` stays `null` until the owner has reviewed the legacy
   agents.
 - Real-money deposits/withdrawals have not been tested. Do not test with real money.
-- Latest test build: **1.0.31 (32)** — GitHub release `vektolux-ios-test-1.0.31-32`.
+- Latest test build: **1.0.32 (33)** — GitHub release `vektolux-ios-test-1.0.32-33` (built from the reviewed source; its matching
+  backend must be deployed to `ideal-poodle-813` by the owner before this build is tested — see §8).
 
 ---
 

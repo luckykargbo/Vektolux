@@ -77,7 +77,7 @@ abstract final class AppInfo {
   static const String buildName = String.fromEnvironment('FLUTTER_BUILD_NAME');
   static const String buildNumber = String.fromEnvironment('FLUTTER_BUILD_NUMBER');
 
-  /// e.g. "v1.0.31 (Build 32)"; "unknown" only when run outside a Flutter build (tests, tooling).
+  /// e.g. "v1.0.32 (Build 33)"; "unknown" only when run outside a Flutter build (tests, tooling).
   static String get versionLabel {
     if (buildName.isEmpty) return 'unknown';
     return buildNumber.isEmpty ? 'v$buildName' : 'v$buildName (Build $buildNumber)';

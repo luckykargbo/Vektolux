@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| App version | 1.0.31 |
-| Build number | 32 |
+| App version | 1.0.32 |
+| Build number | 33 |
 | Bundle ID | `com.vektolux.app` |
 | Build type | Release, **unsigned** (built by GitHub Actions on macOS with `flutter build ios --release --no-codesign`) |
 | Status | **Test build** for installation on a physical iPhone. Not an App Store / TestFlight build. |
@@ -30,8 +30,13 @@ With a free Apple ID the app stops opening after 7 days; reinstall it the same w
 - **Real-money deposits and withdrawals are NOT enabled.** Do not try to pay with real money.
 - **Orange Money stays disabled** until Orange provides its webhook documentation.
 - Moneroo has been removed from Vektolux.
-- This build talks to the live Convex backend (`ideal-poodle-813`). **The server changes for this build were deployed on 5 October 2026**, so the features below are live. Automatic background jobs (deposit/withdrawal reconciliation, escrow auto-release, subscription expiry) are paused by the owner for now.
-- **New in this build (1.0.31): agents approved by the old admin flow keep their approval.**
+- This build talks to the Convex backend `ideal-poodle-813`. **It expects the matching reviewed backend** (wallet settlement, escrow order expiry, vehicle-rental closure, car-company role and subscriptions). **Until that backend has been deployed by the owner, do not test this build**: parts of it will not behave as described. Automatic background jobs stay paused.
+- **New in this build (1.0.32): vehicle rental is no longer an in-app purchase.**
+  - Car, boat and truck/van **hire is arranged with the owner or dealer**: the app shows **Contact dealer to rent** / **Contact owner to hire** and opens the conversation. There is no in-app rental checkout or rental escrow.
+  - **Vehicle sales keep** *Inspect* and **Buy with Escrow**. A listing with no price shows "Contact for Price" instead of an invented amount.
+  - Haulage trucks and delivery vans are never offered for purchase escrow.
+  - Car-company accounts: admin review shows business verification, and posting needs an active car-company subscription.
+- **Also in 1.0.31: agents approved by the old admin flow keep their approval.**
   - Approved agents see the Agent Workspace after logging out and back in. Without an active subscription it shows "Posting paused · subscription needed"; the agent's approval is kept.
   - After the deploy, an agent approved by the old flow (whose account was never switched to the agent role) gets the role back automatically: on the next login, or for everyone at once with the one-off command in the release notes. Nobody needs a new account or a new application. Clients, pending, rejected and suspended applicants get nothing extra.
 - **Also in 1.0.30: listing review, saved properties, viewing requests, Agent & Car Dealer.**
