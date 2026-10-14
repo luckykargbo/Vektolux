@@ -20,6 +20,8 @@ import '../../../bookings/presentation/views/my_bookings_screen.dart';
 import '../../../profile/presentation/views/profile_screen.dart';
 import '../../../listings/presentation/views/property_detail_screen.dart';
 import '../../../listings/presentation/views/vehicle_detail_screen.dart';
+import '../../../messaging/data/messaging_api.dart';
+import '../../../messaging/presentation/buyer_messaging.dart';
 import '../../../real_estate/data/models/property_listing_model.dart';
 import '../../../real_estate/domain/entities/property_listing_entity.dart';
 import '../../../mobility/domain/entities/mobility_vehicle_entity.dart';
@@ -422,7 +424,6 @@ class _DiscoveryFeedScreenState extends State<DiscoveryFeedScreen>
   Widget _buildMobilityTab() {
     final intents = [
       {'label': 'All', 'value': 'all'},
-      {'label': 'Book Rides', 'value': 'ride_hailing'},
       {'label': 'Daily Rentals', 'value': 'rental'},
       {'label': 'Vehicles for Sale', 'value': 'sale'},
     ];
@@ -1015,7 +1016,7 @@ class _VehicleListingCard extends StatelessWidget {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
                                   content: Text(
-                                      'Please log in to rent or book this vehicle.'),
+                                      'Please log in to contact the dealer or buy this vehicle.'),
                                   backgroundColor: AppColors.obsidian,
                                   behavior: SnackBarBehavior.floating,
                                 ),
@@ -1023,30 +1024,25 @@ class _VehicleListingCard extends StatelessWidget {
                               return;
                             }
 
-                            if (vehicle.listingIntent == 'rental') {
-                              VehicleRentalModal.show(
-                                context,
-                                vehicle: vehicle,
-                                currentUser: user,
-                                convexClient: convexClient,
-                              );
-                            } else if (vehicle.listingIntent == 'ride_hailing') {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                      'Ride-hailing for ${vehicle.make} ${vehicle.model} - Opening driver dispatch...'),
-                                  backgroundColor: AppColors.emerald,
-                                  behavior: SnackBarBehavior.floating,
+                            if (vehicle.listingIntent == 'sale') {
+                              // The real purchase (escrow) and inspection actions are on the detail screen.
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => VehicleDetailScreen.fromEntity(vehicle),
                                 ),
                               );
                             } else {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                      'Purchase inquiry for ${vehicle.make} ${vehicle.model} sent to dealer.'),
-                                  backgroundColor: AppColors.emerald,
-                                  behavior: SnackBarBehavior.floating,
+                              // Rentals and hire are arranged directly with the dealer (no in-app rental checkout).
+                              openListingConversation(
+                                context,
+                                api: MessagingApi(
+                                  client: convexClient,
+                                  userId: user.id,
+                                  sessionToken: user.sessionToken,
                                 ),
+                                listingId: vehicle.id,
+                                listingType: 'vehicle',
+                                listingTitle: '${vehicle.make} ${vehicle.model}',
                               );
                             }
                           },
@@ -1059,11 +1055,9 @@ class _VehicleListingCard extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(vertical: 10),
                           ),
                           child: Text(
-                            vehicle.listingIntent == 'ride_hailing'
-                                ? 'Book Ride'
-                                : (vehicle.listingIntent == 'rental'
-                                    ? 'Rent Now'
-                                    : 'Buy Vehicle'),
+                            vehicle.listingIntent == 'sale'
+                                ? 'View & Buy'
+                                : 'Contact Dealer',
                             style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,

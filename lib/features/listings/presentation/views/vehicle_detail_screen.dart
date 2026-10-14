@@ -14,6 +14,8 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/components/vx_button.dart';
 import '../../../auth/domain/entities/user_entity.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
+import '../../../messaging/data/messaging_api.dart';
+import '../../../messaging/presentation/buyer_messaging.dart';
 import '../../../mobility/domain/entities/mobility_vehicle_entity.dart';
 import '../../../mobility/presentation/widgets/in_app_chat_modal.dart';
 import '../../../mobility/presentation/views/escrow_checkout_screen.dart';
@@ -109,7 +111,16 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
     super.dispose();
   }
 
-  String get _title => '${widget.make} ${widget.model} (${widget.year})';
+  String get _title {
+    final name = [widget.make, widget.model].where((e) => e.trim().isNotEmpty).join(' ');
+    final label = name.isEmpty ? 'Vehicle' : name;
+    return widget.year > 0 ? '$label (${widget.year})' : label;
+  }
+
+  // Haulage trucks and delivery vans are hired per trip or per day and arranged with the owner; they
+  // are never bought through purchase escrow (the server refuses a purchase of a non-sale listing).
+  static const _hireVehicleTypes = {'sand_dump_truck', 'container_freight_truck', 'delivery_van'};
+  bool get _isHireOnly => widget.listingIntent == 'rental' || _hireVehicleTypes.contains(widget.vehicleType);
 
   String get _priceFormatted {
     if ((widget.vehicleType == 'sand_dump_truck' || widget.vehicleType == 'container_freight_truck') &&
@@ -411,32 +422,26 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
     );
   }
 
-  void _handleRentalCheckout(BuildContext context) {
+  /// Vehicle rental is arranged directly with the dealer (no in-app rental checkout or escrow):
+  /// this opens the existing in-app conversation about the listing.
+  Future<void> _messageDealer(BuildContext context) async {
     final user = context.read<AuthBloc>().state.user;
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please log in to rent this vehicle.'),
+          content: Text('Please log in to contact the dealer.'),
           backgroundColor: AppColors.obsidian,
           behavior: SnackBarBehavior.floating,
         ),
       );
       return;
     }
-
-    final dailyRate = widget.pricePerDay ?? _currentPricePerDay ?? 350.0;
-
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => EscrowCheckoutScreen(
-          vehicleListingId: widget.id,
-          vehicleTitle: _title,
-          vehicleCategory: widget.listingIntent == 'rental' ? 'Car Rental' : 'Vehicle',
-          dailyRate: dailyRate,
-          vehicleImageUrl: widget.imageUrls.isNotEmpty ? widget.imageUrls.first : null,
-          isPurchase: false,
-        ),
-      ),
+    await openListingConversation(
+      context,
+      api: MessagingApi(client: context.read<ConvexClientWrapper>(), userId: user.id, sessionToken: user.sessionToken),
+      listingId: widget.id,
+      listingType: 'vehicle',
+      listingTitle: _title,
     );
   }
 
@@ -453,7 +458,18 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
       return;
     }
 
-    final price = _currentSalePrice ?? widget.salePrice ?? 25000.0;
+    // No invented price: a listing without one cannot be purchased from here.
+    final price = _currentSalePrice ?? widget.salePrice;
+    if (price == null || price <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This vehicle has no listed sale price. Message the dealer for details.'),
+          backgroundColor: AppColors.obsidian,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
 
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -1020,11 +1036,13 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
                   ),
                   const SizedBox(width: 16),
                   Expanded(
-                    child: widget.listingIntent == 'rental'
+                    child: _isHireOnly
                         ? VxButton(
-                            label: 'Rent with Escrow',
-                            icon: Icons.shield_outlined,
-                            onPressed: () => _handleRentalCheckout(context),
+                            label: _hireVehicleTypes.contains(widget.vehicleType)
+                                ? 'Contact owner to hire'
+                                : 'Contact dealer to rent',
+                            icon: Icons.chat_bubble_outline_rounded,
+                            onPressed: () => _messageDealer(context),
                           )
                         : Row(
                             children: [

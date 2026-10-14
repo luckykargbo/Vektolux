@@ -15,9 +15,10 @@ import '../../../../core/widgets/vx_network_image.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../listings/presentation/views/create_listing_screen.dart';
 import '../../../listings/presentation/views/vehicle_detail_screen.dart';
+import '../../../messaging/data/messaging_api.dart';
+import '../../../messaging/presentation/buyer_messaging.dart';
 import '../../../social/presentation/views/public_profile_screen.dart';
 import '../../../navigation/client_browsing_mode.dart';
-import 'delivery_van_booking_screen.dart';
 import 'my_escrow_orders_screen.dart';
 
 class AutoMarketplaceScreen extends StatefulWidget {
@@ -371,15 +372,15 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
 
   Widget _buildVehicleListItem(Map<String, dynamic> item) {
     final category = item['category'] as String? ?? 'car_sale';
+    // Fields the backend did not supply are shown as unknown, never as invented sample values.
+    final make = item['make'] as String? ?? '';
+    final model = item['model'] as String? ?? '';
+    final year = (item['year'] as num?)?.toInt() ?? 0;
+    final composedTitle = [if (year > 0) '$year', make, model].where((e) => e.isNotEmpty).join(' ');
     final title = (item['title'] as String? ?? '').isNotEmpty
         ? item['title'] as String
-        : '${item['year'] ?? 2022} ${item['make'] ?? "Toyota"} ${item['model'] ?? "RAV4"}';
-    final make = item['make'] as String? ?? 'Toyota';
-    final model = item['model'] as String? ?? 'RAV4';
-    final year = (item['year'] as num?)?.toInt() ?? 2022;
-    final price = (item['price'] as num?)?.toDouble() ??
-        (item['salePrice'] as num?)?.toDouble() ??
-        145000.0;
+        : (composedTitle.isNotEmpty ? composedTitle : 'Commercial vehicle');
+    final price = (item['price'] as num?)?.toDouble() ?? (item['salePrice'] as num?)?.toDouble();
     final dailyRate = (item['pricePerDay'] as num?)?.toDouble();
     final pricingType = item['pricingType'] as String? ??
         (dailyRate != null && dailyRate > 0 ? 'per_day' : 'total_sale');
@@ -394,12 +395,15 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
     final isDeliveryVan = category == 'delivery_van';
 
     String priceText;
-    if (pricingType == 'per_trip') {
+    final shownDaily = dailyRate ?? price;
+    if (pricingType == 'per_trip' && price != null) {
       priceText = 'SLE ${_currencyFormat.format(price)} / trip';
-    } else if (pricingType == 'per_day' || (dailyRate != null && dailyRate > 0)) {
-      priceText = 'SLE ${_currencyFormat.format(dailyRate ?? price)} / day';
-    } else {
+    } else if ((pricingType == 'per_day' || (dailyRate != null && dailyRate > 0)) && shownDaily != null) {
+      priceText = 'SLE ${_currencyFormat.format(shownDaily)} / day';
+    } else if (price != null) {
       priceText = 'SLE ${_currencyFormat.format(price)} Total';
+    } else {
+      priceText = 'Contact for price';
     }
 
     final categoryLabel = switch (category) {
@@ -421,7 +425,8 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
               model: model,
               year: year,
               vehicleType: category,
-              listingIntent: pricingType == 'per_day' ? 'rental' : 'sale',
+              // per-day and per-trip listings are hired through the owner; only total_sale is bought
+              listingIntent: (pricingType == 'per_day' || pricingType == 'per_trip') ? 'rental' : 'sale',
               salePrice: price,
               pricePerDay: dailyRate ?? (pricingType == 'per_day' ? price : null),
               imageUrls: images,
@@ -585,13 +590,25 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                           if (isDeliveryVan) ...[
                             InkWell(
                               onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => DeliveryVanBookingScreen(
-                                      vehicle: item,
-                                      convexClient: widget.convexClient,
-                                    ),
+                                // Hire is arranged directly with the owner: open the in-app conversation.
+                                final me = context.read<AuthBloc>().state.user;
+                                final listingId = (item['_id'] ?? item['id'])?.toString();
+                                if (me == null || listingId == null) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Please log in to contact the owner.')),
+                                  );
+                                  return;
+                                }
+                                openListingConversation(
+                                  context,
+                                  api: MessagingApi(
+                                    client: widget.convexClient,
+                                    userId: me.id,
+                                    sessionToken: me.sessionToken,
                                   ),
+                                  listingId: listingId,
+                                  listingType: 'vehicle',
+                                  listingTitle: (item['title'] ?? '${item['make'] ?? ''} ${item['model'] ?? ''}').toString().trim(),
                                 );
                               },
                               child: Container(
@@ -604,11 +621,11 @@ class _AutoMarketplaceScreenState extends State<AutoMarketplaceScreen>
                                 ),
                                 child: const Row(
                                   children: [
-                                    Icon(Icons.calendar_today_rounded,
+                                    Icon(Icons.chat_bubble_outline_rounded,
                                         size: 10, color: AppColors.mobility),
                                     SizedBox(width: 4),
                                     Text(
-                                      'Book Van',
+                                      'Contact owner',
                                       style: TextStyle(
                                         fontSize: 11,
                                         fontWeight: FontWeight.w700,

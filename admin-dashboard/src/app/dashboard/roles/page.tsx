@@ -15,6 +15,12 @@ interface Row {
   userEmail: string | null;
   currentRole: string | null;
   identityStatus: string;
+  isCarCompanyApplication?: boolean;
+  accountType?: string | null;
+  businessVerification?: "approved" | "pending" | "rejected" | "missing" | null;
+  canApprove?: boolean;
+  approvalBlockedReason?: string | null;
+  carCompanyApproved?: boolean;
   targetRole: string;
   targetRoleLabel: string;
   businessName: string | null;
@@ -33,6 +39,13 @@ const BADGE: Record<Status, string> = {
   approved: styles.badgeSettled,
   rejected: styles.badgeDisputed,
   suspended: styles.badgeDisputed,
+};
+
+const BIZ_LABEL: Record<string, string> = {
+  approved: "Business verified",
+  pending: "Business verification pending",
+  rejected: "Business verification rejected",
+  missing: "Business verification missing",
 };
 
 export default function RolesPage() {
@@ -70,6 +83,10 @@ export default function RolesPage() {
             ? " This adds Car Dealer to the existing Real Estate Agent role."
             : ""
           : "";
+      if (r.isCarCompanyApplication && r.canApprove === false) {
+        setMsg(r.approvalBlockedReason ?? "Business verification must be approved first.");
+        return;
+      }
       if (!window.confirm(`Approve ${r.userName} as ${r.targetRoleLabel}?${extra}`)) return;
       const n = window.prompt("Optional note for the applicant:");
       if (n === null) return;
@@ -102,7 +119,7 @@ export default function RolesPage() {
         <div>
           <h1 className={styles.title}>Business Roles</h1>
           <p className={styles.subtitle}>
-            Real Estate Agent, Real Estate Owner, Car Dealer and Hotel applications. A role is granted only here. Approving Car Dealer for
+            Real Estate Agent, Real Estate Owner, Car Dealer, Car Company and Hotel applications. A role is granted only here. Approving Car Dealer for
             an approved Real Estate Agent adds it to the same account (&ldquo;Real Estate Agent &amp; Car Dealer&rdquo;).
           </p>
         </div>
@@ -153,7 +170,14 @@ export default function RolesPage() {
                       {r.userEmail ?? ""} · now {r.currentRole ?? "—"}
                     </div>
                   </td>
-                  <td>{r.targetRoleLabel}</td>
+                  <td>
+                    {r.targetRoleLabel}
+                    {r.isCarCompanyApplication && (
+                      <div className={styles.statSub} data-testid="car-company-flag">
+                        Car company · subscription required to post
+                      </div>
+                    )}
+                  </td>
                   <td>
                     {r.businessName ?? "—"}
                     <div className={styles.statSub}>
@@ -161,7 +185,15 @@ export default function RolesPage() {
                       {r.documentCount === 1 ? "" : "s"}
                     </div>
                   </td>
-                  <td>{r.identityStatus}</td>
+                  <td>
+                    {r.identityStatus}
+                    {r.isCarCompanyApplication && r.businessVerification && (
+                      <div className={styles.statSub} data-testid="business-verification">
+                        {BIZ_LABEL[r.businessVerification]}
+                        {r.accountType ? ` · ${r.accountType.toLowerCase()} account` : ""}
+                      </div>
+                    )}
+                  </td>
                   <td>
                     <span className={`${styles.badge} ${BADGE[r.status]}`}>{r.status}</span>
                     {r.reviewNotes && <div className={styles.statSub}>{r.reviewNotes}</div>}
@@ -170,7 +202,12 @@ export default function RolesPage() {
                   <td style={{ whiteSpace: "nowrap" }}>
                     {r.status === "pending" && (
                       <>
-                        <button className={styles.actionBtn} disabled={busy === r.id} onClick={() => decide(r, "approve")}>
+                        <button
+                          className={styles.actionBtn}
+                          disabled={busy === r.id || (r.isCarCompanyApplication && r.canApprove === false)}
+                          title={r.approvalBlockedReason ?? undefined}
+                          onClick={() => decide(r, "approve")}
+                        >
                           Approve
                         </button>{" "}
                         <button className={styles.actionBtn} disabled={busy === r.id} onClick={() => decide(r, "reject")}>

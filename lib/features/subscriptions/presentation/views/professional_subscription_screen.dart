@@ -50,8 +50,12 @@ class _ProfessionalSubscriptionScreenState extends State<ProfessionalSubscriptio
       case 'hotel_owner':
         return 'hotel_operator';
     }
+    // A car company is an admin-approved capability (not a role); it has its own plan.
+    if (_isCarCompany) return 'car_company';
     return null;
   }
+
+  bool get _isCarCompany => _status['isCarCompany'] == true;
 
   Future<void> _load() async {
     setState(() {
@@ -71,7 +75,7 @@ class _ProfessionalSubscriptionScreenState extends State<ProfessionalSubscriptio
     _status = Map<String, dynamic>.from(s.value as Map);
     _plans = [];
     final target = _roleTarget;
-    if (target != null && _status['roleApproved'] == true) {
+    if (target != null && (_status['roleApproved'] == true || target == 'car_company')) {
       final p = await client.query('subscriptions:getPlans', args: {'roleTarget': target});
       if (p.success && p.value is List) {
         _plans = (p.value as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
@@ -82,7 +86,9 @@ class _ProfessionalSubscriptionScreenState extends State<ProfessionalSubscriptio
   }
 
   /// Paid, active subscription — as reported by the server. A grace period is NOT a subscription.
-  bool get _isActive => _status['hasActiveSubscription'] == true;
+  bool get _isActive => _roleTarget == 'car_company'
+      ? _status['hasActiveCarCompanySubscription'] == true
+      : _status['hasActiveSubscription'] == true;
 
   /// Legacy-agent grace window, decided by the server (display only; the server enforces posting).
   bool get _inGrace => _status['isInGracePeriod'] == true;
@@ -91,7 +97,11 @@ class _ProfessionalSubscriptionScreenState extends State<ProfessionalSubscriptio
 
   String _fmtDate(num ms) => _date.format(DateTime.fromMillisecondsSinceEpoch(ms.toInt()));
 
-  num? get _expiresAt => _roleTarget == 'agent' ? _status['agentExpiresAt'] as num? : _status['hotelExpiresAt'] as num?;
+  num? get _expiresAt => switch (_roleTarget) {
+        'agent' => _status['agentExpiresAt'] as num?,
+        'car_company' => _status['carCompanyExpiresAt'] as num?,
+        _ => _status['hotelExpiresAt'] as num?,
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -119,13 +129,13 @@ class _ProfessionalSubscriptionScreenState extends State<ProfessionalSubscriptio
         _infoCard(
           Icons.info_outline_rounded,
           'No subscription needed',
-          'Subscriptions apply to approved Real Estate Agents and Hotel / Guest House Owners. '
+          'Subscriptions apply to approved Real Estate Agents, Hotel / Guest House Owners and Car Companies. '
               'Apply for one of these roles from your account; an administrator reviews every application.',
         ),
         ..._applications(),
       ];
     }
-    if (_status['roleApproved'] != true) {
+    if (_status['roleApproved'] != true && target != 'car_company') {
       return [
         _infoCard(Icons.hourglass_top_rounded, 'Application under review',
             'You can subscribe once an administrator approves your professional role.'),

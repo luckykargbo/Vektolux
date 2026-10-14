@@ -16,6 +16,7 @@ import '../../../navigation/client_browsing_mode.dart';
 import '../../../verification/presentation/views/identity_verification_screen.dart';
 import '../../../verification/presentation/widgets/verification_gate_banner.dart';
 import '../../../../core/widgets/sl_location_picker.dart';
+import '../../domain/vehicle_posting_options.dart';
 
 enum ListingType { property, vehicle }
 
@@ -126,6 +127,22 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
     _verificationStatus = widget.currentUser.verificationStatus;
     _businessVerificationStatus = widget.currentUser.verificationStatus;
     _checkLiveVerificationStatus();
+    _loadPostingOptions();
+  }
+
+  /// Which vehicle-posting capabilities this account holds (server-computed; display only).
+  VehiclePostingOptions? _postingOptions;
+  VehiclePostingCapability? _selectedCapability;
+
+  Future<void> _loadPostingOptions() async {
+    try {
+      final res = await widget.convexClient.query('subscriptions:getMyProfessionalStatus');
+      if (!mounted || !res.success) return;
+      final opts = VehiclePostingOptions.fromStatus(res.value);
+      if (opts != null) setState(() => _postingOptions = opts);
+    } catch (_) {
+      // Unknown: nothing is sent and the server decides (it will explain any refusal).
+    }
   }
 
   void _checkLiveVerificationStatus() async {
@@ -419,6 +436,12 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
           throw Exception('Please enter the vehicle year.');
         }
         final title = '$year ${_vehMakeController.text.trim()} ${_vehModelController.text.trim()}';
+        final opts = _postingOptions;
+        if (opts != null) {
+          final blocked = opts.blockingMessage(_selectedCapability);
+          if (blocked != null) throw Exception(blocked);
+        }
+        final capability = opts?.wireValue(_selectedCapability);
 
         // 1. Convex Mutation
         final result = await widget.convexClient.mutation(
@@ -443,6 +466,8 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             if (salePrice != null) 'salePrice': salePrice,
             'currency': 'SLE',
             'imageStorageIds': _imageStorageIds,
+            // A request only; the server verifies the capability and its subscription.
+            if (capability != null) 'postingCapability': capability,
             if (_contactPhoneController.text.trim().isNotEmpty)
               'privateContactPhone': _contactPhoneController.text.trim(),
           },
@@ -478,6 +503,36 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
         setState(() => _isSubmitting = false);
       }
     }
+  }
+
+  Widget _buildPostingCapability() {
+    final opts = _postingOptions;
+    if (opts == null || opts.held.isEmpty) return const SizedBox.shrink();
+    final single = opts.autoSelected;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Post this vehicle as',
+              style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.obsidian)),
+          const SizedBox(height: 8),
+          if (single != null)
+            Text(opts.eligibilityText(single), style: const TextStyle(fontSize: 13))
+          else
+            for (final c in opts.held)
+              RadioListTile<VehiclePostingCapability>(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                value: c,
+                groupValue: _selectedCapability,
+                onChanged: (v) => setState(() => _selectedCapability = v),
+                title: Text(c.label),
+                subtitle: Text(opts.eligibilityText(c), style: const TextStyle(fontSize: 12)),
+              ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -908,6 +963,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                 },
               ),
               const SizedBox(height: 16),
+              _buildPostingCapability(),
 
               // General location of the vehicle (broad, public-safe)
               SierraLeoneLocationPicker(
